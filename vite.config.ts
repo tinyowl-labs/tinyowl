@@ -14,4 +14,9 @@ export default defineConfig({
       adapter: adapter({ fallback: "index.html" }),
     }),
   ],
+  server: {
+    proxy: {
+      "/media": "http://localhost:8080",
+    },
+  },
 });

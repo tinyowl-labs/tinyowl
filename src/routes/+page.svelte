@@ -145,69 +145,103 @@
     </nav>
 </header>
 
-<main
-    class="home-page flex flex-col items-center justify-center min-h-screen w-full bg-white dark:bg-black"
-    onkeydown={handleKeydown}
->
-    {#if isMounted}
-        <!-- Logo + wordmark -->
-        <div class="flex items-center gap-3 mb-8">
-            <div
-                class="home-logo-icon size-20 shrink-0 [&>svg]:h-full [&>svg]:w-full text-[#15110f] dark:text-[#f7f2ee]"
-            >
-                {@html owlSvg}
+<div class="flex min-h-screen flex-col pt-11">
+    <main
+        class="home-page flex flex-1 flex-col items-center justify-center w-full"
+        onkeydown={handleKeydown}
+    >
+        {#if isMounted}
+            <!-- Logo + wordmark -->
+            <div class="flex items-center gap-3 mb-8">
+                <div
+                    class="home-logo-icon size-24 shrink-0 [&>svg]:h-full [&>svg]:w-full text-[#15110f] dark:text-[#f7f2ee]"
+                >
+                    {@html owlSvg}
+                </div>
+                <span
+                    class="text-5xl font-semibold tracking-tight text-[#8b817c] dark:text-[#9b918b]"
+                    >tinyowl</span
+                >
             </div>
-            <span
-                class="text-3xl font-semibold tracking-tight text-[#15110f] dark:text-[#f7f2ee]"
-                >tinyowl</span
-            >
-        </div>
 
-        <!-- Search -->
-        <div class="w-full max-w-xl px-4">
-            <div class="relative w-full">
-                <form onsubmit={handleSubmit}>
-                    <SearchIcon
-                        class="absolute left-3.5 top-3.5 z-10 size-4 text-[#8b817c] dark:text-neutral-500"
-                    />
-                    <input
-                        bind:this={inputEl}
-                        bind:value={query}
-                        onfocus={() => (focused = true)}
-                        onblur={() => setTimeout(() => (focused = false), 150)}
-                        oninput={() => (selected = -1)}
-                        placeholder="Search projects, entities, periods…"
-                        class="w-full rounded-xl border border-[#eadfdb] dark:border-neutral-800 bg-white dark:bg-[#0B0B0B] pl-10 pr-4 py-3 text-sm text-[#15110f] dark:text-neutral-200 placeholder:text-[#c4b8b1] dark:placeholder:text-neutral-600 focus:border-[#8b817c] dark:focus:border-neutral-700 focus:outline-none transition-colors"
-                    />
-                </form>
+            <!-- Search -->
+            <div class="w-full max-w-xl px-4">
+                <div class="relative w-full">
+                    <form onsubmit={handleSubmit}>
+                        <SearchIcon
+                            class="absolute left-3.5 top-3.5 z-10 size-4 text-[#a09890] dark:text-neutral-400"
+                        />
+                        <input
+                            bind:this={inputEl}
+                            bind:value={query}
+                            onfocus={() => (focused = true)}
+                            onblur={() =>
+                                setTimeout(() => (focused = false), 150)}
+                            oninput={() => (selected = -1)}
+                            placeholder="Search projects, entities, periods…"
+                            class="w-full rounded-xl border-2 border-[#d4c8c2] dark:border-neutral-600 bg-white dark:bg-[#1a1a1a] pl-10 pr-4 py-3 text-sm text-[#15110f] dark:text-neutral-100 placeholder:text-[#a09890] dark:placeholder:text-neutral-400 focus:border-primary dark:focus:border-primary focus:outline-none shadow-sm hover:shadow-md transition-all"
+                        />
+                    </form>
 
-                {#if showDropdown}
-                    <div
-                        class="absolute left-0 right-0 top-full mt-2 rounded-xl bg-white dark:bg-[#121212] border border-[#eadfdb] dark:border-neutral-800 overflow-hidden shadow-lg z-20"
-                    >
-                        {#each results as item, i}
-                            <a
-                                href={item.href}
-                                class="flex items-center gap-3 px-4 py-3 {selected ===
-                                i
-                                    ? 'bg-[#f1e8e3] dark:bg-neutral-800'
-                                    : 'hover:bg-[#f8f5f3] dark:hover:bg-neutral-800/50'} transition-colors no-underline"
-                            >
-                                <SearchIcon
-                                    class="size-4 text-[#c4b8b1] dark:text-neutral-500 shrink-0"
-                                />
-                                <span
-                                    class="text-sm text-[#15110f] dark:text-neutral-200"
-                                    >{item.label}</span
+                    {#if showDropdown}
+                        <div
+                            class="absolute left-0 right-0 top-full mt-2 rounded-xl bg-white dark:bg-[#1a1a1a] border border-[#d4c8c2] dark:border-neutral-600 overflow-hidden shadow-lg z-20"
+                        >
+                            {#each results as item, i}
+                                <a
+                                    href={item.href}
+                                    class="flex items-center gap-3 px-4 py-3 {selected ===
+                                    i
+                                        ? 'bg-[#f1e8e3] dark:bg-neutral-700'
+                                        : 'hover:bg-[#f8f5f3] dark:hover:bg-neutral-800'} transition-colors no-underline"
                                 >
-                            </a>
-                        {/each}
-                    </div>
-                {/if}
+                                    <SearchIcon
+                                        class="size-4 text-[#c4b8b1] dark:text-neutral-400 shrink-0"
+                                    />
+                                    <span
+                                        class="text-sm text-[#15110f] dark:text-neutral-100"
+                                        >{item.label}</span
+                                    >
+                                </a>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
             </div>
+        {/if}
+    </main>
+
+    <footer
+        class="home-footer border-t border-[#eadfdb] dark:border-[#1f1b19] bg-[#fbf7f5] dark:bg-[#050505] px-4 py-4"
+    >
+        <div
+            class="mx-auto flex max-w-6xl flex-col items-center gap-3 text-xs sm:flex-row sm:justify-between"
+        >
+            <span class="text-[#8b817c] dark:text-[#7f746e]"
+                >© 2026 tinyowl. All rights reserved.</span
+            >
+            <nav
+                class="flex flex-wrap items-center justify-center gap-x-4 gap-y-1"
+            >
+                <a
+                    href="/privacy"
+                    class="text-[#6f6661] dark:text-[#a79c95] hover:text-[#ad0000] dark:hover:text-[#ff6b5f] transition-colors"
+                    >Privacy policy</a
+                >
+                <a
+                    href="/terms"
+                    class="text-[#6f6661] dark:text-[#a79c95] hover:text-[#ad0000] dark:hover:text-[#ff6b5f] transition-colors"
+                    >Terms</a
+                >
+                <a
+                    href="/docs"
+                    class="text-[#6f6661] dark:text-[#a79c95] hover:text-[#ad0000] dark:hover:text-[#ff6b5f] transition-colors"
+                    >Docs</a
+                >
+            </nav>
         </div>
-    {/if}
-</main>
+    </footer>
+</div>
 
 <style>
     .home-header {

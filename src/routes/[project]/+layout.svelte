@@ -1,0 +1,136 @@
+<script lang="ts">
+    import { page } from "$app/stores";
+    import redthreadSvg from "$lib/assets/redthread.svg?raw";
+    import { onMount } from "svelte";
+    import { isDark } from "$lib/stores/theme.svelte";
+    import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
+    import LayersIcon from "@lucide/svelte/icons/layers";
+    import ImageIcon from "@lucide/svelte/icons/image";
+    import GitCommit from "@lucide/svelte/icons/git-commit";
+    import Settings from "@lucide/svelte/icons/settings";
+    import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+
+    let { data, children } = $props();
+
+    const dark = $derived(isDark());
+    const owlSvg = $derived(
+        dark
+            ? redthreadSvg
+                  .replace(/fill:#000000/g, "fill:currentColor")
+                  .replace(/stroke:#000000/g, "stroke:currentColor")
+                  .replace(/fill:#ffffff/g, "fill:#000000")
+                  .replace(/stroke:#ffffff/g, "stroke:#000000")
+            : redthreadSvg,
+    );
+
+    let isMounted = $state(false);
+    onMount(() => (isMounted = true));
+
+    const project = $derived(data?.project);
+    const isMember = $derived(data?.isMember);
+
+    const allNavItems = $derived([
+        {
+            label: "Overview",
+            href: `/${data?.slug}`,
+            icon: LayoutDashboardIcon,
+        },
+        { label: "Layers", href: `/${data?.slug}/layers`, icon: LayersIcon },
+        { label: "Media", href: `/${data?.slug}/media`, icon: ImageIcon },
+        { label: "Diffs", href: `/${data?.slug}/diffs`, icon: GitCommit },
+        { label: "Settings", href: `/${data?.slug}/settings`, icon: Settings },
+    ]);
+
+    const navItems = $derived(isMember ? allNavItems : allNavItems.slice(0, 1));
+
+    function isActive(href: string) {
+        const path = $page.url.pathname;
+        if (path === href) return true;
+        // Sub-routes only highlight for non-root paths (so Overview doesn't stick)
+        if (href !== `/${data?.slug}`) {
+            return path.startsWith(href + "/");
+        }
+        return false;
+    }
+</script>
+
+<svelte:head>
+    <title>{project?.title ?? "Project"} — TinyOwl</title>
+</svelte:head>
+
+<div class="flex flex-col h-screen overflow-hidden">
+    <header
+        class="flex items-center gap-2 shrink-0 px-4 h-11 border-b border-border bg-background"
+    >
+        <a href="/" aria-label="tinyowl" class="flex items-center gap-2.5">
+            <span
+                class="size-5 shrink-0 inline-block [&>svg]:w-full [&>svg]:h-full text-foreground"
+            >
+                {#if isMounted}{@html owlSvg}{/if}
+            </span>
+            <span class="text-sm font-semibold text-foreground">tinyowl</span>
+        </a>
+        {#if project}
+            <span class="w-px h-4 shrink-0 bg-border"></span>
+            <span class="text-sm font-medium text-foreground truncate"
+                >{project.title}</span
+            >
+        {/if}
+        <div class="ml-auto flex items-center gap-1">
+            <a
+                href="/profile"
+                class="text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md"
+            >
+                Profile
+            </a>
+        </div>
+    </header>
+
+    <div class="flex flex-1 min-h-0">
+        <aside
+            class="w-44 shrink-0 border-r border-border bg-background flex flex-col"
+        >
+            <nav class="flex flex-col gap-0.5 p-3">
+                {#each navItems as item}
+                    <a
+                        href={item.href}
+                        class="flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm {isActive(
+                            item.href,
+                        )
+                            ? 'bg-secondary text-foreground font-medium'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                    >
+                        <item.icon class="size-4 shrink-0" />
+                        {item.label}
+                    </a>
+                {/each}
+            </nav>
+            <div class="mt-auto p-3 border-t border-border">
+                <a
+                    href="/"
+                    class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
+                >
+                    <ChevronLeft class="size-3.5" />
+                    Back to projects
+                </a>
+            </div>
+        </aside>
+
+        <main class="flex-1 min-h-0 overflow-y-auto bg-background">
+            {#if project}
+                {@render children()}
+            {:else}
+                <div class="flex items-center justify-center h-full">
+                    <div class="text-center p-10 max-w-md">
+                        <h2 class="text-lg font-semibold text-foreground mb-2">
+                            Project not found
+                        </h2>
+                        <p class="text-sm text-muted-foreground">
+                            This project doesn't exist or you don't have access.
+                        </p>
+                    </div>
+                </div>
+            {/if}
+        </main>
+    </div>
+</div>
