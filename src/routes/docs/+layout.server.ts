@@ -12,10 +12,10 @@ export const load = () => ({
       section: "CLI",
       items: [
         { href: "/docs/cli", label: "Overview" },
+        { href: "/docs/cli/push", label: "Push" },
         { href: "/docs/cli/diff", label: "Diff" },
         { href: "/docs/cli/export", label: "Export" },
         { href: "/docs/cli/import", label: "Import" },
-        { href: "/docs/cli/serve", label: "Serve" },
         { href: "/docs/cli/validate", label: "Validate" },
       ],
     },
@@ -23,15 +23,15 @@ export const load = () => ({
       section: "API",
       items: [
         { href: "/docs/api", label: "Overview" },
-        { href: "/docs/api/entities", label: "Entities" },
-        { href: "/docs/api/collections", label: "Collections" },
-        { href: "/docs/api/relations", label: "Relations" },
-        { href: "/docs/api/vocabularies", label: "Vocabularies" },
-        { href: "/docs/api/classifications", label: "Classifications" },
-        { href: "/docs/api/dates", label: "Dates" },
-        { href: "/docs/api/czml", label: "CZML" },
-        { href: "/docs/api/ogc", label: "OGC" },
-        { href: "/docs/api/import", label: "Import" },
+        { href: "/docs/api/projects", label: "Projects" },
+        { href: "/docs/api/tables", label: "Tables & Rows" },
+        { href: "/docs/api/members", label: "Members" },
+        { href: "/docs/api/column-mappings", label: "Column Mappings" },
+        { href: "/docs/api/search", label: "Search" },
+        { href: "/docs/api/readme", label: "Readme" },
+        { href: "/docs/api/media", label: "Media" },
+        { href: "/docs/api/push-pull", label: "Push & Pull" },
+        { href: "/docs/api/diff-clone", label: "Diff & Clone" },
       ],
     },
     {
@@ -45,9 +45,7 @@ export const load = () => ({
     },
     {
       section: "Configuration",
-      items: [
-        { href: "/docs/config/tinyowl-toml", label: "tinyowl.toml" },
-      ],
+      items: [{ href: "/docs/config/tinyowl-toml", label: "tinyowl.toml" }],
     },
     {
       section: "Deployment",
@@ -58,9 +56,7 @@ export const load = () => ({
     },
     {
       section: "SDK",
-      items: [
-        { href: "/docs/sdk/js", label: "JavaScript" },
-      ],
+      items: [{ href: "/docs/sdk/js", label: "JavaScript" }],
     },
   ],
 });

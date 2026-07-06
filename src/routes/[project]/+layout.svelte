@@ -1,31 +1,16 @@
 <script lang="ts">
     import { page } from "$app/stores";
-    import redthreadSvg from "$lib/assets/redthread.svg?raw";
-    import { onMount } from "svelte";
-    import { isDark } from "$lib/stores/theme.svelte";
     import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
     import LayersIcon from "@lucide/svelte/icons/layers";
     import ImageIcon from "@lucide/svelte/icons/image";
     import GitCommit from "@lucide/svelte/icons/git-commit";
     import Settings from "@lucide/svelte/icons/settings";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+    import Header from "$lib/components/ui/header.svelte";
 
     let { data, children } = $props();
 
-    const dark = $derived(isDark());
-    const owlSvg = $derived(
-        dark
-            ? redthreadSvg
-                  .replace(/fill:#000000/g, "fill:currentColor")
-                  .replace(/stroke:#000000/g, "stroke:currentColor")
-                  .replace(/fill:#ffffff/g, "fill:#000000")
-                  .replace(/stroke:#ffffff/g, "stroke:#000000")
-            : redthreadSvg,
-    );
-
-    let isMounted = $state(false);
-    onMount(() => (isMounted = true));
-
+    const hasSession = $derived(Boolean($page.data?.user));
     const project = $derived(data?.project);
     const isMember = $derived(data?.isMember);
 
@@ -59,32 +44,7 @@
 </svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
-    <header
-        class="flex items-center gap-2 shrink-0 px-4 h-11 border-b border-border bg-background"
-    >
-        <a href="/" aria-label="tinyowl" class="flex items-center gap-2.5">
-            <span
-                class="size-5 shrink-0 inline-block [&>svg]:w-full [&>svg]:h-full text-foreground"
-            >
-                {#if isMounted}{@html owlSvg}{/if}
-            </span>
-            <span class="text-sm font-semibold text-foreground">tinyowl</span>
-        </a>
-        {#if project}
-            <span class="w-px h-4 shrink-0 bg-border"></span>
-            <span class="text-sm font-medium text-foreground truncate"
-                >{project.title}</span
-            >
-        {/if}
-        <div class="ml-auto flex items-center gap-1">
-            <a
-                href="/profile"
-                class="text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md"
-            >
-                Profile
-            </a>
-        </div>
-    </header>
+    <Header subtitle={project?.title} {hasSession} />
 
     <div class="flex flex-1 min-h-0">
         <aside

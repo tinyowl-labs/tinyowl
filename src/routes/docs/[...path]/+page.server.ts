@@ -5,13 +5,19 @@ import { resolve } from "path";
 
 export const load = async ({ params }) => {
   const slug = params.path || "index";
-  const filePath = resolve("src/lib/docs", `${slug}.md`);
+  let filePath = resolve("src/lib/docs", `${slug}.md`);
 
   let raw: string;
   try {
     raw = readFileSync(filePath, "utf-8");
   } catch {
-    throw error(404, "Page not found");
+    // Try index.md in directory
+    try {
+      filePath = resolve("src/lib/docs", slug, "index.md");
+      raw = readFileSync(filePath, "utf-8");
+    } catch {
+      throw error(404, "Page not found");
+    }
   }
 
   const html = marked.parse(raw) as string;

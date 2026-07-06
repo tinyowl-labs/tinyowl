@@ -1,14 +1,12 @@
 <script lang="ts">
-    import SunIcon from "@lucide/svelte/icons/sun";
-    import MoonIcon from "@lucide/svelte/icons/moon";
     import SearchIcon from "@lucide/svelte/icons/search";
     import { goto } from "$app/navigation";
     import redthreadSvg from "$lib/assets/redthread.svg?raw";
     import { onMount } from "svelte";
-    import { setPreference, isDark } from "$lib/stores/theme.svelte";
+    import { isDark } from "$lib/stores/theme.svelte";
+    import Header from "$lib/components/ui/header.svelte";
 
     const dark = $derived(isDark());
-    // Strip the SVG's own dark-mode style block — it conflicts with our class‑based theming
     const cleanSvg = redthreadSvg.replace(/<style>[\s\S]*?<\/style>/, "");
     const owlSvg = $derived(
         dark
@@ -19,10 +17,6 @@
                   .replace(/stroke:#ffffff/gi, "stroke:#000000")
             : cleanSvg,
     );
-
-    function toggleTheme() {
-        setPreference("bgBase", isDark() ? "paper" : "dark");
-    }
 
     let isMounted = $state(false);
     let query = $state("");
@@ -102,70 +96,29 @@
 
 <svelte:head><title>TinyOwl</title></svelte:head>
 
-<header
-    class="home-header fixed top-0 inset-x-0 z-50 flex h-11 shrink-0 items-center justify-between px-4"
->
-    <a
-        href="/"
-        aria-label="tinyowl"
-        class="home-logo-text text-sm font-semibold">tinyowl</a
-    >
-    <nav class="flex items-center gap-1">
-        <button
-            type="button"
-            onclick={toggleTheme}
-            class="home-nav-link rounded-md p-1.5"
-            aria-label="Toggle theme"
-        >
-            <SunIcon
-                class="size-4 scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90"
-            />
-            <MoonIcon
-                class="absolute size-4 scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0"
-            />
-        </button>
-        <a
-            href="/docs"
-            class="home-nav-link rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-            >Docs</a
-        >
-        {#if hasSession}
-            <a
-                href="/profile"
-                class="home-nav-link rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-                >Profile</a
-            >
-        {:else}
-            <a
-                href="/auth/login"
-                class="home-nav-signin cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors no-underline inline-block"
-                >Sign in</a
-            >
-        {/if}
-    </nav>
-</header>
+<Header {hasSession} fixed />
 
 <div class="flex min-h-screen flex-col pt-11">
     <main
-        class="home-page flex flex-1 flex-col items-center justify-center w-full"
+        class="home-page flex flex-1 flex-col items-center w-full pt-[20vh]"
         onkeydown={handleKeydown}
     >
         {#if isMounted}
             <!-- Logo + wordmark -->
-            <div class="flex items-center gap-3 mb-8">
+            <div class="flex flex-col items-center gap-2 mb-8">
                 <div
-                    class="home-logo-icon size-24 shrink-0 [&>svg]:h-full [&>svg]:w-full text-[#15110f] dark:text-[#f7f2ee]"
+                    class="home-logo-icon size-28 shrink-0 [&>svg]:h-full [&>svg]:w-full text-[#15110f] dark:text-[#f7f2ee]"
                 >
                     {@html owlSvg}
                 </div>
                 <span
-                    class="text-5xl font-semibold tracking-tight text-[#8b817c] dark:text-[#9b918b]"
+                    class="text-7xl font-semibold tracking-tight text-[#8b817c] dark:text-[#9b918b]"
                     >tinyowl</span
                 >
             </div>
 
             <!-- Search -->
-            <div class="w-full max-w-xl px-4">
+            <div class="w-full max-w-2xl px-4">
                 <div class="relative w-full">
                     <form onsubmit={handleSubmit}>
                         <SearchIcon
