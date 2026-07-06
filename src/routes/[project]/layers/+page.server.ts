@@ -2,6 +2,14 @@ import type { PageServerLoad } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
 
 type TableRow = Record<string, unknown>;
+type MediaItem = {
+  hash: string;
+  entity_type: string;
+  entity_id: string;
+  media_type: string;
+  file_size: number;
+  url: string;
+};
 
 export const load: PageServerLoad = async ({ params, url, fetch }) => {
   const slug = params.project;
@@ -38,6 +46,25 @@ export const load: PageServerLoad = async ({ params, url, fetch }) => {
     }
   }
 
+  // Fetch media and build entity lookup
+  let mediaByEntity: Record<string, { url: string; media_type: string }[]> = {};
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/media`,
+    );
+    if (res.ok) {
+      const mediaList: MediaItem[] = await res.json();
+      for (const m of mediaList) {
+        const key = `${m.entity_type}:${m.entity_id}`;
+        if (!mediaByEntity[key]) mediaByEntity[key] = [];
+        mediaByEntity[key].push({
+          url: `${TINYOWL_CORE_URL}${m.url}`,
+          media_type: m.media_type,
+        });
+      }
+    }
+  } catch (_) {}
+
   // Find which page the highlighted row is on (25 rows per page)
   let highlightPage = 0;
   if (highlight && layer) {
@@ -48,5 +75,12 @@ export const load: PageServerLoad = async ({ params, url, fetch }) => {
     if (idx >= 0) highlightPage = Math.floor(idx / 25);
   }
 
-  return { tables, rows: allRows, layer, highlight, highlightPage };
+  return {
+    tables,
+    rows: allRows,
+    layer,
+    highlight,
+    highlightPage,
+    mediaByEntity,
+  };
 };

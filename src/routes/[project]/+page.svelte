@@ -8,6 +8,7 @@
     import Loader2Icon from "@lucide/svelte/icons/loader-2";
     import FileTextIcon from "@lucide/svelte/icons/file-text";
     import { marked } from "marked";
+    import { browser } from "$app/environment";
 
     let { data, form } = $props();
 
@@ -71,6 +72,45 @@
 
     // Research accordion
     let expanded = $state(false);
+
+    // Map rendering action (client-side only)
+    async function renderMap(node: HTMLElement, bboxStr: string) {
+        if (!browser) return;
+        const L = (await import("leaflet")).default;
+        await import("leaflet/dist/leaflet.css");
+
+        const map = L.map(node, {
+            attributionControl: false,
+            zoomControl: false,
+            dragging: false,
+            scrollWheelZoom: false,
+            touchZoom: false,
+            doubleClickZoom: false,
+        }).setView([0, 0], 1);
+
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+        }).addTo(map);
+
+        try {
+            const geojson = JSON.parse(bboxStr);
+            const layer = L.geoJSON(geojson, {
+                style: {
+                    color: "hsl(var(--primary))",
+                    weight: 2,
+                    fillOpacity: 0.1,
+                },
+            }).addTo(map);
+            map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+        } catch (_) {}
+
+        return {
+            destroy() {
+                map.remove();
+            },
+        };
+    }
+
     let articles = $state<Article[]>([]);
     let loading = $state(false);
     let error = $state("");
@@ -169,7 +209,7 @@
 
     <!-- Description (markdown, Wikipedia-style accordion) -->
     {#if sections.length > 0}
-        <section class="mb-10 max-w-3xl">
+        <section class="mb-10 max-w-2xl">
             {#each sections as section, idx}
                 {#if section.title}
                     <!-- H1 accordion section -->
@@ -228,6 +268,18 @@
             <p class="text-base leading-relaxed text-foreground/80 max-w-2xl">
                 {project?.description ?? ""}
             </p>
+        </section>
+    {/if}
+
+    <!-- Project extent map -->
+    {#if project?.bbox}
+        <section class="mb-10 max-w-2xl">
+            <div class="rounded-lg border border-border overflow-hidden">
+                <div
+                    class="w-full h-48 bg-secondary/20"
+                    use:renderMap={project.bbox}
+                ></div>
+            </div>
         </section>
     {/if}
 

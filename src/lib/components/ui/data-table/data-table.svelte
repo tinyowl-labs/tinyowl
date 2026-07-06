@@ -36,14 +36,12 @@
     }: Props<TData> = $props();
 
     let sorting = $state<SortingState>([]);
+    let _pageIndex = $state(pageIndex);
+    let _pageSize = $state(pageSize);
 
-    // Sync table page when prop changes (from parent)
-    let internalPage = $state(pageIndex);
+    // Sync pageIndex prop → internal state
     $effect(() => {
-        if (pageIndex !== internalPage && table) {
-            internalPage = pageIndex;
-            table.setPageIndex(pageIndex);
-        }
+        _pageIndex = pageIndex;
     });
 
     const table = createSvelteTable({
@@ -57,17 +55,26 @@
             get sorting() {
                 return sorting;
             },
+            get pagination() {
+                return { pageIndex: _pageIndex, pageSize: _pageSize };
+            },
         },
         onSortingChange: (updater) => {
             if (typeof updater === "function") sorting = updater(sorting);
             else sorting = updater;
         },
+        onPaginationChange: (updater) => {
+            const next =
+                typeof updater === "function"
+                    ? updater({ pageIndex: _pageIndex, pageSize: _pageSize })
+                    : updater;
+            _pageIndex = next.pageIndex;
+            _pageSize = next.pageSize;
+            onPageChange?.(_pageIndex);
+        },
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
         getPaginationRowModel: getPaginationRowModel(),
-        initialState: {
-            pagination: { pageSize, pageIndex },
-        },
     });
 </script>
 
