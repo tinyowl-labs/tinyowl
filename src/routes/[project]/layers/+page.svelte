@@ -12,6 +12,7 @@
     import { page } from "$app/stores";
     import { onMount, tick } from "svelte";
     import LayerMap from "$lib/components/dashboard/LayerMap.svelte";
+    import RowNum from "$lib/components/ui/row-num.svelte";
 
     let { data } = $props();
 
@@ -78,7 +79,15 @@
                 }),
             );
 
-        return [mediaCol, ...dataCols];
+        // Row number column
+        const rowNumCol = columnHelper.display({
+            id: "__row_number",
+            header: "#",
+            cell: (info) => renderComponent(RowNum, { n: info.row.index + 1 }),
+            size: 36,
+        });
+
+        return [rowNumCol, mediaCol, ...dataCols];
     }
 
     const tabs = $derived(
