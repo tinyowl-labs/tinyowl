@@ -98,6 +98,14 @@
             <p class="mt-1 text-sm text-muted-foreground">
                 {project?.title ?? ""}
             </p>
+            {#if updated}
+                <div
+                    class="mt-2 flex items-center gap-1 text-xs text-muted-foreground"
+                >
+                    <ClockIcon class="size-3" />
+                    Updated {updated}
+                </div>
+            {/if}
         </div>
 
         <!-- GitHub-style Code dropdown -->
