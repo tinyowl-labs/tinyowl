@@ -105,33 +105,42 @@
     async function searchVocab(value: string) {
         vocabLoading = true;
         vocabResults = [];
-        try {
-            const [periodoRes, aatRes, crmRes] = await Promise.all([
-                fetch(
-                    `/api/v1/vocab/search?vocab=periodo&q=${encodeURIComponent(value)}&limit=10`,
-                ),
-                fetch(
-                    `/api/v1/vocab/search?vocab=aat&q=${encodeURIComponent(value)}&limit=10`,
-                ),
-                fetch(
-                    `/api/v1/vocab/search?vocab=crm&q=${encodeURIComponent(value)}&limit=10`,
-                ),
-            ]);
-            const periodo = periodoRes.ok ? await periodoRes.json() : [];
-            const aat = aatRes.ok ? await aatRes.json() : [];
-            const crm = crmRes.ok ? await crmRes.json() : [];
-            vocabResults = [...periodo, ...aat, ...crm].sort(
-                (a: any, b: any) => b.score - a.score,
-            );
-        } catch (_) {
-            vocabResults = [];
-        } finally {
-            vocabLoading = false;
+
+        async function fetchVocab(vocab: string) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 5000);
+            try {
+                const res = await fetch(
+                    `/api/v1/vocab/search?vocab=${vocab}&q=${encodeURIComponent(value)}&limit=10`,
+                    { signal: ctrl.signal },
+                );
+                clearTimeout(timer);
+                return res.ok ? await res.json() : [];
+            } catch (_) {
+                return [];
+            }
         }
+
+        const [periodo, aat, crm] = await Promise.all([
+            fetchVocab("periodo"),
+            fetchVocab("aat"),
+            fetchVocab("crm"),
+        ]);
+        vocabResults = [...periodo, ...aat, ...crm].sort(
+            (a: any, b: any) => b.score - a.score,
+        );
+        vocabLoading = false;
     }
 
     let vocabForm = $state<HTMLFormElement | null>(null);
-    let vocabFormData = $state({ entity_type: "", column_name: "", local_value: "", concept_uri: "", vocabulary: "", confidence: "" });
+    let vocabFormData = $state({
+        entity_type: "",
+        column_name: "",
+        local_value: "",
+        concept_uri: "",
+        vocabulary: "",
+        confidence: "",
+    });
 
     async function selectVocabMapping(mapping: any, result: any) {
         vocabFormData = {
@@ -657,20 +666,44 @@
                     </div>
                 {:else if tabValue === "mappings"}
                     <div class="pt-2">
-                    <form
-                        method="POST"
-                        action="?/updateMapping"
-                        use:enhance
-                        bind:this={vocabForm}
-                        class="hidden"
-                    >
-                        <input type="hidden" name="entity_type" value={vocabFormData.entity_type} />
-                        <input type="hidden" name="column_name" value={vocabFormData.column_name} />
-                        <input type="hidden" name="local_value" value={vocabFormData.local_value} />
-                        <input type="hidden" name="concept_uri" value={vocabFormData.concept_uri} />
-                        <input type="hidden" name="vocabulary" value={vocabFormData.vocabulary} />
-                        <input type="hidden" name="confidence" value={vocabFormData.confidence} />
-                    </form>
+                        <form
+                            method="POST"
+                            action="?/updateMapping"
+                            use:enhance
+                            bind:this={vocabForm}
+                            class="hidden"
+                        >
+                            <input
+                                type="hidden"
+                                name="entity_type"
+                                value={vocabFormData.entity_type}
+                            />
+                            <input
+                                type="hidden"
+                                name="column_name"
+                                value={vocabFormData.column_name}
+                            />
+                            <input
+                                type="hidden"
+                                name="local_value"
+                                value={vocabFormData.local_value}
+                            />
+                            <input
+                                type="hidden"
+                                name="concept_uri"
+                                value={vocabFormData.concept_uri}
+                            />
+                            <input
+                                type="hidden"
+                                name="vocabulary"
+                                value={vocabFormData.vocabulary}
+                            />
+                            <input
+                                type="hidden"
+                                name="confidence"
+                                value={vocabFormData.confidence}
+                            />
+                        </form>
                         <div class="mb-4">
                             <p class="text-sm text-muted-foreground">
                                 Map local values to external vocabularies and
@@ -916,10 +949,17 @@
                                                 </div>
                                             {:else}
                                                 <p
-                                                    class="text-xs text-muted-foreground py-4"
+                                                    class="text-xs text-muted-foreground py-2"
                                                 >
                                                     No matching terms found.
                                                 </p>
+                                                <button
+                                                    onclick={() =>
+                                                        startEdit(mapping)}
+                                                    class="text-xs text-primary hover:underline"
+                                                >
+                                                    Enter concept URI manually
+                                                </button>
                                             {/if}
                                         </div>
                                     {/if}
