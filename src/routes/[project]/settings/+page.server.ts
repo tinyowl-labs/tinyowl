@@ -195,6 +195,46 @@ export const actions: Actions = {
     return { success: true, mappingAction: "updated" };
   },
 
+  bulkMapping: async ({ request, locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in" };
+
+    const data = await request.formData();
+    const localValue = String(data.get("local_value") ?? "").trim();
+    const columnName = String(data.get("column_name") ?? "").trim();
+    const conceptUri = String(data.get("concept_uri") ?? "").trim();
+    const vocabulary = String(data.get("vocabulary") ?? "").trim() || undefined;
+    const confidence = parseFloat(String(data.get("confidence") ?? "0.9"));
+
+    if (!localValue || !columnName || !conceptUri) {
+      return { error: "Missing required fields." };
+    }
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/column-mappings/bulk`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          local_value: localValue,
+          column_name: columnName,
+          concept_uri: conceptUri,
+          vocabulary: vocabulary || null,
+          confidence,
+          scope: "matching_value_and_column",
+        }),
+      },
+    );
+    if (!res.ok) return { error: `Failed: ${await res.text()}` };
+    return { success: true, mappingAction: "bulk" };
+  },
+
   updateVisibility: async ({ request, locals, params, fetch }) => {
     const { user } = await locals.getSession();
     if (!user) return { error: "Not signed in" };

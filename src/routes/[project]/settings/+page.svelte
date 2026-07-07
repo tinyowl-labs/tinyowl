@@ -142,6 +142,25 @@
         confidence: "",
     });
 
+    let pendingBulk = $state<{ local_value: string; column_name: string; count: number; concept_uri: string; vocabulary: string; confidence: string } | null>(null);
+
+    async function doBulkApply() {
+        if (!pendingBulk) return;
+        await fetch("?/bulkMapping", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                local_value: pendingBulk.local_value,
+                column_name: pendingBulk.column_name,
+                concept_uri: pendingBulk.concept_uri,
+                vocabulary: pendingBulk.vocabulary,
+                confidence: pendingBulk.confidence,
+            }).toString(),
+        });
+        pendingBulk = null;
+        window.location.reload();
+    }
+
     async function selectVocabMapping(mapping: any, result: any) {
         vocabFormData = {
             entity_type: mapping.entity_type,
@@ -154,7 +173,15 @@
         editingMapping = null;
         vocabResults = [];
         vocabLoading = false;
-        // Submit the hidden form after a tick
+        const similar = mappings.filter((m: any) =>
+            !m.concept_uri &&
+            m.local_value === mapping.local_value &&
+            m.column_name === mapping.column_name &&
+            m.entity_type !== mapping.entity_type
+        );
+        pendingBulk = similar.length > 0
+            ? { local_value: mapping.local_value, column_name: mapping.column_name, count: similar.length, concept_uri: result.uri, vocabulary: result.vocabulary, confidence: String(Math.round(result.score * 100) / 100) }
+            : null;
         setTimeout(() => vocabForm?.requestSubmit(), 0);
     }
 
@@ -769,6 +796,17 @@
                             </p>
                         {/if}
 
+                        {#if pendingBulk}
+                            <div class="mb-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm flex items-center justify-between gap-3">
+                                <span class="text-foreground">Also map <strong>{pendingBulk.count}</strong> other &ldquo;{pendingBulk.local_value}&rdquo; terms?</span>
+                                <button
+                                    onclick={doBulkApply}
+                                    class="shrink-0 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                                >
+                                    Apply to all
+                                </button>
+                            </div>
+                        {/if}
                         {#if mappings.length > 0}
                             <div
                                 class="rounded-lg border border-border overflow-hidden"
