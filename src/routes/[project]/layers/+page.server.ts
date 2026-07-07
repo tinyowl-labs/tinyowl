@@ -11,15 +11,20 @@ type MediaItem = {
   url: string;
 };
 
-export const load: PageServerLoad = async ({ params, url, fetch }) => {
+export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   const slug = params.project;
   const layer = url.searchParams.get("layer") ?? "";
   const highlight = url.searchParams.get("highlight") ?? "";
+
+  const accessToken = await locals.getAccessToken();
+  const headers: Record<string, string> = {};
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
   let tables: Record<string, string[]> = {};
   try {
     const res = await fetch(
       `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
+      { headers },
     );
     if (res.ok) {
       const data = await res.json();
@@ -34,6 +39,7 @@ export const load: PageServerLoad = async ({ params, url, fetch }) => {
     try {
       const res = await fetch(
         `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${name}/rows`,
+        { headers },
       );
       if (res.ok) {
         const data = await res.json();
@@ -51,6 +57,7 @@ export const load: PageServerLoad = async ({ params, url, fetch }) => {
   try {
     const res = await fetch(
       `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/media`,
+      { headers },
     );
     if (res.ok) {
       const mediaList: MediaItem[] = await res.json();

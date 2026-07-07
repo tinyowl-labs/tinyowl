@@ -1,13 +1,18 @@
 import type { PageServerLoad, Actions } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
 
-export const load: PageServerLoad = async ({ params, fetch }) => {
+export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   const slug = params.project;
+
+  const accessToken = await locals.getAccessToken();
+  const headers: Record<string, string> = {};
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
   let readme: string | null = null;
   try {
     const res = await fetch(
       `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/readme`,
+      { headers },
     );
     if (res.ok) readme = await res.text();
   } catch (_) {}

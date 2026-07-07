@@ -14,6 +14,8 @@
 
     const project = $derived(data?.project);
     const isMember = $derived(data?.isMember);
+    const role = $derived((data?.role as string) ?? "viewer");
+    const canManage = $derived(role === "owner" || role === "admin");
     const entities = $derived(data?.entities ?? []);
     const head = $derived(data?.head as Record<string, unknown> | null);
     const readmeRaw = $derived(data?.readme ?? null);
@@ -187,7 +189,7 @@
             <h1 class="text-4xl font-bold tracking-tight text-foreground">
                 {project?.title ?? "Untitled"}
             </h1>
-            {#if isMember}
+            {#if canManage}
                 <a
                     href="/{project?.slug}/settings"
                     class="text-muted-foreground hover:text-foreground transition-colors -mb-1"
@@ -436,7 +438,7 @@
             </form>
         {:else if readmeRaw}
             <div class="group relative">
-                {#if isMember}
+                {#if canManage}
                     <button
                         onclick={startEdit}
                         class="absolute -right-2 -top-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
@@ -446,10 +448,10 @@
                     </button>
                 {/if}
                 <div class="readme-content">
-                    {@html marked.parse(readmeRaw)}
+                    {@html marked.parse(readmeRaw ?? "")}
                 </div>
             </div>
-        {:else if isMember}
+        {:else if canManage}
             <button
                 onclick={startEdit}
                 class="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 w-full text-left hover:bg-secondary/50 transition-colors"

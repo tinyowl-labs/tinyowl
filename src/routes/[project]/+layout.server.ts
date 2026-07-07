@@ -6,8 +6,9 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
   const slug = params.project;
 
   let isMember = false;
+  let role = "viewer";
 
-  // Fetch public project details
+  // Fetch project details (with auth if logged in for private projects)
   let project: {
     slug: string;
     title: string;
@@ -20,7 +21,12 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
   } | null = null;
 
   try {
-    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`);
+    const accessToken = await locals.getAccessToken();
+    const headers: Record<string, string> = {};
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`, {
+      headers,
+    });
     if (res.ok) project = await res.json();
   } catch (_) {}
 
@@ -32,8 +38,12 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (res.ok) {
-        const projects: { slug: string }[] = await res.json();
-        isMember = projects.some((p) => p.slug === slug);
+        const projects: { slug: string; role: string }[] = await res.json();
+        const member = projects.find((p) => p.slug === slug);
+        if (member) {
+          isMember = true;
+          role = member.role;
+        }
       }
     } catch (_) {}
   }
@@ -42,5 +52,5 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
     project = { slug, title: slug };
   }
 
-  return { user, project, isMember, slug };
+  return { user, project, isMember, role, slug };
 };

@@ -18,6 +18,8 @@
     const hasSession = $derived(Boolean($page.data?.user));
     const project = $derived(data?.project);
     const isMember = $derived(data?.isMember);
+    const role = $derived((data?.role as string) ?? "viewer");
+    const canManage = $derived(role === "owner" || role === "admin");
 
     const allNavItems = $derived([
         {
@@ -28,7 +30,15 @@
         { label: "Layers", href: `/${data?.slug}/layers`, icon: LayersIcon },
         { label: "Media", href: `/${data?.slug}/media`, icon: ImageIcon },
         { label: "Diffs", href: `/${data?.slug}/diffs`, icon: GitCommit },
-        { label: "Settings", href: `/${data?.slug}/settings`, icon: Settings },
+        ...(canManage
+            ? [
+                  {
+                      label: "Settings",
+                      href: `/${data?.slug}/settings`,
+                      icon: Settings,
+                  },
+              ]
+            : []),
     ]);
 
     const navItems = $derived(isMember ? allNavItems : allNavItems.slice(0, 1));
