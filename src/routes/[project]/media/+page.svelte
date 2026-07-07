@@ -6,6 +6,11 @@
     import VideoIcon from "@lucide/svelte/icons/video";
     import MusicIcon from "@lucide/svelte/icons/music";
     import FileWarningIcon from "@lucide/svelte/icons/file-warning";
+    import XIcon from "@lucide/svelte/icons/x";
+    import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+    import ChevronRight from "@lucide/svelte/icons/chevron-right";
+    import ZoomInIcon from "@lucide/svelte/icons/zoom-in";
+    import ZoomOutIcon from "@lucide/svelte/icons/zoom-out";
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import { onMount } from "svelte";
 
@@ -39,6 +44,117 @@
     }
     function onImageError(hash: string) {
         failedImages = new Set([...failedImages, hash]);
+    }
+
+    // Lightbox state
+    let lightboxIdx = $state(-1);
+    let zoom = $state(1);
+    let translateX = $state(0);
+    let translateY = $state(0);
+    let panning = $state(false);
+    let panStartX = $state(0);
+    let panStartY = $state(0);
+    let panOrigX = $state(0);
+    let panOrigY = $state(0);
+
+    const imageItems = $derived(
+        items.filter((it) => it.media_type.startsWith("image/")),
+    );
+    const lightboxItem = $derived(
+        lightboxIdx >= 0 && lightboxIdx < imageItems.length
+            ? imageItems[lightboxIdx]
+            : null,
+    );
+
+    function openLightbox(item: MediaItem) {
+        if (!item.media_type.startsWith("image/")) return;
+        const idx = imageItems.indexOf(item);
+        if (idx >= 0) {
+            lightboxIdx = idx;
+            zoom = 1;
+        }
+    }
+
+    function closeLightbox() {
+        lightboxIdx = -1;
+        zoom = 1;
+        translateX = 0;
+        translateY = 0;
+    }
+
+    function prevImage() {
+        if (lightboxIdx > 0) {
+            lightboxIdx--;
+            zoom = 1;
+            translateX = 0;
+            translateY = 0;
+        }
+    }
+
+    function nextImage() {
+        if (lightboxIdx < imageItems.length - 1) {
+            lightboxIdx++;
+            zoom = 1;
+            translateX = 0;
+            translateY = 0;
+        }
+    }
+
+    function zoomIn() {
+        zoom = Math.min(zoom * 1.5, 8);
+    }
+
+    function zoomOut() {
+        const next = Math.max(zoom / 1.5, 1);
+        if (next <= 1) {
+            translateX = 0;
+            translateY = 0;
+        }
+        zoom = next;
+    }
+
+    function resetZoom() {
+        zoom = 1;
+        translateX = 0;
+        translateY = 0;
+    }
+
+    function onWheel(e: WheelEvent) {
+        e.preventDefault();
+        if (e.deltaY < 0) zoomIn();
+        else zoomOut();
+    }
+
+    function onPanStart(e: MouseEvent) {
+        if (zoom <= 1) return;
+        e.preventDefault();
+        panning = true;
+        panStartX = e.clientX;
+        panStartY = e.clientY;
+        panOrigX = translateX;
+        panOrigY = translateY;
+    }
+
+    function onPanMove(e: MouseEvent) {
+        if (!panning) return;
+        // Scale delta by zoom so cursor stays anchored to the image pixel
+        const dx = (e.clientX - panStartX) / zoom;
+        const dy = (e.clientY - panStartY) / zoom;
+        translateX = panOrigX + dx;
+        translateY = panOrigY + dy;
+    }
+
+    function onPanEnd() {
+        panning = false;
+    }
+
+    function onKeydown(e: KeyboardEvent) {
+        if (!lightboxItem) return;
+        if (e.key === "Escape") closeLightbox();
+        if (e.key === "ArrowLeft") prevImage();
+        if (e.key === "ArrowRight") nextImage();
+        if (e.key === "+" || e.key === "=") zoomIn();
+        if (e.key === "-") zoomOut();
     }
 
     async function loadMore() {
@@ -139,7 +255,7 @@
     <title>Media — {$page.data?.project?.title ?? "Project"} — TinyOwl</title>
 </svelte:head>
 
-<div class="p-6">
+<div class="p-6" onkeydown={onKeydown}>
     {#if items.length === 0 && !loading}
         <div class="flex items-center justify-center h-64">
             <div class="text-center max-w-sm">
@@ -179,7 +295,8 @@
                         {@const imgLoaded = loadedImages.has(item.hash)}
                         {@const imgFailed = failedImages.has(item.hash)}
                         <div
-                            class="rounded-lg border bg-card overflow-hidden group"
+                            class="rounded-lg border bg-card overflow-hidden group cursor-pointer"
+                            onclick={() => openLightbox(item)}
                         >
                             <!-- Preview area -->
                             <div class="aspect-square bg-secondary relative">
@@ -343,6 +460,116 @@
     {#if error}
         <div class="py-4 text-center">
             <p class="text-sm text-destructive">{error}</p>
+        </div>
+    {/if}
+
+    <!-- Lightbox -->
+    {#if lightboxItem}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+            class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-12"
+            onclick={closeLightbox}
+            onkeydown={onKeydown}
+            tabindex="-1"
+            role="dialog"
+        >
+            <!-- Close -->
+            <button
+                class="absolute top-4 right-4 z-[60] flex items-center justify-center size-10 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                onclick={(e) => {
+                    e.stopPropagation();
+                    closeLightbox();
+                }}
+            >
+                <XIcon class="size-5" />
+            </button>
+
+            <!-- Prev -->
+            {#if lightboxIdx > 0}
+                <button
+                    class="absolute left-4 top-1/2 -translate-y-1/2 z-[60] flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        prevImage();
+                    }}
+                >
+                    <ChevronLeft class="size-6" />
+                </button>
+            {/if}
+
+            <!-- Next -->
+            {#if lightboxIdx < imageItems.length - 1}
+                <button
+                    class="absolute right-4 top-1/2 -translate-y-1/2 z-[60] flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        nextImage();
+                    }}
+                >
+                    <ChevronRight class="size-6" />
+                </button>
+            {/if}
+
+            <!-- Zoom controls -->
+            <div
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-1 rounded-full bg-white/20 px-2 py-1.5"
+            >
+                <button
+                    class="flex items-center justify-center size-8 rounded-full hover:bg-white/20 text-white disabled:opacity-30 transition-colors"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        zoomOut();
+                    }}
+                    disabled={zoom <= 1}
+                >
+                    <ZoomOutIcon class="size-4" />
+                </button>
+                <span
+                    class="text-xs text-white/80 tabular-nums w-10 text-center"
+                >
+                    {Math.round(zoom * 100)}%
+                </span>
+                <button
+                    class="flex items-center justify-center size-8 rounded-full hover:bg-white/20 text-white disabled:opacity-30 transition-colors"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        zoomIn();
+                    }}
+                    disabled={zoom >= 8}
+                >
+                    <ZoomInIcon class="size-4" />
+                </button>
+            </div>
+
+            <!-- Counter -->
+            <div class="absolute top-4 left-4 z-[60] text-sm text-white/60">
+                {lightboxIdx + 1} / {imageItems.length}
+            </div>
+
+            <img
+                src={lightboxItem.url +
+                    (accessToken
+                        ? `?token=${encodeURIComponent(accessToken)}`
+                        : "")}
+                alt="Media"
+                class="max-w-full max-h-full object-contain rounded-lg shadow-2xl select-none {panning
+                    ? 'cursor-grabbing'
+                    : zoom > 1
+                      ? 'cursor-grab'
+                      : 'transition-transform duration-150'}"
+                style="transform: scale({zoom}) translate({translateX}px, {translateY}px)"
+                draggable="false"
+                onwheel={onWheel}
+                onmousedown={onPanStart}
+                onmousemove={onPanMove}
+                onmouseup={onPanEnd}
+                onmouseleave={onPanEnd}
+                ondblclick={resetZoom}
+                ondragstart={(e) => e.preventDefault()}
+                onclick={(e) => {
+                    if (zoom > 1) e.stopPropagation();
+                }}
+            />
         </div>
     {/if}
 </div>
