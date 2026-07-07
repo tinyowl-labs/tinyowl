@@ -57,7 +57,26 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) mappings = await res.json();
   } catch (_) {}
 
-  return { user, role, members, mappings, currentUserId: user?.id ?? "" };
+  // Fetch tables for visibility settings
+  let tables: Record<string, string[]> = {};
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
+    );
+    if (res.ok) {
+      const data = await res.json();
+      tables = data.tables ?? {};
+    }
+  } catch (_) {}
+
+  return {
+    user,
+    role,
+    members,
+    mappings,
+    tables,
+    currentUserId: user?.id ?? "",
+  };
 };
 
 export const actions: Actions = {
@@ -169,5 +188,59 @@ export const actions: Actions = {
     );
     if (!res.ok) return { error: `Failed: ${await res.text()}` };
     return { success: true, mappingAction: "updated" };
+  },
+
+  updateVisibility: async ({ request, locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in" };
+
+    const data = await request.formData();
+    const visibility = String(data.get("visibility") ?? "").trim();
+    const tableName = String(data.get("table_name") ?? "").trim();
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+
+    const body: Record<string, unknown> = {};
+    if (tableName) {
+      body.table_visibility = { [tableName]: visibility };
+    } else {
+      body.visibility = visibility;
+    }
+
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return { error: `Failed: ${await res.text()}` };
+    return { success: true, visibilityAction: "updated" };
+  },
+
+  updateLicence: async ({ request, locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in" };
+
+    const data = await request.formData();
+    const licence = String(data.get("licence") ?? "").trim();
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        licence: licence === "" ? null : licence,
+      }),
+    });
+    if (!res.ok) return { error: `Failed: ${await res.text()}` };
+    return { success: true, licenceAction: "updated" };
   },
 };

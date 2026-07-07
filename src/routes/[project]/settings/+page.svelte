@@ -10,7 +10,9 @@
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
 
-    let { data, form } = $props();
+    let { data, form: rawForm } = $props();
+    // Cast form to any for dynamic action error fields
+    const form = $derived(rawForm as any);
 
     const members = $derived(data?.members ?? []);
     const mappings = $derived(data?.mappings ?? []);
@@ -41,12 +43,15 @@
 
     const tabs = $derived([
         { value: "members", label: "Members", count: members.length },
+        { value: "visibility", label: "Visibility" },
+        { value: "licence", label: "Licence" },
         { value: "mappings", label: "Mappings", count: mappings.length },
     ]);
 
     const ROLE_LABELS: Record<string, string> = {
         owner: "Owner",
         admin: "Admin",
+        collaborator: "Collaborator",
         viewer: "Viewer",
     };
 
@@ -72,6 +77,62 @@
         editingMapping = null;
         editConceptUri = "";
     }
+
+    // Visibility & licence state
+    const project = $derived(data?.project);
+    const globalVisibility = $derived(
+        (project as any)?.visibility ?? "private",
+    );
+    const tableVisibility = $derived(
+        ((project as any)?.table_visibility as Record<string, string>) ?? {},
+    );
+    const currentLicence = $derived((project as any)?.licence ?? "");
+    const tables = $derived(
+        ((data as any)?.tables as Record<string, string[]> | null) ?? {},
+    );
+    const tableNames = $derived(Object.keys(tables));
+
+    const LICENCES = [
+        {
+            key: "CC0",
+            label: "CC0 — Public Domain",
+            url: "https://creativecommons.org/publicdomain/zero/1.0/",
+        },
+        {
+            key: "CC_BY_4",
+            label: "CC BY 4.0 — Attribution",
+            url: "https://creativecommons.org/licenses/by/4.0/",
+        },
+        {
+            key: "CC_BY_SA_4",
+            label: "CC BY-SA 4.0 — Attribution-ShareAlike",
+            url: "https://creativecommons.org/licenses/by-sa/4.0/",
+        },
+        {
+            key: "CC_BY_NC_4",
+            label: "CC BY-NC 4.0 — Attribution-NonCommercial",
+            url: "https://creativecommons.org/licenses/by-nc/4.0/",
+        },
+        {
+            key: "CC_BY_NC_SA_4",
+            label: "CC BY-NC-SA 4.0 — Attribution-NonCommercial-ShareAlike",
+            url: "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+        },
+        {
+            key: "ODbL",
+            label: "ODbL — Open Database Licence",
+            url: "https://opendatacommons.org/licenses/odbl/",
+        },
+        { key: "ALL_RIGHTS", label: "All Rights Reserved", url: "" },
+    ];
+
+    let saving = $state(false);
+
+    $effect(() => {
+        if (form?.visibilityAction || form?.licenceAction) {
+            saving = false;
+        }
+    });
 </script>
 
 <svelte:head>
@@ -153,6 +214,9 @@
                                         class="h-9 w-28 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                     >
                                         <option value="viewer">Viewer</option>
+                                        <option value="collaborator"
+                                            >Collaborator</option
+                                        >
                                         <option value="admin">Admin</option>
                                         <option value="owner">Owner</option>
                                     </select>
@@ -231,6 +295,10 @@
                                                         <option value="viewer"
                                                             >Viewer</option
                                                         >
+                                                        <option
+                                                            value="collaborator"
+                                                            >Collaborator</option
+                                                        >
                                                         <option value="admin"
                                                             >Admin</option
                                                         >
@@ -299,6 +367,186 @@
                                 {/if}
                             </div>
                         {/if}
+                    </div>
+                {:else if tabValue === "visibility"}
+                    <div class="pt-2 max-w-xl">
+                        <p class="text-sm text-muted-foreground mb-6">
+                            Control which tables are publicly visible. Private
+                            tables require authentication to access.
+                        </p>
+
+                        <!-- Global toggle -->
+                        <div class="rounded-lg border border-border p-4 mb-4">
+                            <div
+                                class="flex items-center justify-between gap-4"
+                            >
+                                <div>
+                                    <p
+                                        class="text-sm font-medium text-foreground"
+                                    >
+                                        Default visibility
+                                    </p>
+                                    <p
+                                        class="text-xs text-muted-foreground mt-0.5"
+                                    >
+                                        Applies to all tables unless overridden
+                                        below.
+                                    </p>
+                                </div>
+                                <form
+                                    method="POST"
+                                    action="?/updateVisibility"
+                                    use:enhance
+                                >
+                                    <select
+                                        name="visibility"
+                                        value={globalVisibility}
+                                        onchange={(e) =>
+                                            e.currentTarget
+                                                .closest("form")
+                                                ?.requestSubmit()}
+                                        disabled={saving}
+                                        class="h-8 w-28 rounded-md border border-input bg-background px-2 py-0 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                    >
+                                        <option value="private">Private</option>
+                                        <option value="public">Public</option>
+                                    </select>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Per-table toggles -->
+                        {#if tableNames.length > 0}
+                            <div
+                                class="rounded-lg border border-border overflow-hidden"
+                            >
+                                <div
+                                    class="grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-2.5 bg-secondary/50 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                                >
+                                    <span>Table</span>
+                                    <span>Visibility</span>
+                                </div>
+                                {#each tableNames as name, i}
+                                    {@const vis =
+                                        tableVisibility[name] ??
+                                        globalVisibility}
+                                    <div
+                                        class="grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-2.5 {i <
+                                        tableNames.length - 1
+                                            ? 'border-b border-border'
+                                            : ''} text-sm"
+                                    >
+                                        <span class="truncate text-foreground">
+                                            {name.replace(/_/g, " ")}
+                                        </span>
+                                        <form
+                                            method="POST"
+                                            action="?/updateVisibility"
+                                            use:enhance
+                                        >
+                                            <input
+                                                type="hidden"
+                                                name="table_name"
+                                                value={name}
+                                            />
+                                            <select
+                                                name="visibility"
+                                                value={vis}
+                                                onchange={(e) =>
+                                                    e.currentTarget
+                                                        .closest("form")
+                                                        ?.requestSubmit()}
+                                                class="h-7 w-24 rounded-md border border-input bg-background px-1.5 py-0 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                            >
+                                                <option value="public"
+                                                    >Public</option
+                                                >
+                                                <option value="private"
+                                                    >Private</option
+                                                >
+                                            </select>
+                                        </form>
+                                    </div>
+                                {/each}
+                            </div>
+                        {:else}
+                            <div
+                                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
+                            >
+                                <p class="text-sm text-muted-foreground">
+                                    No tables yet. Push data to configure
+                                    per-table visibility.
+                                </p>
+                            </div>
+                        {/if}
+                    </div>
+                {:else if tabValue === "licence"}
+                    <div class="pt-2 max-w-xl">
+                        <p class="text-sm text-muted-foreground mb-6">
+                            Choose a licence that governs how others can use and
+                            share your project data.
+                        </p>
+
+                        <div
+                            class="rounded-lg border border-border overflow-hidden"
+                        >
+                            {#each LICENCES as lic, i}
+                                <form
+                                    method="POST"
+                                    action="?/updateLicence"
+                                    use:enhance
+                                >
+                                    <input
+                                        type="hidden"
+                                        name="licence"
+                                        value={lic.key}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={saving}
+                                        class="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-secondary/50 transition-colors {i <
+                                        LICENCES.length - 1
+                                            ? 'border-b border-border'
+                                            : ''} {currentLicence === lic.key
+                                            ? 'bg-accent'
+                                            : ''}"
+                                    >
+                                        <div class="min-w-0">
+                                            <p
+                                                class="text-sm font-medium text-foreground"
+                                            >
+                                                {lic.label}
+                                            </p>
+                                            {#if lic.url}
+                                                <a
+                                                    href={lic.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    class="text-[11px] text-muted-foreground hover:text-primary transition-colors no-underline"
+                                                    onclick={(e) =>
+                                                        e.stopPropagation()}
+                                                >
+                                                    View licence
+                                                </a>
+                                            {/if}
+                                        </div>
+                                        {#if currentLicence === lic.key}
+                                            <span
+                                                class="shrink-0 size-5 rounded-full bg-primary flex items-center justify-center"
+                                            >
+                                                <CheckIcon
+                                                    class="size-3 text-primary-foreground"
+                                                />
+                                            </span>
+                                        {:else}
+                                            <span
+                                                class="shrink-0 size-5 rounded-full border-2 border-border"
+                                            ></span>
+                                        {/if}
+                                    </button>
+                                </form>
+                            {/each}
+                        </div>
                     </div>
                 {:else if tabValue === "mappings"}
                     <div class="pt-2">
