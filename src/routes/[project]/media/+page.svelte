@@ -532,7 +532,7 @@
     {#if lightboxItem}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
-            class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-12 touch-none"
+            class="fixed inset-0 z-[1100] bg-black/80 flex items-center justify-center p-12 touch-none"
             onclick={closeLightbox}
             onkeydown={onKeydown}
             tabindex="-1"

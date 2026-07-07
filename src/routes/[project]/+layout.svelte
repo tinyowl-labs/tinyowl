@@ -10,9 +10,8 @@
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
-    import MenuIcon from "@lucide/svelte/icons/menu";
-    import XIcon from "@lucide/svelte/icons/x";
     import Header from "$lib/components/ui/header.svelte";
+    import MobileNav from "$lib/components/ui/mobile-nav.svelte";
 
     let { data, children } = $props();
 
@@ -84,10 +83,6 @@
         window.addEventListener("resize", onResize);
         return () => window.removeEventListener("resize", onResize);
     });
-
-    function closeMobile() {
-        mobileOpen = false;
-    }
 </script>
 
 <svelte:head>
@@ -158,68 +153,41 @@
             </div>
         </aside>
 
-        <!-- Mobile hamburger button -->
-        <button
-            onclick={() => (mobileOpen = true)}
-            class="md:hidden fixed bottom-4 left-4 z-1001 flex items-center justify-center size-11 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
-            aria-label="Menu"
-        >
-            <MenuIcon class="size-5" />
-        </button>
-
-        <!-- Mobile nav drawer -->
-        {#if mobileOpen}
-            <button
-                class="fixed inset-0 z-1000 bg-black/50 md:hidden"
-                onclick={closeMobile}
-                aria-label="Close menu"
-            ></button>
-            <aside
-                class="fixed inset-y-0 left-0 z-1001 w-64 bg-background border-r border-border flex flex-col shadow-xl md:hidden"
-            >
-                <div
-                    class="flex items-center justify-between px-4 h-11 border-b border-border shrink-0"
-                >
-                    <span class="text-sm font-semibold text-foreground"
-                        >{project?.title ?? "Project"}</span
-                    >
-                    <button
-                        onclick={closeMobile}
-                        class="flex items-center justify-center size-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                    >
-                        <XIcon class="size-4" />
-                    </button>
-                </div>
-
-                <nav class="flex flex-col gap-0.5 p-3 flex-1 overflow-y-auto">
+        <!-- Mobile navigation -->
+        <MobileNav bind:open={mobileOpen} title={project?.title ?? "Project"}>
+            {#snippet children()}
+                <nav class="flex flex-col gap-0.5 p-3">
                     {#each allNavItems as item}
-                        <a
-                            href={item.href}
-                            onclick={closeMobile}
-                            class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
-                                item.href,
-                            )
-                                ? 'bg-secondary text-foreground font-medium'
-                                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
-                        >
-                            <item.icon class="size-4 shrink-0" />
-                            {item.label}
-                        </a>
+                        {#if item.separator}
+                            <div class="my-1 border-t border-border mx-2"></div>
+                        {:else}
+                            <a
+                                href={item.href}
+                                onclick={() => (mobileOpen = false)}
+                                class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
+                                    item.href,
+                                )
+                                    ? 'bg-secondary text-foreground font-medium'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                            >
+                                <item.icon class="size-4 shrink-0" />
+                                {item.label}
+                            </a>
+                        {/if}
                     {/each}
                 </nav>
-
                 <div class="p-3 border-t border-border">
                     <a
                         href="/"
-                        onclick={closeMobile}
+                        onclick={() => (mobileOpen = false)}
                         class="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
                     >
                         <ChevronLeft class="size-4 shrink-0" />
                         Back to projects
                     </a>
                 </div>
-            </aside>
-        {/if}
+            {/snippet}
+        </MobileNav>
 
         <main class="flex-1 min-h-0 overflow-y-auto bg-background">
             {#if project}

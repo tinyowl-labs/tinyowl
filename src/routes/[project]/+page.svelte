@@ -9,6 +9,7 @@
     import FileTextIcon from "@lucide/svelte/icons/file-text";
     import { marked } from "marked";
     import { browser } from "$app/environment";
+    import { isDark } from "$lib/stores/theme.svelte";
 
     let { data, form } = $props();
 
