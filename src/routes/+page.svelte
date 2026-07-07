@@ -1,22 +1,12 @@
 <script lang="ts">
     import SearchIcon from "@lucide/svelte/icons/search";
     import { goto } from "$app/navigation";
-    import redthreadSvg from "$lib/assets/redthread.svg?raw";
     import { onMount } from "svelte";
     import { isDark } from "$lib/stores/theme.svelte";
     import Header from "$lib/components/ui/header.svelte";
+    import OwlLogo from "$lib/components/ui/owl-logo.svelte";
 
     const dark = $derived(isDark());
-    const cleanSvg = redthreadSvg.replace(/<style>[\s\S]*?<\/style>/, "");
-    const owlSvg = $derived(
-        dark
-            ? cleanSvg
-                  .replace(/fill:#000000/gi, "fill:currentColor")
-                  .replace(/stroke:#000000/gi, "stroke:currentColor")
-                  .replace(/fill:#ffffff/gi, "fill:#000000")
-                  .replace(/stroke:#ffffff/gi, "stroke:#000000")
-            : cleanSvg,
-    );
 
     let isMounted = $state(false);
     let query = $state("");
@@ -106,7 +96,7 @@
                 <div
                     class="home-logo-icon size-28 shrink-0 [&>svg]:h-full [&>svg]:w-full text-[#15110f] dark:text-[#f7f2ee]"
                 >
-                    {@html owlSvg}
+                    <OwlLogo />
                 </div>
                 <span
                     class="text-7xl font-semibold tracking-tight text-[#8b817c] dark:text-[#9b918b]"
