@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import type * as LType from "leaflet";
     import "leaflet/dist/leaflet.css";
+    import { isDark } from "$lib/stores/theme.svelte";
 
     type LayerData = {
         name: string;
@@ -75,6 +76,10 @@
             zoom: 13,
             zoomControl: true,
         });
+
+        if (isDark()) {
+            mapContainer.classList.add("leaflet-dark");
+        }
 
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             attribution: "&copy; OpenStreetMap contributors",

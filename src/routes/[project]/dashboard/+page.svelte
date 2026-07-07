@@ -13,8 +13,7 @@
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import ClockIcon from "@lucide/svelte/icons/clock";
     import GaugeIcon from "@lucide/svelte/icons/gauge";
-    import { browser } from "$app/environment";
-    import { isDark } from "$lib/stores/theme.svelte";
+    import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
 
     let { data } = $props();
 
@@ -49,43 +48,6 @@
 
     let actionsOpen = $state(false);
     let copied = $state(false);
-
-    // Leaflet bbox map (client-side only)
-    function renderMap(node: HTMLElement, bboxStr: string) {
-        if (!browser) return;
-        let cleanup: (() => void) | undefined;
-        import("leaflet").then(async ({ default: L }) => {
-            await import("leaflet/dist/leaflet.css");
-            const map = L.map(node, {
-                attributionControl: false,
-                zoomControl: false,
-                dragging: false,
-                scrollWheelZoom: false,
-                touchZoom: false,
-                doubleClickZoom: false,
-            }).setView([0, 0], 1);
-            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                maxZoom: 19,
-            }).addTo(map);
-            try {
-                const geojson = JSON.parse(bboxStr);
-                const layer = L.geoJSON(geojson, {
-                    style: {
-                        color: "hsl(var(--primary))",
-                        weight: 2,
-                        fillOpacity: 0.1,
-                    },
-                }).addTo(map);
-                map.fitBounds(layer.getBounds(), { padding: [20, 20] });
-            } catch (_) {}
-            cleanup = () => map.remove();
-        });
-        return {
-            destroy() {
-                cleanup?.();
-            },
-        };
-    }
 
     function formatBytes(bytes: number): string {
         if (bytes < 1024) return `${bytes} B`;
@@ -236,12 +198,7 @@
 
     <!-- Bbox map -->
     {#if bbox}
-        <a
-            href={`/${slug}/layers`}
-            class="block rounded-lg border border-border overflow-hidden hover:border-primary/50 transition-colors mb-8"
-        >
-            <div class="w-full h-64 bg-secondary/20" use:renderMap={bbox}></div>
-        </a>
+        <BboxMap {bbox} href={`/${slug}/layers`} class="h-64 mb-8" />
     {/if}
 
     <!-- Entity breakdown -->

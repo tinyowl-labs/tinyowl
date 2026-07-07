@@ -8,8 +8,7 @@
     import Loader2Icon from "@lucide/svelte/icons/loader-2";
     import FileTextIcon from "@lucide/svelte/icons/file-text";
     import { marked } from "marked";
-    import { browser } from "$app/environment";
-    import { isDark } from "$lib/stores/theme.svelte";
+    import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
 
     let { data, form } = $props();
 
@@ -19,6 +18,15 @@
     const canManage = $derived(role === "owner" || role === "admin");
     const head = $derived(
         (data as any)?.head as Record<string, unknown> | null,
+    );
+    const updated = $derived(
+        head?.created_at
+            ? new Date(head.created_at as string).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+              })
+            : null,
     );
     const readmeRaw = $derived(data?.readme ?? null);
 
@@ -64,63 +72,7 @@
         collapsed = { ...collapsed, [idx]: !collapsed[idx] };
     }
 
-    const updated = $derived(
-        head?.created_at
-            ? new Date(head.created_at as string).toLocaleDateString("en-GB", {
-                  day: "numeric",
-                  month: "long",
-                  year: "numeric",
-              })
-            : null,
-    );
-
-    // Research accordion
     let expanded = $state(false);
-
-    // Map rendering action (client-side only)
-    function renderMap(node: HTMLElement, bboxStr: string) {
-        if (!browser) return;
-
-        let cleanup: (() => void) | undefined;
-
-        import("leaflet").then(async ({ default: L }) => {
-            await import("leaflet/dist/leaflet.css");
-
-            const map = L.map(node, {
-                attributionControl: false,
-                zoomControl: false,
-                dragging: false,
-                scrollWheelZoom: false,
-                touchZoom: false,
-                doubleClickZoom: false,
-            }).setView([0, 0], 1);
-
-            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                maxZoom: 19,
-            }).addTo(map);
-
-            try {
-                const geojson = JSON.parse(bboxStr);
-                const layer = L.geoJSON(geojson, {
-                    style: {
-                        color: "hsl(var(--primary))",
-                        weight: 2,
-                        fillOpacity: 0.1,
-                    },
-                }).addTo(map);
-                map.fitBounds(layer.getBounds(), { padding: [20, 20] });
-            } catch (_) {}
-
-            cleanup = () => map.remove();
-        });
-
-        return {
-            destroy() {
-                cleanup?.();
-            },
-        };
-    }
-
     let articles = $state<Article[]>([]);
     let loading = $state(false);
     let error = $state("");
@@ -284,12 +236,11 @@
     <!-- Project extent map -->
     {#if (project as any)?.bbox}
         <section class="mb-10 max-w-2xl">
-            <div class="rounded-lg border border-border overflow-hidden">
-                <div
-                    class="w-full h-48 bg-secondary/20"
-                    use:renderMap={(project as any).bbox}
-                ></div>
-            </div>
+            <BboxMap
+                bbox={(project as any).bbox}
+                href={`/${project?.slug}/layers`}
+                class="h-48"
+            />
         </section>
     {/if}
 

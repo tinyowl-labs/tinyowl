@@ -60,3 +60,11 @@
         @apply bg-background text-foreground;
     }
 }
+
+/* Leaflet dark mode — inverts tile images only, not overlays */
+.leaflet-dark .leaflet-tile {
+    filter: invert(1) hue-rotate(180deg) brightness(0.85) saturate(0.6);
+}
+.leaflet-dark .leaflet-container {
+    background: #1a1a2e;
+}

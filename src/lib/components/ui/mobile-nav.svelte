@@ -30,7 +30,7 @@
 
 <!-- Toggle button (visible on mobile) -->
 <button
-    class="lg:hidden fixed bottom-4 left-4 z-[1100] flex items-center justify-center size-10 rounded-full bg-card border border-border shadow-lg text-foreground"
+    class="lg:hidden fixed bottom-4 left-4 z-1100 flex items-center justify-center size-10 rounded-full bg-card border border-border shadow-lg text-foreground"
     onclick={() => (open = true)}
     aria-label="Open navigation"
 >
@@ -39,7 +39,7 @@
 
 <!-- Full-screen overlay -->
 {#if open}
-    <div class="fixed inset-0 z-[1100] bg-background flex flex-col lg:hidden">
+    <div class="fixed inset-0 z-1100 bg-background flex flex-col lg:hidden">
         <div
             class="flex items-center justify-between px-4 h-11 border-b border-border shrink-0"
         >
