@@ -18,8 +18,6 @@
     let { data } = $props();
 
     const project = $derived($page.data?.project);
-    const entityCount = $derived((project as any)?.entity_count ?? 0);
-    const tableCount = $derived((project as any)?.table_count ?? 0);
     const visibility = $derived(
         ((project as any)?.visibility ?? "private") as string,
     );
@@ -27,6 +25,17 @@
 
     const tables = $derived(
         ((data as any)?.tables as { name: string; count: number }[]) ?? [],
+    );
+    const tableCount = $derived(
+        (tables.length || (project as any)?.table_count) ?? 0,
+    );
+    const entityCount = $derived(
+        (tables.reduce(
+            (sum: number, t: { count: number }) => sum + (t.count ?? 0),
+            0,
+        ) ||
+            (project as any)?.entity_count) ??
+            0,
     );
     const warnings = $derived(((data as any)?.warnings as any[]) ?? []);
     const diffs = $derived(((data as any)?.diffs as any[]) ?? []);
