@@ -113,6 +113,7 @@
     });
 
     function handleTabChange(value: string) {
+        if (value === layerParam) return;
         activeTab = value;
         const params = new URLSearchParams();
         params.set("layer", value);

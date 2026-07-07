@@ -2,9 +2,10 @@
     import { page } from "$app/stores";
     import { browser } from "$app/environment";
     import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
+    import GaugeIcon from "@lucide/svelte/icons/gauge";
     import LayersIcon from "@lucide/svelte/icons/layers";
     import ImageIcon from "@lucide/svelte/icons/image";
-    import GitCommit from "@lucide/svelte/icons/git-commit";
+
     import Settings from "@lucide/svelte/icons/settings";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
@@ -27,21 +28,42 @@
             href: `/${data?.slug}`,
             icon: LayoutDashboardIcon,
         },
-        { label: "Layers", href: `/${data?.slug}/layers`, icon: LayersIcon },
-        { label: "Media", href: `/${data?.slug}/media`, icon: ImageIcon },
-        { label: "Diffs", href: `/${data?.slug}/diffs`, icon: GitCommit },
-        ...(canManage
+        {
+            label: "Layers",
+            href: `/${data?.slug}/layers`,
+            icon: LayersIcon,
+        },
+        {
+            label: "Media",
+            href: `/${data?.slug}/media`,
+            icon: ImageIcon,
+        },
+        // Separator before member-specific routes
+        ...(isMember
             ? [
                   {
-                      label: "Settings",
-                      href: `/${data?.slug}/settings`,
-                      icon: Settings,
+                      separator: true,
+                      href: "",
+                      label: "",
+                      icon: LayoutDashboardIcon,
                   },
+                  {
+                      label: "Dashboard",
+                      href: `/${data?.slug}/dashboard`,
+                      icon: GaugeIcon,
+                  },
+                  ...(canManage
+                      ? [
+                            {
+                                label: "Settings",
+                                href: `/${data?.slug}/settings`,
+                                icon: Settings,
+                            },
+                        ]
+                      : []),
               ]
             : []),
     ]);
-
-    const navItems = $derived(isMember ? allNavItems : allNavItems.slice(0, 1));
 
     function isActive(href: string) {
         const path = $page.url.pathname;
@@ -95,21 +117,29 @@
             </button>
 
             <nav class="flex flex-col gap-0.5 p-1.5 flex-1 overflow-y-auto">
-                {#each navItems as item}
-                    <a
-                        href={item.href}
-                        title={collapsed ? item.label : undefined}
-                        class="flex items-center gap-2.5 rounded-md {collapsed
-                            ? 'justify-center px-0 py-1.5'
-                            : 'px-3 py-1.5'} text-sm {isActive(item.href)
-                            ? 'bg-secondary text-foreground font-medium'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
-                    >
-                        <item.icon class="size-4 shrink-0" />
-                        {#if !collapsed}
-                            <span class="truncate">{item.label}</span>
-                        {/if}
-                    </a>
+                {#each allNavItems as item}
+                    {#if item.separator}
+                        <div
+                            class="my-1 border-t border-border {collapsed
+                                ? 'mx-1'
+                                : 'mx-2'}"
+                        ></div>
+                    {:else}
+                        <a
+                            href={item.href}
+                            title={collapsed ? item.label : undefined}
+                            class="flex items-center gap-2.5 rounded-md {collapsed
+                                ? 'justify-center px-0 py-1.5'
+                                : 'px-3 py-1.5'} text-sm {isActive(item.href)
+                                ? 'bg-secondary text-foreground font-medium'
+                                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                        >
+                            <item.icon class="size-4 shrink-0" />
+                            {#if !collapsed}
+                                <span class="truncate">{item.label}</span>
+                            {/if}
+                        </a>
+                    {/if}
                 {/each}
             </nav>
 
@@ -162,7 +192,7 @@
                 </div>
 
                 <nav class="flex flex-col gap-0.5 p-3 flex-1 overflow-y-auto">
-                    {#each navItems as item}
+                    {#each allNavItems as item}
                         <a
                             href={item.href}
                             onclick={closeMobile}
