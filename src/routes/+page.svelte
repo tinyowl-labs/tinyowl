@@ -7,12 +7,18 @@
     import ProjectMap from "$lib/components/ProjectMap.svelte";
     import type { Centroid } from "./+page.server";
 
+    type PageData = {
+        user: any;
+        accessToken: string | null;
+        centroids: Centroid[];
+    };
+
     let isMounted = $state(false);
     let query = $state("");
 
-    let { data } = $props();
+    let { data }: { data: PageData } = $props();
     const hasSession = $derived(Boolean(data?.user));
-    const centroids = $derived((data?.centroids as Centroid[]) ?? []);
+    const centroids = $derived(data?.centroids ?? []);
     onMount(() => {
         isMounted = true;
     });

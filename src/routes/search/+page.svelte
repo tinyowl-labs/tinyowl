@@ -10,9 +10,38 @@
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import SpatialMap from "$lib/components/SpatialMap.svelte";
     import { untrack } from "svelte";
-    import type { PageProps } from "./$types";
 
-    let { data }: PageProps = $props();
+    type SearchProject = {
+        slug: string;
+        title: string;
+        description: string | null;
+        entity_count: number;
+        table_count: number;
+        bbox: string | null;
+        match_detail: string;
+        distance_m?: number;
+    };
+
+    type EntityResult = {
+        entity_type: string;
+        entity_id: string;
+        column_name: string;
+        match_value: string;
+        project_slug: string;
+    };
+
+    type PageData = {
+        user: any;
+        accessToken: string | null;
+        query: string;
+        lat: number | null;
+        lng: number | null;
+        radius: number | null;
+        projects: SearchProject[];
+        entities: Record<string, EntityResult[]>;
+    };
+
+    let { data }: { data: PageData } = $props();
     const hasSession = $derived(Boolean($page.data?.user));
 
     let query = $state(untrack(() => data.query) || "");
