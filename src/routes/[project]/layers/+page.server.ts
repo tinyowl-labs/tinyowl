@@ -89,5 +89,6 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     highlight,
     highlightPage,
     mediaByEntity,
+    accessToken,
   };
 };

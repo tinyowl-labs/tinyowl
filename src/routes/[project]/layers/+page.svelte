@@ -34,6 +34,7 @@
     const layerParam = $derived((data?.layer as string) ?? "");
     const highlightId = $derived((data?.highlight as string) ?? "");
     const highlightPage = $derived((data?.highlightPage as number) ?? 0);
+    const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
 
     const columnHelper = createColumnHelper<Record<string, unknown>>();
@@ -150,6 +151,13 @@
             try {
                 const res = await fetch(
                     `/api/v1/projects/${slug}/layers/${name}/geojson`,
+                    accessToken
+                        ? {
+                              headers: {
+                                  Authorization: `Bearer ${accessToken}`,
+                              },
+                          }
+                        : {},
                 );
                 if (res.ok) {
                     const geo = await res.json();
