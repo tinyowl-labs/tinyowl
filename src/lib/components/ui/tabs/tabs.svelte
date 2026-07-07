@@ -7,12 +7,18 @@
         tabs,
         class: className = "",
         children,
+        onValueChange,
     }: {
         value?: string;
         tabs: { value: string; label: string; count?: number }[];
         class?: string;
         children: Snippet<[string]>;
+        onValueChange?: (value: string) => void;
     } = $props();
+
+    $effect(() => {
+        if (value) onValueChange?.(value);
+    });
 </script>
 
 <BitsTabs.Root type="single" bind:value class={className}>

@@ -255,7 +255,8 @@
     <title>Media — {$page.data?.project?.title ?? "Project"} — TinyOwl</title>
 </svelte:head>
 
-<div class="p-6" onkeydown={onKeydown}>
+<svelte:window onkeydown={onKeydown} />
+<div class="p-6">
     {#if items.length === 0 && !loading}
         <div class="flex items-center justify-center h-64">
             <div class="text-center max-w-sm">
@@ -296,7 +297,15 @@
                         {@const imgFailed = failedImages.has(item.hash)}
                         <div
                             class="rounded-lg border bg-card overflow-hidden group cursor-pointer"
+                            role="button"
+                            tabindex="0"
                             onclick={() => openLightbox(item)}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    openLightbox(item);
+                                }
+                            }}
                         >
                             <!-- Preview area -->
                             <div class="aspect-square bg-secondary relative">
@@ -546,19 +555,16 @@
                 {lightboxIdx + 1} / {imageItems.length}
             </div>
 
-            <img
-                src={lightboxItem.url +
-                    (accessToken
-                        ? `?token=${encodeURIComponent(accessToken)}`
-                        : "")}
-                alt="Media"
-                class="max-w-full max-h-full object-contain rounded-lg shadow-2xl select-none {panning
-                    ? 'cursor-grabbing'
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div
+                class={panning
+                    ? "cursor-grabbing"
                     : zoom > 1
-                      ? 'cursor-grab'
-                      : 'transition-transform duration-150'}"
+                      ? "cursor-grab"
+                      : "transition-transform duration-150"}
                 style="transform: scale({zoom}) translate({translateX}px, {translateY}px)"
-                draggable="false"
+                role="img"
+                aria-label="Media"
                 onwheel={onWheel}
                 onmousedown={onPanStart}
                 onmousemove={onPanMove}
@@ -569,7 +575,17 @@
                 onclick={(e) => {
                     if (zoom > 1) e.stopPropagation();
                 }}
-            />
+            >
+                <img
+                    src={lightboxItem.url +
+                        (accessToken
+                            ? `?token=${encodeURIComponent(accessToken)}`
+                            : "")}
+                    alt="Media"
+                    class="max-w-full max-h-full object-contain rounded-lg shadow-2xl select-none pointer-events-none"
+                    draggable="false"
+                />
+            </div>
         </div>
     {/if}
 </div>

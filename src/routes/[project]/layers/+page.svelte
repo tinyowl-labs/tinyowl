@@ -10,7 +10,7 @@
     import { type ColumnDef, createColumnHelper } from "@tanstack/table-core";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
-    import { onMount, tick } from "svelte";
+    import { onMount, tick, untrack } from "svelte";
     import LayerMap from "$lib/components/dashboard/LayerMap.svelte";
     import RowNum from "$lib/components/ui/row-num.svelte";
 
@@ -100,9 +100,11 @@
     );
 
     let activeTab = $state(
-        layerParam && tableNames.includes(layerParam)
-            ? layerParam
-            : (tableNames[0] ?? ""),
+        untrack(() =>
+            layerParam && tableNames.includes(layerParam)
+                ? layerParam
+                : (tableNames[0] ?? ""),
+        ),
     );
     $effect(() => {
         if (!activeTab && tableNames.length > 0) {
@@ -179,7 +181,7 @@
     });
 
     let tableContainer = $state<HTMLDivElement>();
-    let currentPage = $state(highlightPage);
+    let currentPage = $state(untrack(() => highlightPage));
 
     // Reset to page 0 when switching to a tab that isn't the highlighted one
     $effect(() => {
@@ -265,21 +267,14 @@
                         {@const tableRows = rows[tabValue] ?? []}
                         {@const tableCols = buildColumns(tabValue)}
                         {#if tableRows.length > 0}
-                            {#if viewMode === "map"}
-                                <LayerMap
-                                    geojson={geoData}
-                                    loading={mapLoading}
+                            <div bind:this={tableContainer}>
+                                <DataTable
+                                    columns={tableCols}
+                                    data={tableRows}
+                                    {rowClassName}
+                                    pageIndex={currentPage}
                                 />
-                            {:else}
-                                <div bind:this={tableContainer}>
-                                    <DataTable
-                                        columns={tableCols}
-                                        data={tableRows}
-                                        {rowClassName}
-                                        pageIndex={currentPage}
-                                    />
-                                </div>
-                            {/if}
+                            </div>
                         {:else}
                             <div
                                 class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"

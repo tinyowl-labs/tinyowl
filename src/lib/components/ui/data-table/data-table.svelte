@@ -12,6 +12,7 @@
         type ColumnDef,
         type SortingState,
     } from "@tanstack/table-core";
+    import { untrack } from "svelte";
     import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -36,8 +37,8 @@
     }: Props<TData> = $props();
 
     let sorting = $state<SortingState>([]);
-    let _pageIndex = $state(pageIndex);
-    let _pageSize = $state(pageSize);
+    let _pageIndex = $state(untrack(() => pageIndex));
+    let _pageSize = $state(untrack(() => pageSize));
 
     // Sync pageIndex prop → internal state
     $effect(() => {

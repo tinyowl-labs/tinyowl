@@ -99,10 +99,7 @@
 <Header {hasSession} fixed />
 
 <div class="flex min-h-screen flex-col pt-11">
-    <main
-        class="home-page flex flex-1 flex-col items-center w-full pt-[20vh]"
-        onkeydown={handleKeydown}
-    >
+    <main class="home-page flex flex-1 flex-col items-center w-full pt-[20vh]">
         {#if isMounted}
             <!-- Logo + wordmark -->
             <div class="flex flex-col items-center gap-2 mb-8">
@@ -131,6 +128,7 @@
                             onblur={() =>
                                 setTimeout(() => (focused = false), 150)}
                             oninput={() => (selected = -1)}
+                            onkeydown={handleKeydown}
                             placeholder="Search projects, entities, periods…"
                             class="w-full rounded-xl border-2 border-[#d4c8c2] dark:border-neutral-600 bg-white dark:bg-[#1a1a1a] pl-10 pr-4 py-3 text-sm text-[#15110f] dark:text-neutral-100 placeholder:text-[#a09890] dark:placeholder:text-neutral-400 focus:border-primary dark:focus:border-primary focus:outline-none shadow-sm hover:shadow-md transition-all"
                         />
@@ -197,59 +195,10 @@
 </div>
 
 <style>
-    .home-header {
-        background: #fbf7f5;
-        border-bottom: 1px solid #eadfdb;
-        color: #15110f;
-    }
-    :global(.dark) .home-header {
-        background: #050505;
-        border-bottom-color: #1f1b19;
-        color: #f7f2ee;
-    }
-    .home-logo-text {
-        color: inherit;
-    }
     .home-page {
         color: #111111;
     }
     :global(.dark) .home-page {
         color: #f7f2ee;
-    }
-    .home-nav-link {
-        position: relative;
-        color: #8b817c;
-        background: transparent;
-    }
-    .home-nav-link:hover {
-        color: #15110f;
-        background: #f1e8e3;
-    }
-    :global(.dark) .home-nav-link {
-        color: #9b918b;
-    }
-    :global(.dark) .home-nav-link:hover {
-        color: #f7f2ee;
-        background: #181412;
-    }
-    .home-nav-signin {
-        background: #15110f;
-        color: #fffaf7;
-    }
-    .home-nav-signin:hover {
-        background: #ad0000;
-    }
-    :global(.dark) .home-nav-signin {
-        background: #f3eee8;
-        color: #090807;
-    }
-    :global(.dark) .home-nav-signin:hover {
-        background: #ff6b5f;
-    }
-    .home-nav-link :global(svg) {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        translate: -50% -50%;
     }
 </style>
