@@ -9,7 +9,7 @@
     import GitCommit from "@lucide/svelte/icons/git-commit";
     import redthreadSvg from "$lib/assets/redthread.svg?raw";
     import { onMount } from "svelte";
-    import { setPreference, isDark } from "$lib/stores/theme.svelte";
+    import { isDark } from "$lib/stores/theme.svelte";
     import CommitTimeline from "$lib/components/dashboard/CommitTimeline.svelte";
 
     const dark = $derived(isDark());
@@ -22,9 +22,6 @@
                   .replace(/stroke:#ffffff/g, "stroke:#000000")
             : redthreadSvg,
     );
-    function toggleTheme() {
-        setPreference("bgBase", isDark() ? "paper" : "dark");
-    }
 
     let isMounted = $state(false);
     let showCreate = $state(false);

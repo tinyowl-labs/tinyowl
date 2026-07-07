@@ -6,7 +6,6 @@
         Field,
         FieldLabel,
         FieldDescription,
-        FieldSeparator,
     } from "$lib/components/ui/field/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
     import { Button } from "$lib/components/ui/button/index.js";

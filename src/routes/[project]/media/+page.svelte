@@ -2,7 +2,6 @@
     import { page } from "$app/stores";
     import ImageIcon from "@lucide/svelte/icons/image";
     import ImageOffIcon from "@lucide/svelte/icons/image-off";
-    import FileIcon from "@lucide/svelte/icons/file";
     import VideoIcon from "@lucide/svelte/icons/video";
     import MusicIcon from "@lucide/svelte/icons/music";
     import FileWarningIcon from "@lucide/svelte/icons/file-warning";
@@ -27,6 +26,7 @@
     }
 
     let items = $state<MediaItem[]>([]);
+    let totalItems = $state(0);
     let loading = $state(false);
     let hasMore = $state(true);
     let error = $state("");
@@ -226,6 +226,11 @@
                     : {},
             );
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const contentRange = res.headers.get("Content-Range");
+            if (contentRange) {
+                const total = contentRange.split("/")[1];
+                if (total && total !== "*") totalItems = parseInt(total, 10);
+            }
             const batch: MediaItem[] = await res.json();
             items = [...items, ...batch];
             offset += batch.length;
@@ -252,20 +257,6 @@
         observer.observe(sentinel);
         return () => observer.disconnect();
     });
-
-    function typeIcon(mimeType: string) {
-        const main = mimeType.split("/")[0];
-        switch (main) {
-            case "image":
-                return ImageIcon;
-            case "video":
-                return VideoIcon;
-            case "audio":
-                return MusicIcon;
-            default:
-                return FileIcon;
-        }
-    }
 
     function formatBytes(bytes: number): string {
         if (bytes < 1024) return `${bytes} B`;
@@ -312,215 +303,243 @@
 </svelte:head>
 
 <svelte:window onkeydown={onKeydown} />
-<div class="p-6">
-    {#if items.length === 0 && !loading}
-        <div class="flex items-center justify-center h-64">
-            <div class="text-center max-w-sm">
-                <div
-                    class="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-secondary"
-                >
-                    <ImageIcon class="size-6 text-muted-foreground" />
-                </div>
-                <h2 class="text-lg font-semibold text-foreground mb-2">
-                    No media yet
-                </h2>
-                <p class="text-sm text-muted-foreground">
-                    Push data with media attachments to see them here. Each
-                    media item will show which entities it's linked to.
-                </p>
-            </div>
+<div class="flex flex-col h-full px-6 py-4">
+    <div class="shrink-0 mb-4">
+        <div class="flex items-center gap-2.5">
+            <ImageIcon class="size-5 text-muted-foreground" />
+            <h1 class="text-xl font-bold tracking-tight text-foreground">
+                Media
+            </h1>
         </div>
-    {:else}
-        {#each Object.entries(byType) as [group, groupItems]}
-            <div class="mb-8">
-                <h2
-                    class="text-sm font-semibold tracking-wider uppercase text-muted-foreground mb-4"
-                >
-                    {typeLabel(group)}
-                    <span class="ml-1.5 font-normal text-muted-foreground/60">
-                        ({groupItems.length})
-                    </span>
-                </h2>
+        <p class="mt-0.5 text-sm text-muted-foreground">
+            {totalItems || items.length} item{(totalItems || items.length) !== 1
+                ? "s"
+                : ""}
+        </p>
+    </div>
 
-                <div
-                    class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3"
-                >
-                    {#each groupItems as item}
-                        {@const isImage = item.media_type.startsWith("image/")}
-                        {@const isVideo = item.media_type.startsWith("video/")}
-                        {@const isAudio = item.media_type.startsWith("audio/")}
-                        {@const imgLoaded = loadedImages.has(item.hash)}
-                        {@const imgFailed = failedImages.has(item.hash)}
-                        <div
-                            class="rounded-lg border bg-card overflow-hidden group cursor-pointer"
-                            role="button"
-                            tabindex="0"
-                            onclick={() => openLightbox(item)}
-                            onkeydown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                    e.preventDefault();
-                                    openLightbox(item);
-                                }
-                            }}
+    <div class="flex-1 min-h-0 overflow-y-auto">
+        {#if items.length === 0 && !loading}
+            <div class="flex items-center justify-center h-64">
+                <div class="text-center max-w-sm">
+                    <div
+                        class="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-secondary"
+                    >
+                        <ImageIcon class="size-6 text-muted-foreground" />
+                    </div>
+                    <h2 class="text-lg font-semibold text-foreground mb-2">
+                        No media yet
+                    </h2>
+                    <p class="text-sm text-muted-foreground">
+                        Push data with media attachments to see them here. Each
+                        media item will show which entities it's linked to.
+                    </p>
+                </div>
+            </div>
+        {:else}
+            {#each Object.entries(byType) as [group, groupItems]}
+                <div class="mb-8">
+                    <h2
+                        class="text-sm font-semibold tracking-wider uppercase text-muted-foreground mb-4"
+                    >
+                        {typeLabel(group)}
+                        <span
+                            class="ml-1.5 font-normal text-muted-foreground/60"
                         >
-                            <!-- Preview area -->
-                            <div class="aspect-square bg-secondary relative">
-                                {#if isImage}
-                                    <!-- Pulsing skeleton while loading -->
-                                    {#if !imgLoaded && !imgFailed}
+                            ({groupItems.length})
+                        </span>
+                    </h2>
+
+                    <div
+                        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3"
+                    >
+                        {#each groupItems as item}
+                            {@const isImage =
+                                item.media_type.startsWith("image/")}
+                            {@const isVideo =
+                                item.media_type.startsWith("video/")}
+                            {@const isAudio =
+                                item.media_type.startsWith("audio/")}
+                            {@const imgLoaded = loadedImages.has(item.hash)}
+                            {@const imgFailed = failedImages.has(item.hash)}
+                            <div
+                                class="rounded-lg border bg-card overflow-hidden group cursor-pointer"
+                                role="button"
+                                tabindex="0"
+                                onclick={() => openLightbox(item)}
+                                onkeydown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        openLightbox(item);
+                                    }
+                                }}
+                            >
+                                <!-- Preview area -->
+                                <div
+                                    class="aspect-square bg-secondary relative"
+                                >
+                                    {#if isImage}
+                                        <!-- Pulsing skeleton while loading -->
+                                        {#if !imgLoaded && !imgFailed}
+                                            <div
+                                                class="absolute inset-0 animate-pulse bg-secondary"
+                                            ></div>
+                                        {/if}
+                                        <!-- Failed placeholder -->
+                                        {#if imgFailed}
+                                            <div
+                                                class="absolute inset-0 flex flex-col items-center justify-center gap-1"
+                                            >
+                                                <ImageOffIcon
+                                                    class="size-8 text-muted-foreground/40"
+                                                />
+                                                <span
+                                                    class="text-[10px] text-muted-foreground/40"
+                                                    >Missing</span
+                                                >
+                                            </div>
+                                        {/if}
+                                        <img
+                                            src={item.url +
+                                                (accessToken
+                                                    ? `?token=${encodeURIComponent(accessToken)}`
+                                                    : "")}
+                                            alt="Media"
+                                            class="w-full h-full object-cover {imgLoaded
+                                                ? 'opacity-100'
+                                                : 'opacity-0'} transition-opacity duration-200"
+                                            loading="lazy"
+                                            onload={() =>
+                                                onImageLoad(item.hash)}
+                                            onerror={() =>
+                                                onImageError(item.hash)}
+                                        />
+                                    {:else if isVideo}
                                         <div
-                                            class="absolute inset-0 animate-pulse bg-secondary"
-                                        ></div>
-                                    {/if}
-                                    <!-- Failed placeholder -->
-                                    {#if imgFailed}
-                                        <div
-                                            class="absolute inset-0 flex flex-col items-center justify-center gap-1"
+                                            class="w-full h-full flex flex-col items-center justify-center gap-1.5"
                                         >
-                                            <ImageOffIcon
-                                                class="size-8 text-muted-foreground/40"
+                                            <VideoIcon
+                                                class="size-8 text-muted-foreground"
                                             />
                                             <span
-                                                class="text-[10px] text-muted-foreground/40"
-                                                >Missing</span
+                                                class="text-[10px] text-muted-foreground/60"
+                                                >Video</span
                                             >
                                         </div>
+                                    {:else if isAudio}
+                                        <div
+                                            class="w-full h-full flex flex-col items-center justify-center gap-1.5"
+                                        >
+                                            <MusicIcon
+                                                class="size-8 text-muted-foreground"
+                                            />
+                                            <span
+                                                class="text-[10px] text-muted-foreground/60"
+                                                >Audio</span
+                                            >
+                                        </div>
+                                    {:else}
+                                        <div
+                                            class="w-full h-full flex flex-col items-center justify-center gap-1.5"
+                                        >
+                                            <FileWarningIcon
+                                                class="size-8 text-muted-foreground"
+                                            />
+                                            <span
+                                                class="text-[10px] text-muted-foreground/60 uppercase"
+                                            >
+                                                {item.media_type.split(
+                                                    "/",
+                                                )[1] ?? "file"}
+                                            </span>
+                                        </div>
                                     {/if}
-                                    <img
-                                        src={item.url +
-                                            (accessToken
-                                                ? `?token=${encodeURIComponent(accessToken)}`
-                                                : "")}
-                                        alt="Media"
-                                        class="w-full h-full object-cover {imgLoaded
-                                            ? 'opacity-100'
-                                            : 'opacity-0'} transition-opacity duration-200"
-                                        loading="lazy"
-                                        onload={() => onImageLoad(item.hash)}
-                                        onerror={() => onImageError(item.hash)}
-                                    />
-                                {:else if isVideo}
-                                    <div
-                                        class="w-full h-full flex flex-col items-center justify-center gap-1.5"
-                                    >
-                                        <VideoIcon
-                                            class="size-8 text-muted-foreground"
-                                        />
-                                        <span
-                                            class="text-[10px] text-muted-foreground/60"
-                                            >Video</span
-                                        >
-                                    </div>
-                                {:else if isAudio}
-                                    <div
-                                        class="w-full h-full flex flex-col items-center justify-center gap-1.5"
-                                    >
-                                        <MusicIcon
-                                            class="size-8 text-muted-foreground"
-                                        />
-                                        <span
-                                            class="text-[10px] text-muted-foreground/60"
-                                            >Audio</span
-                                        >
-                                    </div>
-                                {:else}
-                                    <div
-                                        class="w-full h-full flex flex-col items-center justify-center gap-1.5"
-                                    >
-                                        <FileWarningIcon
-                                            class="size-8 text-muted-foreground"
-                                        />
-                                        <span
-                                            class="text-[10px] text-muted-foreground/60 uppercase"
-                                        >
-                                            {item.media_type.split("/")[1] ??
-                                                "file"}
-                                        </span>
-                                    </div>
-                                {/if}
-                            </div>
-
-                            <div class="p-3">
-                                <div
-                                    class="flex items-center justify-between gap-2 mb-2"
-                                >
-                                    <span
-                                        class="text-[10px] font-mono text-muted-foreground select-all"
-                                    >
-                                        {item.hash.slice(0, 10)}
-                                    </span>
-                                    <span
-                                        class="text-[10px] text-muted-foreground"
-                                    >
-                                        {formatBytes(item.file_size)}
-                                    </span>
                                 </div>
 
-                                {#if item.entities.length > 0}
-                                    <div class="flex flex-col gap-1">
-                                        <span
-                                            class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider"
-                                        >
-                                            Linked entities
-                                        </span>
-                                        {#each item.entities as entity}
-                                            <a
-                                                href={entityLink(
-                                                    entity.entity_type,
-                                                    entity.entity_id,
-                                                )}
-                                                class="flex items-center gap-1 text-xs text-primary hover:underline underline-offset-2 no-underline group/link"
-                                            >
-                                                <span class="truncate">
-                                                    {entityLabel(
-                                                        entity.entity_type,
-                                                    )}
-                                                </span>
-                                                <span
-                                                    class="font-mono text-[10px] text-muted-foreground shrink-0"
-                                                >
-                                                    {entity.entity_id}
-                                                </span>
-                                                <ExternalLinkIcon
-                                                    class="size-2.5 shrink-0 text-muted-foreground opacity-0 group-hover/link:opacity-100 transition-opacity"
-                                                />
-                                            </a>
-                                        {/each}
-                                    </div>
-                                {:else}
-                                    <p
-                                        class="text-[10px] italic text-muted-foreground"
+                                <div class="p-3">
+                                    <div
+                                        class="flex items-center justify-between gap-2 mb-2"
                                     >
-                                        No entities linked
-                                    </p>
-                                {/if}
-                            </div>
-                        </div>
-                    {/each}
-                </div>
-            </div>
-        {/each}
+                                        <span
+                                            class="text-[10px] font-mono text-muted-foreground select-all"
+                                        >
+                                            {item.hash.slice(0, 10)}
+                                        </span>
+                                        <span
+                                            class="text-[10px] text-muted-foreground"
+                                        >
+                                            {formatBytes(item.file_size)}
+                                        </span>
+                                    </div>
 
-        <!-- Sentinel for infinite scroll -->
-        {#if hasMore}
-            <div
-                bind:this={sentinel}
-                class="py-8 flex items-center justify-center"
-            >
-                {#if loading}
-                    <div class="text-sm text-muted-foreground animate-pulse">
-                        Loading…
+                                    {#if item.entities.length > 0}
+                                        <div class="flex flex-col gap-1">
+                                            <span
+                                                class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider"
+                                            >
+                                                Linked entities
+                                            </span>
+                                            {#each item.entities as entity}
+                                                <a
+                                                    href={entityLink(
+                                                        entity.entity_type,
+                                                        entity.entity_id,
+                                                    )}
+                                                    class="flex items-center gap-1 text-xs text-primary hover:underline underline-offset-2 no-underline group/link"
+                                                >
+                                                    <span class="truncate">
+                                                        {entityLabel(
+                                                            entity.entity_type,
+                                                        )}
+                                                    </span>
+                                                    <span
+                                                        class="font-mono text-[10px] text-muted-foreground shrink-0"
+                                                    >
+                                                        {entity.entity_id}
+                                                    </span>
+                                                    <ExternalLinkIcon
+                                                        class="size-2.5 shrink-0 text-muted-foreground opacity-0 group-hover/link:opacity-100 transition-opacity"
+                                                    />
+                                                </a>
+                                            {/each}
+                                        </div>
+                                    {:else}
+                                        <p
+                                            class="text-[10px] italic text-muted-foreground"
+                                        >
+                                            No entities linked
+                                        </p>
+                                    {/if}
+                                </div>
+                            </div>
+                        {/each}
                     </div>
-                {/if}
-            </div>
-        {:else if items.length > 0}
-            <div class="py-8 flex items-center justify-center">
-                <p class="text-xs text-muted-foreground">
-                    {items.length} item{items.length !== 1 ? "s" : ""}
-                </p>
-            </div>
+                </div>
+            {/each}
+
+            <!-- Sentinel for infinite scroll -->
+            {#if hasMore}
+                <div
+                    bind:this={sentinel}
+                    class="py-8 flex items-center justify-center"
+                >
+                    {#if loading}
+                        <div
+                            class="text-sm text-muted-foreground animate-pulse"
+                        >
+                            Loading…
+                        </div>
+                    {/if}
+                </div>
+            {:else if items.length > 0}
+                <div class="py-8 flex items-center justify-center">
+                    <p class="text-xs text-muted-foreground">
+                        All {items.length} items loaded
+                    </p>
+                </div>
+            {/if}
         {/if}
-    {/if}
+    </div>
 
     {#if error}
         <div class="py-4 text-center">

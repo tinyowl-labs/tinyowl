@@ -10,7 +10,7 @@
     import { type ColumnDef, createColumnHelper } from "@tanstack/table-core";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
-    import { onMount, tick, untrack } from "svelte";
+    import { onMount, untrack } from "svelte";
     import LayerMap from "$lib/components/dashboard/LayerMap.svelte";
     import RowNum from "$lib/components/ui/row-num.svelte";
 

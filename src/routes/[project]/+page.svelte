@@ -13,7 +13,6 @@
     let { data, form } = $props();
 
     const project = $derived(data?.project);
-    const isMember = $derived((data as any)?.isMember);
     const role = $derived(((data as any)?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
     const head = $derived(
@@ -29,10 +28,6 @@
             : null,
     );
     const readmeRaw = $derived(data?.readme ?? null);
-
-    const descriptionHtml = $derived(
-        project?.description ? marked.parse(project.description as string) : "",
-    );
 
     // Split markdown into H1-headed sections for accordion rendering.
     // Sections without an H1 get an empty title (rendered as a non-collapsible preamble).

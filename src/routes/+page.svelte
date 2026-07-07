@@ -2,11 +2,8 @@
     import SearchIcon from "@lucide/svelte/icons/search";
     import { goto } from "$app/navigation";
     import { onMount } from "svelte";
-    import { isDark } from "$lib/stores/theme.svelte";
     import Header from "$lib/components/ui/header.svelte";
     import OwlLogo from "$lib/components/ui/owl-logo.svelte";
-
-    const dark = $derived(isDark());
 
     let isMounted = $state(false);
     let query = $state("");
