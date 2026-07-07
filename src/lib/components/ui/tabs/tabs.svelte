@@ -21,7 +21,7 @@
     });
 </script>
 
-<BitsTabs.Root type="single" bind:value class={className}>
+<BitsTabs.Root bind:value class={className}>
     <BitsTabs.List
         class="flex w-full items-center gap-1 rounded-lg bg-muted p-1"
     >

@@ -484,7 +484,7 @@
         >
             <!-- Close -->
             <button
-                class="absolute top-4 right-4 z-[60] flex items-center justify-center size-10 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                class="absolute top-4 right-4 z-60 flex items-center justify-center size-10 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
                 onclick={(e) => {
                     e.stopPropagation();
                     closeLightbox();
@@ -496,7 +496,7 @@
             <!-- Prev -->
             {#if lightboxIdx > 0}
                 <button
-                    class="absolute left-4 top-1/2 -translate-y-1/2 z-[60] flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                    class="absolute left-4 top-1/2 -translate-y-1/2 z-60 flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
                     onclick={(e) => {
                         e.stopPropagation();
                         prevImage();
@@ -509,7 +509,7 @@
             <!-- Next -->
             {#if lightboxIdx < imageItems.length - 1}
                 <button
-                    class="absolute right-4 top-1/2 -translate-y-1/2 z-[60] flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+                    class="absolute right-4 top-1/2 -translate-y-1/2 z-60 flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
                     onclick={(e) => {
                         e.stopPropagation();
                         nextImage();
@@ -521,7 +521,7 @@
 
             <!-- Zoom controls -->
             <div
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-1 rounded-full bg-white/20 px-2 py-1.5"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 z-60 flex items-center gap-1 rounded-full bg-white/20 px-2 py-1.5"
             >
                 <button
                     class="flex items-center justify-center size-8 rounded-full hover:bg-white/20 text-white disabled:opacity-30 transition-colors"
@@ -551,7 +551,7 @@
             </div>
 
             <!-- Counter -->
-            <div class="absolute top-4 left-4 z-[60] text-sm text-white/60">
+            <div class="absolute top-4 left-4 z-60 text-sm text-white/60">
                 {lightboxIdx + 1} / {imageItems.length}
             </div>
 

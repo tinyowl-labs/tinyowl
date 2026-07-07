@@ -13,10 +13,12 @@
     let { data, form } = $props();
 
     const project = $derived(data?.project);
-    const isMember = $derived(data?.isMember);
-    const role = $derived((data?.role as string) ?? "viewer");
+    const isMember = $derived((data as any)?.isMember);
+    const role = $derived(((data as any)?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
-    const head = $derived(data?.head as Record<string, unknown> | null);
+    const head = $derived(
+        (data as any)?.head as Record<string, unknown> | null,
+    );
     const readmeRaw = $derived(data?.readme ?? null);
 
     const descriptionHtml = $derived(
@@ -75,39 +77,45 @@
     let expanded = $state(false);
 
     // Map rendering action (client-side only)
-    async function renderMap(node: HTMLElement, bboxStr: string) {
+    function renderMap(node: HTMLElement, bboxStr: string) {
         if (!browser) return;
-        const L = (await import("leaflet")).default;
-        await import("leaflet/dist/leaflet.css");
 
-        const map = L.map(node, {
-            attributionControl: false,
-            zoomControl: false,
-            dragging: false,
-            scrollWheelZoom: false,
-            touchZoom: false,
-            doubleClickZoom: false,
-        }).setView([0, 0], 1);
+        let cleanup: (() => void) | undefined;
 
-        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            maxZoom: 19,
-        }).addTo(map);
+        import("leaflet").then(async ({ default: L }) => {
+            await import("leaflet/dist/leaflet.css");
 
-        try {
-            const geojson = JSON.parse(bboxStr);
-            const layer = L.geoJSON(geojson, {
-                style: {
-                    color: "hsl(var(--primary))",
-                    weight: 2,
-                    fillOpacity: 0.1,
-                },
+            const map = L.map(node, {
+                attributionControl: false,
+                zoomControl: false,
+                dragging: false,
+                scrollWheelZoom: false,
+                touchZoom: false,
+                doubleClickZoom: false,
+            }).setView([0, 0], 1);
+
+            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                maxZoom: 19,
             }).addTo(map);
-            map.fitBounds(layer.getBounds(), { padding: [20, 20] });
-        } catch (_) {}
+
+            try {
+                const geojson = JSON.parse(bboxStr);
+                const layer = L.geoJSON(geojson, {
+                    style: {
+                        color: "hsl(var(--primary))",
+                        weight: 2,
+                        fillOpacity: 0.1,
+                    },
+                }).addTo(map);
+                map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+            } catch (_) {}
+
+            cleanup = () => map.remove();
+        });
 
         return {
             destroy() {
-                map.remove();
+                cleanup?.();
             },
         };
     }
@@ -273,12 +281,12 @@
     {/if}
 
     <!-- Project extent map -->
-    {#if project?.bbox}
+    {#if (project as any)?.bbox}
         <section class="mb-10 max-w-2xl">
             <div class="rounded-lg border border-border overflow-hidden">
                 <div
                     class="w-full h-48 bg-secondary/20"
-                    use:renderMap={project.bbox}
+                    use:renderMap={(project as any).bbox}
                 ></div>
             </div>
         </section>

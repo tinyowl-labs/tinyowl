@@ -17,8 +17,8 @@
 
     const hasSession = $derived(Boolean($page.data?.user));
     const project = $derived(data?.project);
-    const isMember = $derived(data?.isMember);
-    const role = $derived((data?.role as string) ?? "viewer");
+    const isMember = $derived((data as any)?.isMember);
+    const role = $derived(((data as any)?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
 
     const allNavItems = $derived([
@@ -131,7 +131,7 @@
         <!-- Mobile hamburger button -->
         <button
             onclick={() => (mobileOpen = true)}
-            class="md:hidden fixed bottom-4 left-4 z-[1001] flex items-center justify-center size-11 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
+            class="md:hidden fixed bottom-4 left-4 z-1001 flex items-center justify-center size-11 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
             aria-label="Menu"
         >
             <MenuIcon class="size-5" />
@@ -140,12 +140,12 @@
         <!-- Mobile nav drawer -->
         {#if mobileOpen}
             <button
-                class="fixed inset-0 z-[1000] bg-black/50 md:hidden"
+                class="fixed inset-0 z-1000 bg-black/50 md:hidden"
                 onclick={closeMobile}
                 aria-label="Close menu"
             ></button>
             <aside
-                class="fixed inset-y-0 left-0 z-[1001] w-64 bg-background border-r border-border flex flex-col shadow-xl md:hidden"
+                class="fixed inset-y-0 left-0 z-1001 w-64 bg-background border-r border-border flex flex-col shadow-xl md:hidden"
             >
                 <div
                     class="flex items-center justify-between px-4 h-11 border-b border-border shrink-0"

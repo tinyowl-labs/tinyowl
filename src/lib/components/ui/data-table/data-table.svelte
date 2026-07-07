@@ -86,7 +86,7 @@
                 {#each table.getHeaderGroups() as headerGroup}
                     <Table.Row>
                         {#each headerGroup.headers as header}
-                            <Table.Head class="max-w-[300px]">
+                            <Table.Head class="max-w-75">
                                 {#if header.isPlaceholder}
                                     <!-- empty -->
                                 {:else if header.column.getCanSort()}
@@ -122,7 +122,7 @@
                 {#each table.getRowModel().rows as row}
                     <Table.Row class={rowClassName?.(row.original) ?? ""}>
                         {#each row.getVisibleCells() as cell}
-                            <Table.Cell class="max-w-[300px]">
+                            <Table.Cell class="max-w-75">
                                 <span
                                     class="block truncate"
                                     title={String(cell.getValue() ?? "")}

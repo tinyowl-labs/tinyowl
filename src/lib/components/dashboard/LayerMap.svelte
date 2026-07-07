@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import type * as LType from "leaflet";
     import "leaflet/dist/leaflet.css";
 
     type LayerData = {
@@ -18,7 +19,7 @@
 
     let mapContainer = $state<HTMLDivElement>();
     let map: import("leaflet").Map | null = $state(null);
-    let L: typeof import("leaflet").default | null = $state(null);
+    let L: typeof LType | null = $state(null);
     let geoLayers: import("leaflet").GeoJSON[] = [];
 
     const LAYER_COLORS = [
@@ -67,7 +68,7 @@
         if (!mapContainer) return;
 
         const leaflet = await import("leaflet");
-        L = leaflet.default;
+        L = leaflet;
 
         map = L.map(mapContainer, {
             center: [-12.3, 133.0],
@@ -96,7 +97,10 @@
             const color = colorForIndex(i);
 
             const gl = L.geoJSON(geojson, {
-                pointToLayer: (_feature, latlng) => {
+                pointToLayer: (
+                    _feature: GeoJSON.Feature,
+                    latlng: LType.LatLng,
+                ) => {
                     return L!.circleMarker(latlng, {
                         radius: 4,
                         fillColor: color,
@@ -111,7 +115,10 @@
                     weight: 1.5,
                     fillOpacity: 0.15,
                 },
-                onEachFeature: (feature, layer) => {
+                onEachFeature: (
+                    feature: GeoJSON.Feature,
+                    layer: LType.Layer,
+                ) => {
                     const props = feature.properties ?? {};
                     const id = (props.entity_id ?? "") as string;
                     layer.bindPopup(buildPopupContent(name, id), {
@@ -158,7 +165,7 @@
 <div class="relative w-full h-full">
     {#if loading}
         <div
-            class="absolute inset-0 z-[1000] flex items-center justify-center bg-background/50"
+            class="absolute inset-0 z-1000 flex items-center justify-center bg-background/50"
         >
             <div class="text-sm text-muted-foreground animate-pulse">
                 Loading map data…
@@ -173,7 +180,7 @@
     <!-- Layer toggle -->
     {#if layers.length > 0}
         <div
-            class="absolute top-2 right-2 z-[999] bg-card border border-border rounded-lg shadow-lg p-2 min-w-[140px]"
+            class="absolute top-2 right-2 z-999 bg-card border border-border rounded-lg shadow-lg p-2 min-w-35"
         >
             <div
                 class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 px-1"
