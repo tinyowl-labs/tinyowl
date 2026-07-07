@@ -68,3 +68,10 @@
 .leaflet-dark .leaflet-container {
     background: #1a1a2e;
 }
+.leaflet-dark .leaflet-popup-content-wrapper {
+    background: #1e1e2e;
+    color: #e0e0e0;
+}
+.leaflet-dark .leaflet-popup-tip {
+    background: #1e1e2e;
+}

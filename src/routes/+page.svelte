@@ -4,75 +4,18 @@
     import { onMount } from "svelte";
     import Header from "$lib/components/ui/header.svelte";
     import OwlLogo from "$lib/components/ui/owl-logo.svelte";
+    import ProjectMap from "$lib/components/ProjectMap.svelte";
+    import type { Centroid } from "./+page.server";
 
     let isMounted = $state(false);
     let query = $state("");
-    let focused = $state(false);
-    let selected = $state(-1);
-    let inputEl = $state<HTMLInputElement>();
 
     let { data } = $props();
     const hasSession = $derived(Boolean(data?.user));
+    const centroids = $derived((data?.centroids as Centroid[]) ?? []);
     onMount(() => {
         isMounted = true;
     });
-
-    const suggestions = [
-        {
-            label: "Etruscan funerary deposits near Verona",
-            href: "/search?q=etruscan+funerary+verona",
-        },
-        {
-            label: "Roman pottery in Northern Europe",
-            href: "/search?q=roman+pottery+northern+europe",
-        },
-        {
-            label: "Bronze Age burials in the Near East",
-            href: "/search?q=bronze+age+burials+near+east",
-        },
-        {
-            label: "Iron Age hillforts in Britain",
-            href: "/search?q=iron+age+hillforts+britain",
-        },
-        {
-            label: "Neolithic settlements in Southeast Asia",
-            href: "/search?q=neolithic+settlements+southeast+asia",
-        },
-        {
-            label: "Marble fragments in the Mediterranean",
-            href: "/search?q=marble+fragments+mediterranean",
-        },
-    ];
-
-    const results = $derived(
-        query.trim()
-            ? suggestions.filter((s) =>
-                  s.label.toLowerCase().includes(query.toLowerCase()),
-              )
-            : suggestions,
-    );
-
-    const showDropdown = $derived(focused && results.length > 0);
-
-    function handleKeydown(e: KeyboardEvent) {
-        if (!showDropdown) return;
-        if (e.key === "ArrowDown") {
-            e.preventDefault();
-            selected = Math.min(selected + 1, results.length - 1);
-        }
-        if (e.key === "ArrowUp") {
-            e.preventDefault();
-            selected = Math.max(selected - 1, 0);
-        }
-        if (e.key === "Enter" && selected >= 0) {
-            goto(results[selected].href);
-        }
-        if (e.key === "Escape") {
-            query = "";
-            selected = -1;
-            inputEl?.blur();
-        }
-    }
 
     function handleSubmit(e: SubmitEvent) {
         e.preventDefault();
@@ -86,7 +29,7 @@
 <Header {hasSession} fixed />
 
 <div class="flex min-h-screen flex-col pt-11">
-    <main class="home-page flex flex-1 flex-col items-center w-full pt-[20vh]">
+    <main class="home-page flex flex-1 flex-col items-center w-full pt-[10vh]">
         {#if isMounted}
             <!-- Logo + wordmark -->
             <div class="flex flex-col items-center gap-2 mb-8">
@@ -109,42 +52,24 @@
                             class="absolute left-3.5 top-3.5 z-10 size-4 text-[#a09890] dark:text-neutral-400"
                         />
                         <input
-                            bind:this={inputEl}
                             bind:value={query}
-                            onfocus={() => (focused = true)}
-                            onblur={() =>
-                                setTimeout(() => (focused = false), 150)}
-                            oninput={() => (selected = -1)}
-                            onkeydown={handleKeydown}
                             placeholder="Search projects, entities, periods…"
                             class="w-full rounded-xl border-2 border-[#d4c8c2] dark:border-neutral-600 bg-white dark:bg-[#1a1a1a] pl-10 pr-4 py-3 text-sm text-[#15110f] dark:text-neutral-100 placeholder:text-[#a09890] dark:placeholder:text-neutral-400 focus:border-primary dark:focus:border-primary focus:outline-none shadow-sm hover:shadow-md transition-all"
                         />
                     </form>
-
-                    {#if showDropdown}
-                        <div
-                            class="absolute left-0 right-0 top-full mt-2 rounded-xl bg-white dark:bg-[#1a1a1a] border border-[#d4c8c2] dark:border-neutral-600 overflow-hidden shadow-lg z-20"
-                        >
-                            {#each results as item, i}
-                                <a
-                                    href={item.href}
-                                    class="flex items-center gap-3 px-4 py-3 {selected ===
-                                    i
-                                        ? 'bg-[#f1e8e3] dark:bg-neutral-700'
-                                        : 'hover:bg-[#f8f5f3] dark:hover:bg-neutral-800'} transition-colors no-underline"
-                                >
-                                    <SearchIcon
-                                        class="size-4 text-[#c4b8b1] dark:text-neutral-400 shrink-0"
-                                    />
-                                    <span
-                                        class="text-sm text-[#15110f] dark:text-neutral-100"
-                                        >{item.label}</span
-                                    >
-                                </a>
-                            {/each}
-                        </div>
-                    {/if}
                 </div>
+            </div>
+        {/if}
+
+        <!-- Project map -->
+        {#if centroids.length > 0}
+            <div class="w-full max-w-6xl px-4 mt-10 mb-8">
+                <h2
+                    class="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3 px-1"
+                >
+                    Explore projects
+                </h2>
+                <ProjectMap {centroids} class="h-[50vh]" />
             </div>
         {/if}
     </main>

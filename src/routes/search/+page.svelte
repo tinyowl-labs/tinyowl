@@ -7,6 +7,8 @@
     import HashIcon from "@lucide/svelte/icons/hash";
     import MapPinIcon from "@lucide/svelte/icons/map-pin";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+    import CrosshairIcon from "@lucide/svelte/icons/crosshair";
+    import SpatialMap from "$lib/components/SpatialMap.svelte";
     import { untrack } from "svelte";
     import type { PageProps } from "./$types";
 
@@ -14,6 +16,23 @@
     const hasSession = $derived(Boolean($page.data?.user));
 
     let query = $state(untrack(() => data.query) || "");
+
+    // Spatial filter state
+    let showMap = $state(untrack(() => data.lat !== null));
+    let centerLat = $state(untrack(() => data.lat));
+    let centerLng = $state(untrack(() => data.lng));
+    let radius = $state(untrack(() => data.radius ?? 5000));
+
+    // Result markers for the spatial map
+    const resultMarkers = $derived(
+        (data.projects ?? [])
+            .filter((p: any) => p.bbox)
+            .map((p: any) => ({
+                slug: p.slug,
+                title: p.title,
+                bbox: p.bbox,
+            })),
+    );
 
     // Track expanded entity sections per project
     let expanded = $state<Record<string, boolean>>({});
@@ -25,26 +44,63 @@
     function handleSubmit(e: SubmitEvent) {
         e.preventDefault();
         const q = query.trim();
-        if (q) goto(`/search?q=${encodeURIComponent(q)}`);
+        const params = new URLSearchParams();
+        if (q) params.set("q", q);
+        if (centerLat !== null && centerLng !== null) {
+            params.set("lat", centerLat.toString());
+            params.set("lng", centerLng.toString());
+            params.set("radius", radius.toString());
+        }
+        goto(`/search?${params.toString()}`);
+    }
+
+    function updateSpatial() {
+        const params = new URLSearchParams();
+        const q = query.trim();
+        if (q) params.set("q", q);
+        if (centerLat !== null && centerLng !== null) {
+            params.set("lat", centerLat.toString());
+            params.set("lng", centerLng.toString());
+            params.set("radius", radius.toString());
+        }
+        goto(`/search?${params.toString()}`);
+    }
+
+    let spatialTimeout: ReturnType<typeof setTimeout>;
+
+    function onLatChange() {
+        clearTimeout(spatialTimeout);
+        spatialTimeout = setTimeout(updateSpatial, 500);
     }
 
     function formatDistance(m: number): string {
         if (m < 1000) return `${Math.round(m)}m`;
         return `${(m / 1000).toFixed(1)}km`;
     }
+
+    function formatRadius(m: number): string {
+        if (m < 1000) return `${m}m`;
+        return `${(m / 1000).toFixed(1)}km`;
+    }
+
+    function clearSpatial() {
+        centerLat = null;
+        centerLng = null;
+        radius = 5000;
+        updateSpatial();
+    }
 </script>
 
-<svelte:head
-    ><title>{data.query ? `${data.query} — Search` : "Search"} — TinyOwl</title
-    ></svelte:head
->
+<svelte:head>
+    <title>{data.query ? `${data.query} — Search` : "Search"} — TinyOwl</title>
+</svelte:head>
 
 <Header {hasSession} />
 
 <div class="flex min-h-screen flex-col pt-11">
     <main class="flex-1 w-full max-w-3xl mx-auto px-4 py-8">
         <!-- Search bar -->
-        <form onsubmit={handleSubmit} class="relative mb-8">
+        <form onsubmit={handleSubmit} class="relative mb-4">
             <SearchIcon
                 class="absolute left-3.5 top-3.5 z-10 size-4 text-muted-foreground"
             />
@@ -55,30 +111,82 @@
             />
         </form>
 
-        {#if !data.query}
+        <!-- Spatial filter toggle -->
+        <div class="flex items-center gap-3 mb-6">
+            <button
+                onclick={() => (showMap = !showMap)}
+                class="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors {showMap
+                    ? 'text-primary'
+                    : ''}"
+            >
+                <CrosshairIcon class="size-3.5" />
+                Spatial filter
+            </button>
+            {#if centerLat !== null && centerLng !== null}
+                <span class="text-xs text-muted-foreground">
+                    {centerLat.toFixed(4)}, {centerLng.toFixed(4)} — {formatRadius(
+                        radius,
+                    )}
+                </span>
+                <button
+                    onclick={clearSpatial}
+                    class="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                    Clear
+                </button>
+            {/if}
+        </div>
+
+        <!-- Map -->
+        {#if showMap}
+            <div class="mb-6">
+                <SpatialMap
+                    bind:centerLat
+                    bind:centerLng
+                    bind:radius
+                    results={resultMarkers}
+                    onChange={onLatChange}
+                />
+            </div>
+        {/if}
+
+        {#if !data.query && data.lat === null}
             <div class="text-center py-20 text-muted-foreground">
                 <SearchIcon class="size-12 mx-auto mb-4 opacity-30" />
                 <p class="text-lg">Search across all TinyOwl projects</p>
                 <p class="text-sm mt-2">
                     Find projects by title, description, or vocabulary terms.
+                    Use the spatial filter to narrow by location.
                 </p>
             </div>
         {:else if data.projects.length === 0}
             <div class="text-center py-20 text-muted-foreground">
                 <p class="text-lg">
-                    No projects found for "<span
-                        class="font-medium text-foreground">{data.query}</span
-                    >"
+                    No projects found
+                    {#if data.query}
+                        for "<span class="font-medium text-foreground"
+                            >{data.query}</span
+                        >"
+                    {/if}
+                    {#if data.lat !== null}
+                        within {formatRadius(data.radius ?? 5000)}
+                    {/if}
                 </p>
-                <p class="text-sm mt-2">Try a different search term.</p>
+                <p class="text-sm mt-2">Try a different search term or area.</p>
             </div>
         {:else}
             <p class="text-sm text-muted-foreground mb-6">
                 {data.projects.length} project{data.projects.length !== 1
                     ? "s"
-                    : ""} matching "<span class="font-medium text-foreground"
-                    >{data.query}</span
-                >"
+                    : ""}
+                {#if data.query}
+                    matching "<span class="font-medium text-foreground"
+                        >{data.query}</span
+                    >"
+                {/if}
+                {#if data.lat !== null}
+                    within {formatRadius(data.radius ?? 5000)}
+                {/if}
             </p>
 
             <!-- Project cards -->
