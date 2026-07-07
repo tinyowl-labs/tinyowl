@@ -26,7 +26,7 @@
     const slug = $derived(project?.slug ?? "");
 
     const tables = $derived(
-        ((data as any)?.tables as { name: string }[]) ?? [],
+        ((data as any)?.tables as { name: string; count: number }[]) ?? [],
     );
     const warnings = $derived(((data as any)?.warnings as any[]) ?? []);
     const diffs = $derived(((data as any)?.diffs as any[]) ?? []);
@@ -224,6 +224,10 @@
                 >
                     <span class="text-sm font-medium text-foreground truncate"
                         >{tbl.name.replace(/_/g, " ")}</span
+                    >
+                    <span
+                        class="text-xs text-muted-foreground font-mono tabular-nums shrink-0 ml-2"
+                        >{tbl.count.toLocaleString()}</span
                     >
                 </a>
             {/each}

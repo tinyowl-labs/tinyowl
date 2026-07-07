@@ -29,7 +29,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   }
 
   // Tables
-  let tables: { name: string }[] = [];
+  let tables: { name: string; count: number }[] = [];
   try {
     const res = await fetch(
       `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
@@ -38,7 +38,11 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) {
       const data = await res.json();
       const tblMap = data.tables as Record<string, string[]>;
-      tables = Object.keys(tblMap).map((name) => ({ name }));
+      const counts = (data.counts ?? {}) as Record<string, number>;
+      tables = Object.keys(tblMap).map((name) => ({
+        name,
+        count: counts[name] ?? 0,
+      }));
     }
   } catch (_) {}
 
@@ -69,7 +73,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   let mappings: any[] = [];
   try {
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1///${slug}/column-mappings`,
+      `${TINYOWL_CORE_URL}/api/v1/${slug}/column-mappings`,
       { headers },
     );
     if (res.ok) mappings = await res.json();

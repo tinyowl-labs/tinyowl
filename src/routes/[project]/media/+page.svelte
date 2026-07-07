@@ -27,6 +27,7 @@
 
     let items = $state<MediaItem[]>([]);
     let totalItems = $state(0);
+    let typeCounts = $state<Record<string, number>>({});
     let loading = $state(false);
     let hasMore = $state(true);
     let error = $state("");
@@ -231,7 +232,9 @@
                 const total = contentRange.split("/")[1];
                 if (total && total !== "*") totalItems = parseInt(total, 10);
             }
-            const batch: MediaItem[] = await res.json();
+            const body = await res.json();
+            const batch: MediaItem[] = body.items ?? body;
+            if (body.counts) typeCounts = body.counts;
             items = [...items, ...batch];
             offset += batch.length;
             if (batch.length < LIMIT) hasMore = false;
@@ -346,7 +349,7 @@
                         <span
                             class="ml-1.5 font-normal text-muted-foreground/60"
                         >
-                            ({groupItems.length})
+                            ({typeCounts[group] ?? groupItems.length})
                         </span>
                     </h2>
 
