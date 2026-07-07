@@ -56,6 +56,9 @@
     let panStartY = $state(0);
     let panOrigX = $state(0);
     let panOrigY = $state(0);
+    // Touch pinch state
+    let pinchDist = $state(0);
+    let pinchZoom = $state(1);
 
     const imageItems = $derived(
         items.filter((it) => it.media_type.startsWith("image/")),
@@ -146,6 +149,59 @@
 
     function onPanEnd() {
         panning = false;
+    }
+
+    // Touch support
+    function onTouchStart(e: TouchEvent) {
+        if (e.touches.length === 1) {
+            // Single finger — pan (only when zoomed)
+            if (zoom <= 1) return;
+            e.preventDefault();
+            panning = true;
+            panStartX = e.touches[0].clientX;
+            panStartY = e.touches[0].clientY;
+            panOrigX = translateX;
+            panOrigY = translateY;
+        } else if (e.touches.length === 2) {
+            // Two fingers — pinch zoom
+            e.preventDefault();
+            panning = false;
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            pinchDist = Math.sqrt(dx * dx + dy * dy);
+            pinchZoom = zoom;
+        }
+    }
+
+    function onTouchMove(e: TouchEvent) {
+        if (panning && e.touches.length === 1) {
+            e.preventDefault();
+            const dx = (e.touches[0].clientX - panStartX) / zoom;
+            const dy = (e.touches[0].clientY - panStartY) / zoom;
+            translateX = panOrigX + dx;
+            translateY = panOrigY + dy;
+        } else if (e.touches.length === 2 && pinchDist > 0) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const newZoom = Math.min(
+                8,
+                Math.max(1, pinchZoom * (dist / pinchDist)),
+            );
+            if (newZoom <= 1) {
+                translateX = 0;
+                translateY = 0;
+            }
+            zoom = newZoom;
+        }
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+        if (e.touches.length === 0) {
+            panning = false;
+            pinchDist = 0;
+        }
     }
 
     function onKeydown(e: KeyboardEvent) {
@@ -476,7 +532,7 @@
     {#if lightboxItem}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
-            class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-12"
+            class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-12 touch-none"
             onclick={closeLightbox}
             onkeydown={onKeydown}
             tabindex="-1"
@@ -565,11 +621,15 @@
                 style="transform: scale({zoom}) translate({translateX}px, {translateY}px)"
                 role="img"
                 aria-label="Media"
+                draggable="false"
                 onwheel={onWheel}
                 onmousedown={onPanStart}
                 onmousemove={onPanMove}
                 onmouseup={onPanEnd}
                 onmouseleave={onPanEnd}
+                ontouchstart={onTouchStart}
+                ontouchmove={onTouchMove}
+                ontouchend={onTouchEnd}
                 ondblclick={resetZoom}
                 ondragstart={(e) => e.preventDefault()}
                 onclick={(e) => {
