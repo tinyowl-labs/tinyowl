@@ -16,7 +16,6 @@
     const isMember = $derived(data?.isMember);
     const role = $derived((data?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
-    const entities = $derived(data?.entities ?? []);
     const head = $derived(data?.head as Record<string, unknown> | null);
     const readmeRaw = $derived(data?.readme ?? null);
 
@@ -464,52 +463,31 @@
         {/if}
     </section>
 
-    <!-- Entity table -->
-    {#if entities.length > 0}
+    <!-- Project stats -->
+    {#if project?.entity_count != null || project?.table_count != null}
         <section class="mb-10">
-            <h2 class="text-lg font-semibold text-foreground mb-4">Entities</h2>
-            <div
-                class="overflow-hidden rounded-lg border border-border bg-card"
-            >
-                <table class="w-full text-sm">
-                    <thead class="border-b border-border">
-                        <tr
-                            class="bg-secondary/50 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
+            <div class="flex gap-6">
+                {#if project?.entity_count != null}
+                    <div>
+                        <span class="text-2xl font-bold text-foreground"
+                            >{project.entity_count}</span
                         >
-                            <th class="px-4 py-2.5 font-medium">Type</th>
-                            <th class="px-4 py-2.5 font-medium">Label</th>
-                            <th
-                                class="px-4 py-2.5 font-medium hidden sm:table-cell"
-                                >ID</th
-                            >
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-border">
-                        {#each entities as entity}
-                            <tr class="hover:bg-secondary/30 transition-colors">
-                                <td class="px-4 py-2.5 text-muted-foreground">
-                                    {entity.type ?? "—"}
-                                </td>
-                                <td
-                                    class="px-4 py-2.5 text-foreground font-medium"
-                                >
-                                    {entity.label ?? entity.id ?? "—"}
-                                </td>
-                                <td
-                                    class="px-4 py-2.5 text-muted-foreground font-mono text-xs hidden sm:table-cell"
-                                >
-                                    {entity.id ?? "—"}
-                                </td>
-                            </tr>
-                        {/each}
-                    </tbody>
-                </table>
+                        <p class="text-xs text-muted-foreground mt-0.5">
+                            entities
+                        </p>
+                    </div>
+                {/if}
+                {#if project?.table_count != null}
+                    <div>
+                        <span class="text-2xl font-bold text-foreground"
+                            >{project.table_count}</span
+                        >
+                        <p class="text-xs text-muted-foreground mt-0.5">
+                            tables
+                        </p>
+                    </div>
+                {/if}
             </div>
-            {#if entities.length >= 50}
-                <p class="mt-2 text-xs text-muted-foreground">
-                    Showing first 50 entities.
-                </p>
-            {/if}
         </section>
     {/if}
 </article>
