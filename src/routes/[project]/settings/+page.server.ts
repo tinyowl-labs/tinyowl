@@ -162,6 +162,9 @@ export const actions: Actions = {
     const columnName = String(data.get("column_name") ?? "").trim();
     const localValue = String(data.get("local_value") ?? "").trim();
     const conceptUri = String(data.get("concept_uri") ?? "").trim() || null;
+    const vocabulary = String(data.get("vocabulary") ?? "").trim() || null;
+    const confidenceStr = String(data.get("confidence") ?? "");
+    const confidence = confidenceStr ? parseFloat(confidenceStr) : undefined;
 
     if (!entityType || !columnName || !localValue) {
       return { error: "Missing required fields." };
@@ -183,6 +186,8 @@ export const actions: Actions = {
           column_name: columnName,
           local_value: localValue,
           concept_uri: conceptUri || undefined,
+          vocabulary: vocabulary || undefined,
+          confidence,
         }),
       },
     );

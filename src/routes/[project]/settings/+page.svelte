@@ -7,6 +7,8 @@
     import Trash2Icon from "@lucide/svelte/icons/trash-2";
     import CheckIcon from "@lucide/svelte/icons/check";
     import XIcon from "@lucide/svelte/icons/x";
+    import SearchIcon from "@lucide/svelte/icons/search";
+    import LoaderIcon from "@lucide/svelte/icons/loader";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
 
@@ -30,15 +32,20 @@
     let editConceptUri = $state("");
     let mappingFilter = $state<"all" | "unmapped">("all");
 
-    const unmappedCount = $derived(mappings.filter((m: any) => !m.concept_uri).length);
+    const unmappedCount = $derived(
+        mappings.filter((m: any) => !m.concept_uri).length,
+    );
     const mappedCount = $derived(mappings.length - unmappedCount);
-    const pctMapped = $derived(mappings.length > 0 ? Math.round((mappedCount / mappings.length) * 100) : 0);
+    const pctMapped = $derived(
+        mappings.length > 0
+            ? Math.round((mappedCount / mappings.length) * 100)
+            : 0,
+    );
     const filteredMappings = $derived(
         mappingFilter === "unmapped"
             ? mappings.filter((m: any) => !m.concept_uri)
             : mappings,
     );
-
 
     $effect(() => {
         if (form?.memberAction) {
@@ -87,6 +94,59 @@
     function cancelEdit() {
         editingMapping = null;
         editConceptUri = "";
+        vocabResults = [];
+        vocabLoading = false;
+    }
+
+    // Vocab search state
+    let vocabResults = $state<any[]>([]);
+    let vocabLoading = $state(false);
+
+    async function searchVocab(value: string) {
+        vocabLoading = true;
+        vocabResults = [];
+        try {
+            const [periodoRes, aatRes, crmRes] = await Promise.all([
+                fetch(
+                    `/api/v1/vocab/search?vocab=periodo&q=${encodeURIComponent(value)}&limit=10`,
+                ),
+                fetch(
+                    `/api/v1/vocab/search?vocab=aat&q=${encodeURIComponent(value)}&limit=10`,
+                ),
+                fetch(
+                    `/api/v1/vocab/search?vocab=crm&q=${encodeURIComponent(value)}&limit=10`,
+                ),
+            ]);
+            const periodo = periodoRes.ok ? await periodoRes.json() : [];
+            const aat = aatRes.ok ? await aatRes.json() : [];
+            const crm = crmRes.ok ? await crmRes.json() : [];
+            vocabResults = [...periodo, ...aat, ...crm].sort(
+                (a: any, b: any) => b.score - a.score,
+            );
+        } catch (_) {
+            vocabResults = [];
+        } finally {
+            vocabLoading = false;
+        }
+    }
+
+    let vocabForm = $state<HTMLFormElement | null>(null);
+    let vocabFormData = $state({ entity_type: "", column_name: "", local_value: "", concept_uri: "", vocabulary: "", confidence: "" });
+
+    async function selectVocabMapping(mapping: any, result: any) {
+        vocabFormData = {
+            entity_type: mapping.entity_type,
+            column_name: mapping.column_name,
+            local_value: mapping.local_value,
+            concept_uri: result.uri,
+            vocabulary: result.vocabulary,
+            confidence: String(Math.round(result.score * 100) / 100),
+        };
+        editingMapping = null;
+        vocabResults = [];
+        vocabLoading = false;
+        // Submit the hidden form after a tick
+        setTimeout(() => vocabForm?.requestSubmit(), 0);
     }
 
     // Visibility & licence state
@@ -351,10 +411,17 @@
                                     </div>
                                 {/each}
                                 {#if filteredMappings.length === 0 && mappings.length > 0}
-                                    <div class="flex flex-col items-center justify-center py-12">
-                                        <p class="text-sm text-muted-foreground">All terms mapped</p>
+                                    <div
+                                        class="flex flex-col items-center justify-center py-12"
+                                    >
+                                        <p
+                                            class="text-sm text-muted-foreground"
+                                        >
+                                            All terms mapped
+                                        </p>
                                         <button
-                                            onclick={() => mappingFilter = "all"}
+                                            onclick={() =>
+                                                (mappingFilter = "all")}
                                             class="mt-1 text-xs text-primary hover:underline"
                                         >
                                             Show all terms
@@ -491,10 +558,17 @@
                                     </div>
                                 {/each}
                                 {#if filteredMappings.length === 0 && mappings.length > 0}
-                                    <div class="flex flex-col items-center justify-center py-12">
-                                        <p class="text-sm text-muted-foreground">All terms mapped</p>
+                                    <div
+                                        class="flex flex-col items-center justify-center py-12"
+                                    >
+                                        <p
+                                            class="text-sm text-muted-foreground"
+                                        >
+                                            All terms mapped
+                                        </p>
                                         <button
-                                            onclick={() => mappingFilter = "all"}
+                                            onclick={() =>
+                                                (mappingFilter = "all")}
                                             class="mt-1 text-xs text-primary hover:underline"
                                         >
                                             Show all terms
@@ -583,6 +657,20 @@
                     </div>
                 {:else if tabValue === "mappings"}
                     <div class="pt-2">
+                    <form
+                        method="POST"
+                        action="?/updateMapping"
+                        use:enhance
+                        bind:this={vocabForm}
+                        class="hidden"
+                    >
+                        <input type="hidden" name="entity_type" value={vocabFormData.entity_type} />
+                        <input type="hidden" name="column_name" value={vocabFormData.column_name} />
+                        <input type="hidden" name="local_value" value={vocabFormData.local_value} />
+                        <input type="hidden" name="concept_uri" value={vocabFormData.concept_uri} />
+                        <input type="hidden" name="vocabulary" value={vocabFormData.vocabulary} />
+                        <input type="hidden" name="confidence" value={vocabFormData.confidence} />
+                    </form>
                         <div class="mb-4">
                             <p class="text-sm text-muted-foreground">
                                 Map local values to external vocabularies and
@@ -592,25 +680,43 @@
 
                         {#if mappings.length > 0}
                             <div class="mb-4 space-y-3">
-                                <div class="flex items-center gap-1 rounded-lg bg-secondary p-1 w-fit">
+                                <div
+                                    class="flex items-center gap-1 rounded-lg bg-secondary p-1 w-fit"
+                                >
                                     <button
-                                        onclick={() => mappingFilter = "all"}
-                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}"
+                                        onclick={() => (mappingFilter = "all")}
+                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter ===
+                                        'all'
+                                            ? 'bg-background text-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:text-foreground'}"
                                     >
                                         All terms
                                     </button>
                                     <button
-                                        onclick={() => mappingFilter = "unmapped"}
-                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter === "unmapped" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}"
+                                        onclick={() =>
+                                            (mappingFilter = "unmapped")}
+                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter ===
+                                        'unmapped'
+                                            ? 'bg-background text-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:text-foreground'}"
                                     >
                                         Unmapped ({unmappedCount})
                                     </button>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <div class="h-1.5 flex-1 rounded-full bg-secondary overflow-hidden">
-                                        <div class="h-full rounded-full bg-primary transition-all duration-300" style="width: {pctMapped}%"></div>
+                                    <div
+                                        class="h-1.5 flex-1 rounded-full bg-secondary overflow-hidden"
+                                    >
+                                        <div
+                                            class="h-full rounded-full bg-primary transition-all duration-300"
+                                            style="width: {pctMapped}%"
+                                        ></div>
                                     </div>
-                                    <span class="text-xs text-muted-foreground tabular-nums whitespace-nowrap">{mappedCount} of {mappings.length} mapped ({pctMapped}%)</span>
+                                    <span
+                                        class="text-xs text-muted-foreground tabular-nums whitespace-nowrap"
+                                        >{mappedCount} of {mappings.length} mapped
+                                        ({pctMapped}%)</span
+                                    >
                                 </div>
                             </div>
                         {/if}
@@ -660,58 +766,75 @@
                                         >
 
                                         {#if isEditing}
-                                            <form
-                                                method="POST"
-                                                action="?/updateMapping"
-                                                use:enhance
-                                                class="flex items-center gap-1.5"
-                                            >
-                                                <input
-                                                    type="hidden"
-                                                    name="entity_type"
-                                                    value={mapping.entity_type}
-                                                />
-                                                <input
-                                                    type="hidden"
-                                                    name="column_name"
-                                                    value={mapping.column_name}
-                                                />
-                                                <input
-                                                    type="hidden"
-                                                    name="local_value"
-                                                    value={mapping.local_value}
-                                                />
-                                                <input
-                                                    type="text"
-                                                    name="concept_uri"
-                                                    bind:value={editConceptUri}
-                                                    placeholder="periodo:p0abc123"
-                                                    class="h-7 w-full rounded border border-input bg-background px-2 py-0 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                                />
-                                                <div
-                                                    class="flex items-center gap-0.5"
+                                            {#if !mapping.concept_uri}
+                                                <span
+                                                    class="truncate text-xs text-primary"
+                                                    >{mapping.local_value}</span
                                                 >
-                                                    <button
-                                                        type="submit"
-                                                        title="Save"
-                                                        class="flex items-center justify-center size-6 rounded text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                                                <button
+                                                    type="button"
+                                                    title="Cancel"
+                                                    onclick={cancelEdit}
+                                                    class="flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                                                >
+                                                    <XIcon class="size-3.5" />
+                                                </button>
+                                            {:else}
+                                                <form
+                                                    method="POST"
+                                                    action="?/updateMapping"
+                                                    use:enhance
+                                                    class="flex items-center gap-1.5"
+                                                >
+                                                    <input
+                                                        type="hidden"
+                                                        name="entity_type"
+                                                        value={mapping.entity_type}
+                                                    />
+                                                    <input
+                                                        type="hidden"
+                                                        name="column_name"
+                                                        value={mapping.column_name}
+                                                    />
+                                                    <input
+                                                        type="hidden"
+                                                        name="local_value"
+                                                        value={mapping.local_value}
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        name="concept_uri"
+                                                        bind:value={
+                                                            editConceptUri
+                                                        }
+                                                        placeholder="periodo:p0abc123"
+                                                        class="h-7 w-full rounded border border-input bg-background px-2 py-0 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                    />
+                                                    <div
+                                                        class="flex items-center gap-0.5"
                                                     >
-                                                        <CheckIcon
-                                                            class="size-3.5"
-                                                        />
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        title="Cancel"
-                                                        onclick={cancelEdit}
-                                                        class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-secondary"
-                                                    >
-                                                        <XIcon
-                                                            class="size-3.5"
-                                                        />
-                                                    </button>
-                                                </div>
-                                            </form>
+                                                        <button
+                                                            type="submit"
+                                                            title="Save"
+                                                            class="flex items-center justify-center size-6 rounded text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                                                        >
+                                                            <CheckIcon
+                                                                class="size-3.5"
+                                                            />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            title="Cancel"
+                                                            onclick={cancelEdit}
+                                                            class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-secondary"
+                                                        >
+                                                            <XIcon
+                                                                class="size-3.5"
+                                                            />
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            {/if}
                                         {:else}
                                             <span
                                                 class="truncate {mapping.concept_uri
@@ -722,21 +845,97 @@
                                                     "unmapped"}
                                             </span>
                                             <button
-                                                onclick={() =>
-                                                    startEdit(mapping)}
+                                                onclick={() => {
+                                                    if (!mapping.concept_uri) {
+                                                        editingMapping =
+                                                            mappingKey(mapping);
+                                                        searchVocab(
+                                                            mapping.local_value,
+                                                        );
+                                                    } else {
+                                                        startEdit(mapping);
+                                                    }
+                                                }}
                                                 class="flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                                                title="Edit mapping"
+                                                title={mapping.concept_uri
+                                                    ? "Edit mapping"
+                                                    : "Search vocabularies"}
                                             >
-                                                <LinkIcon class="size-3.5" />
+                                                <SearchIcon class="size-3.5" />
                                             </button>
                                         {/if}
                                     </div>
+                                    {#if isEditing && !mapping.concept_uri}
+                                        <div
+                                            class="col-span-full px-4 py-3 bg-secondary/30 border-t border-border"
+                                        >
+                                            {#if vocabLoading}
+                                                <div
+                                                    class="flex items-center gap-2 text-xs text-muted-foreground py-4"
+                                                >
+                                                    <LoaderIcon
+                                                        class="size-3.5 animate-spin"
+                                                    />
+                                                    Searching vocabularies...
+                                                </div>
+                                            {:else if vocabResults.length > 0}
+                                                <div
+                                                    class="space-y-1 max-h-48 overflow-y-auto"
+                                                >
+                                                    {#each vocabResults as result}
+                                                        <button
+                                                            onclick={() =>
+                                                                selectVocabMapping(
+                                                                    mapping,
+                                                                    result,
+                                                                )}
+                                                            class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded text-left text-xs hover:bg-background transition-colors"
+                                                        >
+                                                            <div
+                                                                class="min-w-0"
+                                                            >
+                                                                <span
+                                                                    class="font-medium text-foreground truncate block"
+                                                                    >{result.label}</span
+                                                                >
+                                                                <span
+                                                                    class="text-muted-foreground"
+                                                                    >{result.vocabulary}{#if result.context}
+                                                                        — {result.context}{/if}</span
+                                                                >
+                                                            </div>
+                                                            <span
+                                                                class="shrink-0 text-muted-foreground font-mono text-[10px]"
+                                                                >{Math.round(
+                                                                    result.score *
+                                                                        100,
+                                                                )}%</span
+                                                            >
+                                                        </button>
+                                                    {/each}
+                                                </div>
+                                            {:else}
+                                                <p
+                                                    class="text-xs text-muted-foreground py-4"
+                                                >
+                                                    No matching terms found.
+                                                </p>
+                                            {/if}
+                                        </div>
+                                    {/if}
                                 {/each}
                                 {#if filteredMappings.length === 0 && mappings.length > 0}
-                                    <div class="flex flex-col items-center justify-center py-12">
-                                        <p class="text-sm text-muted-foreground">All terms mapped</p>
+                                    <div
+                                        class="flex flex-col items-center justify-center py-12"
+                                    >
+                                        <p
+                                            class="text-sm text-muted-foreground"
+                                        >
+                                            All terms mapped
+                                        </p>
                                         <button
-                                            onclick={() => mappingFilter = "all"}
+                                            onclick={() =>
+                                                (mappingFilter = "all")}
                                             class="mt-1 text-xs text-primary hover:underline"
                                         >
                                             Show all terms
