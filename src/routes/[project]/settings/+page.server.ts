@@ -51,7 +51,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   let mappings: Mapping[] = [];
   try {
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1///${slug}/column-mappings`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/column-mappings`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (res.ok) mappings = await res.json();
@@ -171,7 +171,7 @@ export const actions: Actions = {
     const accessToken = await locals.getAccessToken();
 
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1///${slug}/column-mappings`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/column-mappings`,
       {
         method: "PUT",
         headers: {

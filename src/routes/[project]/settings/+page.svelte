@@ -28,6 +28,17 @@
     let inviteRole = $state("viewer");
     let editingMapping = $state<string | null>(null);
     let editConceptUri = $state("");
+    let mappingFilter = $state<"all" | "unmapped">("all");
+
+    const unmappedCount = $derived(mappings.filter((m: any) => !m.concept_uri).length);
+    const mappedCount = $derived(mappings.length - unmappedCount);
+    const pctMapped = $derived(mappings.length > 0 ? Math.round((mappedCount / mappings.length) * 100) : 0);
+    const filteredMappings = $derived(
+        mappingFilter === "unmapped"
+            ? mappings.filter((m: any) => !m.concept_uri)
+            : mappings,
+    );
+
 
     $effect(() => {
         if (form?.memberAction) {
@@ -339,6 +350,17 @@
                                         {/if}
                                     </div>
                                 {/each}
+                                {#if filteredMappings.length === 0 && mappings.length > 0}
+                                    <div class="flex flex-col items-center justify-center py-12">
+                                        <p class="text-sm text-muted-foreground">All terms mapped</p>
+                                        <button
+                                            onclick={() => mappingFilter = "all"}
+                                            class="mt-1 text-xs text-primary hover:underline"
+                                        >
+                                            Show all terms
+                                        </button>
+                                    </div>
+                                {/if}
                             </div>
                         {:else}
                             <div
@@ -468,6 +490,17 @@
                                         </form>
                                     </div>
                                 {/each}
+                                {#if filteredMappings.length === 0 && mappings.length > 0}
+                                    <div class="flex flex-col items-center justify-center py-12">
+                                        <p class="text-sm text-muted-foreground">All terms mapped</p>
+                                        <button
+                                            onclick={() => mappingFilter = "all"}
+                                            class="mt-1 text-xs text-primary hover:underline"
+                                        >
+                                            Show all terms
+                                        </button>
+                                    </div>
+                                {/if}
                             </div>
                         {:else}
                             <div
@@ -557,6 +590,31 @@
                             </p>
                         </div>
 
+                        {#if mappings.length > 0}
+                            <div class="mb-4 space-y-3">
+                                <div class="flex items-center gap-1 rounded-lg bg-secondary p-1 w-fit">
+                                    <button
+                                        onclick={() => mappingFilter = "all"}
+                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}"
+                                    >
+                                        All terms
+                                    </button>
+                                    <button
+                                        onclick={() => mappingFilter = "unmapped"}
+                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter === "unmapped" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}"
+                                    >
+                                        Unmapped ({unmappedCount})
+                                    </button>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="h-1.5 flex-1 rounded-full bg-secondary overflow-hidden">
+                                        <div class="h-full rounded-full bg-primary transition-all duration-300" style="width: {pctMapped}%"></div>
+                                    </div>
+                                    <span class="text-xs text-muted-foreground tabular-nums whitespace-nowrap">{mappedCount} of {mappings.length} mapped ({pctMapped}%)</span>
+                                </div>
+                            </div>
+                        {/if}
+
                         {#if form?.error && form?.mappingAction}
                             <p
                                 class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm text-destructive"
@@ -584,12 +642,12 @@
                                     <span>Concept URI</span>
                                     <span></span>
                                 </div>
-                                {#each mappings as mapping, i (mappingKey(mapping))}
+                                {#each filteredMappings as mapping, i (mappingKey(mapping))}
                                     {@const key = mappingKey(mapping)}
                                     {@const isEditing = editingMapping === key}
                                     <div
                                         class="grid grid-cols-[1fr_1fr_1fr_auto] gap-3 items-center px-4 py-2.5 {i <
-                                        mappings.length - 1
+                                        filteredMappings.length - 1
                                             ? 'border-b border-border'
                                             : ''} text-sm"
                                     >
@@ -674,6 +732,17 @@
                                         {/if}
                                     </div>
                                 {/each}
+                                {#if filteredMappings.length === 0 && mappings.length > 0}
+                                    <div class="flex flex-col items-center justify-center py-12">
+                                        <p class="text-sm text-muted-foreground">All terms mapped</p>
+                                        <button
+                                            onclick={() => mappingFilter = "all"}
+                                            class="mt-1 text-xs text-primary hover:underline"
+                                        >
+                                            Show all terms
+                                        </button>
+                                    </div>
+                                {/if}
                             </div>
                         {:else}
                             <div
