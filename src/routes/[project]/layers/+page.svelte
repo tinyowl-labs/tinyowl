@@ -44,6 +44,47 @@
 
     const columnHelper = createColumnHelper<Record<string, unknown>>();
 
+    /** Format arch_date JSON (or leave plain strings) for table display. */
+    function formatArchDateCell(raw: string): string | null {
+        const s = raw.trim();
+        if (!s.startsWith("{")) return null;
+        try {
+            const ad = JSON.parse(s) as {
+                start?: number;
+                end?: number;
+                label?: string;
+            };
+            if (
+                ad == null ||
+                (ad.label == null && ad.start == null && ad.end == null)
+            ) {
+                return null;
+            }
+            const fmtYear = (y: number) =>
+                y < 0 ? `${Math.abs(y)} BCE` : `${y} CE`;
+            let span = "";
+            if (ad.start != null && ad.end != null && ad.start !== ad.end) {
+                span = `${fmtYear(ad.start)}–${fmtYear(ad.end)}`;
+            } else if (ad.start != null) {
+                span = fmtYear(ad.start);
+            } else if (ad.end != null) {
+                span = fmtYear(ad.end);
+            }
+            if (ad.label && span) return `${ad.label} (${span})`;
+            if (ad.label) return ad.label;
+            return span || s;
+        } catch {
+            return null;
+        }
+    }
+
+    function formatCellValue(val: unknown): string {
+        if (val === null || val === undefined) return "—";
+        if (typeof val === "object") return JSON.stringify(val);
+        const s = String(val);
+        return formatArchDateCell(s) ?? s;
+    }
+
     function buildColumns(
         tableName: string,
     ): ColumnDef<Record<string, unknown>>[] {
@@ -76,9 +117,7 @@
                     header: col,
                     cell: (info) => {
                         const val = info.getValue();
-                        if (val === null || val === undefined) return "—";
-                        if (typeof val === "object") return JSON.stringify(val);
-                        return String(val);
+                        return formatCellValue(val);
                     },
                 }),
             );

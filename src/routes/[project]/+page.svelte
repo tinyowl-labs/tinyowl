@@ -14,6 +14,7 @@
     let { data, form } = $props();
 
     const project = $derived(data?.project);
+    const accessToken = $derived(((data as any)?.accessToken as string) ?? "");
     const role = $derived(((data as any)?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
     const head = $derived(
@@ -154,12 +155,28 @@
             researchLoading = true;
             researchError = "";
             try {
+                // Prefer place/topic tags; drop product/UI noise. Hyphens → spaces for OpenAlex.
+                const drop = new Set([
+                    "qfield",
+                    "demo",
+                    "project",
+                    "present",
+                    "survey",
+                ]);
                 const tagBits = [...tagsManual, ...tagsAuto]
+                    .map((t) => t.trim().toLowerCase())
+                    .filter((t) => t && !drop.has(t))
+                    .map((t) => t.replace(/-/g, " "))
                     .filter(Boolean)
-                    .slice(0, 6)
+                    .slice(0, 5)
                     .join(" ");
-                const q = [project?.title, tagBits].filter(Boolean).join(" ");
-                const query = encodeURIComponent(q);
+                const titleBits = String(project?.title ?? "")
+                    .replace(/\bQField\b/gi, "")
+                    .replace(/\bDemo\b/gi, "")
+                    .replace(/\s+/g, " ")
+                    .trim();
+                const q = [titleBits, tagBits].filter(Boolean).join(" ");
+                const query = encodeURIComponent(q || "archaeology");
                 const res = await fetch(
                     `https://api.openalex.org/works?search=${query}&per_page=6&sort=cited_by_count:desc`,
                 );
@@ -197,8 +214,13 @@
             similarLoading = true;
             similarError = "";
             try {
+                const headers: HeadersInit = {};
+                if (accessToken) {
+                    headers.Authorization = `Bearer ${accessToken}`;
+                }
                 const res = await fetch(
                     `/api/v1/projects/${project?.slug}/similar?limit=6`,
+                    { headers },
                 );
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 similar = await res.json();

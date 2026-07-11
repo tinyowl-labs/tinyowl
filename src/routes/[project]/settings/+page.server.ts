@@ -83,6 +83,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   try {
     const res = await fetch(
       `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (res.ok) {
       const data = await res.json();
@@ -395,6 +396,7 @@ export const actions: Actions = {
     const accountId = String(data.get("account_id") ?? "").trim();
     const qfcProjectId = String(data.get("qfc_project_id") ?? "").trim();
     const qfcProjectName = String(data.get("qfc_project_name") ?? "").trim();
+    const gpkgName = String(data.get("gpkg_name") ?? "").trim();
     if (!accountId || !qfcProjectId) {
       return { error: "Account and Cloud project required.", qfieldAction: "link" };
     }
@@ -413,6 +415,7 @@ export const actions: Actions = {
           account_id: accountId,
           qfc_project_id: qfcProjectId,
           qfc_project_name: qfcProjectName || undefined,
+          gpkg_name: gpkgName || undefined,
         }),
       },
     );

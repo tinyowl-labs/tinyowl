@@ -25,13 +25,17 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
   const lat = url.searchParams.get("lat");
   const lng = url.searchParams.get("lng");
   const radius = url.searchParams.get("radius");
+  const dateFrom = url.searchParams.get("date_from");
+  const dateTo = url.searchParams.get("date_to");
 
-  if (!q && !lat)
+  if (!q && !lat && !dateFrom && !dateTo)
     return {
       query: q ?? "",
       lat: null,
       lng: null,
       radius: null,
+      dateFrom: null,
+      dateTo: null,
       projects: [],
       entities: {},
     };
@@ -40,12 +44,15 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
   const headers: Record<string, string> = {};
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
-  // Build search URL with optional spatial params
-  let searchUrl = `${TINYOWL_CORE_URL}/api/v1/search?`;
-  if (q) searchUrl += `q=${encodeURIComponent(q)}`;
-  if (lat) searchUrl += `${q ? "&" : ""}lat=${encodeURIComponent(lat)}`;
-  if (lng) searchUrl += `&lng=${encodeURIComponent(lng)}`;
-  if (radius) searchUrl += `&radius=${encodeURIComponent(radius)}`;
+  // Build search URL with optional spatial + temporal params
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (lat) params.set("lat", lat);
+  if (lng) params.set("lng", lng);
+  if (radius) params.set("radius", radius);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  const searchUrl = `${TINYOWL_CORE_URL}/api/v1/search?${params.toString()}`;
 
   // Stage 1: find matching projects
   let projects: SearchProject[] = [];
@@ -73,6 +80,8 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
     lat: lat ? parseFloat(lat) : null,
     lng: lng ? parseFloat(lng) : null,
     radius: radius ? parseInt(radius) : null,
+    dateFrom: dateFrom ? parseInt(dateFrom) : null,
+    dateTo: dateTo ? parseInt(dateTo) : null,
     projects,
     entities,
   };

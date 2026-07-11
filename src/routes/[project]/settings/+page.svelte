@@ -24,6 +24,9 @@
     const currentUserId = $derived(data?.currentUserId ?? "");
     const userRole = $derived(data?.role ?? "viewer");
     const projectTitle = $derived(data?.project?.title ?? "Project");
+    const slug = $derived(
+        (data as any)?.slug ?? (data?.project?.slug as string) ?? "",
+    );
     const isOwner = $derived(userRole === "owner");
     const canManage = $derived(userRole === "owner" || userRole === "admin");
     const canLinkQField = $derived(
@@ -56,6 +59,7 @@
     let qfcProjectsLoading = $state(false);
     let qfcProjectsError = $state("");
     let selectedQfcProjectId = $state("");
+    let qfcGpkgName = $state("");
     let activeTab = $state("general");
     let showInvite = $state(false);
     let inviteEmail = $state("");
@@ -242,7 +246,7 @@
     <Tabs bind:value={activeTab} {tabs}>
         {#snippet children(tabValue: string)}
             {#if tabValue === "general"}
-                <div class="space-y-10 max-w-xl">
+                <div class="space-y-10 w-full">
                     <section>
                         <div class="mb-4">
                             <h2 class="text-sm font-medium text-foreground">
@@ -422,7 +426,7 @@
                     </section>
                 </div>
             {:else if tabValue === "qfieldcloud"}
-                <div class="space-y-8 max-w-xl">
+                <div class="space-y-8 w-full">
                     <section>
                         <div class="mb-4">
                             <h2 class="text-sm font-medium text-foreground">
@@ -471,6 +475,11 @@
                                 {#if qfieldLink.last_synced_at}
                                     <p class="text-xs text-muted-foreground">
                                         Last bridge sync: {qfieldLink.last_synced_at}
+                                    </p>
+                                {/if}
+                                {#if qfieldLink.gpkg_name}
+                                    <p class="text-xs text-muted-foreground">
+                                        Bridge GPKG: {qfieldLink.gpkg_name}
                                     </p>
                                 {/if}
                                 {#if canLinkQField}
@@ -575,6 +584,27 @@
                                                     selectedQfcProjectId,
                                             )?.name ?? ""}
                                         />
+                                        <div>
+                                            <label
+                                                class="text-xs font-medium text-muted-foreground"
+                                                for="qfc-gpkg"
+                                                >GPKG filename (for bridge)</label
+                                            >
+                                            <input
+                                                id="qfc-gpkg"
+                                                name="gpkg_name"
+                                                bind:value={qfcGpkgName}
+                                                placeholder="project.gpkg"
+                                                class="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
+                                            />
+                                            <p
+                                                class="mt-1 text-[10px] text-muted-foreground"
+                                            >
+                                                Optional. Defaults to env
+                                                BRIDGE_GPKG_NAME on the bridge
+                                                host.
+                                            </p>
+                                        </div>
                                         <div
                                             class="rounded-lg border border-border divide-y divide-border max-h-72 overflow-y-auto"
                                         >
@@ -838,11 +868,20 @@
                     description="Assign a CRM property to each column (e.g. crm:P2_has_type). Vocabulary is separate — usually set from TOML."
                 />
             {:else if tabValue === "values"}
+                <div class="mb-3 flex justify-end">
+                    <a
+                        href="/{slug}/mappings.toml"
+                        class="text-xs font-medium text-primary hover:underline"
+                        download="{slug}-mappings.toml"
+                    >
+                        Export mappings.toml
+                    </a>
+                </div>
                 <MappingWorkbench
                     mode="values"
                     rows={mappings}
                     {form}
-                    description="Map distinct values to external concepts. Multi-value (array) cells are exploded into one row per element — FK lists show the related label when available."
+                    description="Map distinct values to external concepts. Multi-value (array) cells are exploded into one row per element — FK lists show the related label when available. Manual UI mappings are preserved on TOML push."
                 />
             {/if}
         {/snippet}

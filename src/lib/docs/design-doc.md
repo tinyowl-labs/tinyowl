@@ -5,7 +5,7 @@
 > Source of truth for this document lives in the workspace `docs/design_doc.md`.
 > This copy is served by the embedded docs site.
 
-Last updated: 2026-07-11 (array types).
+Last updated: 2026-07-11 (QField polish + mappings export + arch_date UI).
 
 ---
 
@@ -29,7 +29,7 @@ TinyOwl is a collaborative archaeological data platform. Field teams work offlin
 | Column semantics | `tables/*.toml` | `column_annotations` |
 | Value → concept | DB + optional `mappings.toml` | `value_mappings` |
 
-**Rule:** Pushing TOML never deletes manual `value_mappings`.
+**Rule:** Pushing TOML never deletes manual `value_mappings`. TOML/auto upserts skip `source=manual`.
 
 ---
 
@@ -40,20 +40,21 @@ TinyOwl is a collaborative archaeological data platform. Field teams work offlin
 | TOML → GPKG including `arch_date` | ✅ |
 | `arch_date` parse / validate / heuristics | ✅ |
 | Temporal search (`date_from` / `date_to`) | ✅ |
+| Layers + search UI for `arch_date` | ✅ |
 | Array / enum TOML types | ✅ |
 | Auth (HS256 + ES256 JWKS + PAT) | ✅ |
 | Mappings split + UI tabs | ✅ |
-| `mappings.toml` export | ✅ |
+| `mappings.toml` export (CLI + web) | ✅ |
+| `/value-mappings` alias | ✅ |
 | Similar projects | ✅ |
 | QGIS ValueRelation FK preservation | ✅ |
+| QFieldCloud bridge (link/unlink, `gpkg_name`) | ✅ |
 | OpenAlex research accordion | ✅ |
 | JS SDK | ❌ Removed |
 
 ---
 
 ## Remaining priorities
-
-1. **QField plugin / Cloud hooks**
 
 Skip: diff rewrite. Keep: `cli_tokens` (PATs).
 

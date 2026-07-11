@@ -6,8 +6,8 @@
     import UsersIcon from "@lucide/svelte/icons/users";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import GitCommit from "@lucide/svelte/icons/git-commit";
-    import PanelRightIcon from "@lucide/svelte/icons/panel-right";
-    import PanelRightCloseIcon from "@lucide/svelte/icons/panel-right-close";
+    import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
+    import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import SettingsIcon from "@lucide/svelte/icons/settings";
     import Header from "$lib/components/ui/header.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
@@ -56,56 +56,9 @@
 
     {#if user}
         <div class="flex flex-1 min-h-0">
-            <main class="flex-1 min-h-0 overflow-y-auto bg-background">
-                <div class="mx-auto max-w-3xl px-6 py-8">
-                    <div class="flex items-start justify-between gap-4 mb-8">
-                        <div class="min-w-0">
-                            <h1
-                                class="text-2xl font-semibold tracking-tight text-foreground"
-                            >
-                                Recent activity
-                            </h1>
-                            <p class="mt-1 text-sm text-muted-foreground">
-                                Diffs across your projects · {displayName}
-                            </p>
-                        </div>
-                        <a
-                            href="/settings"
-                            class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline shrink-0"
-                        >
-                            <SettingsIcon class="size-3.5" />
-                            Settings
-                        </a>
-                    </div>
-
-                    {#if diffs.length === 0}
-                        <div class="rounded-lg border p-8 text-center bg-card">
-                            <div
-                                class="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-secondary"
-                            >
-                                <GitCommit
-                                    class="size-4 text-muted-foreground"
-                                />
-                            </div>
-                            <p class="text-sm text-muted-foreground">
-                                No diffs yet. Run
-                                <code
-                                    class="font-mono text-xs rounded px-1 bg-secondary"
-                                >
-                                    tinyowl push
-                                </code>
-                                to push your first diff.
-                            </p>
-                        </div>
-                    {:else}
-                        <CommitTimeline {diffs} />
-                    {/if}
-                </div>
-            </main>
-
-            <!-- Desktop right sidebar: Your projects -->
+            <!-- Desktop left sidebar: Your projects -->
             <aside
-                class="hidden md:flex shrink-0 border-l border-border bg-background flex-col transition-all duration-200 {collapsed
+                class="hidden md:flex shrink-0 border-r border-border bg-background flex-col transition-all duration-200 {collapsed
                     ? 'w-12'
                     : 'w-64'}"
             >
@@ -115,9 +68,9 @@
                     title={collapsed ? "Expand projects" : "Collapse projects"}
                 >
                     {#if collapsed}
-                        <PanelRightIcon class="size-4" />
+                        <PanelLeftIcon class="size-4" />
                     {:else}
-                        <PanelRightCloseIcon class="size-4" />
+                        <PanelLeftCloseIcon class="size-4" />
                     {/if}
                 </button>
 
@@ -173,9 +126,7 @@
                         {#each projects as project}
                             <a
                                 href="/{project.slug}"
-                                title={collapsed
-                                    ? project.title
-                                    : undefined}
+                                title={collapsed ? project.title : undefined}
                                 class="flex items-center gap-2.5 rounded-md {collapsed
                                     ? 'justify-center px-0 py-1.5'
                                     : 'px-2.5 py-2'} text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
@@ -249,6 +200,53 @@
                     </nav>
                 {/snippet}
             </MobileNav>
+
+            <main class="flex-1 min-h-0 overflow-y-auto bg-background">
+                <div class="mx-auto max-w-3xl px-6 py-8">
+                    <div class="flex items-start justify-between gap-4 mb-8">
+                        <div class="min-w-0">
+                            <h1
+                                class="text-2xl font-semibold tracking-tight text-foreground"
+                            >
+                                Recent activity
+                            </h1>
+                            <p class="mt-1 text-sm text-muted-foreground">
+                                Diffs across your projects · {displayName}
+                            </p>
+                        </div>
+                        <a
+                            href="/settings"
+                            class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline shrink-0"
+                        >
+                            <SettingsIcon class="size-3.5" />
+                            Settings
+                        </a>
+                    </div>
+
+                    {#if diffs.length === 0}
+                        <div class="rounded-lg border p-8 text-center bg-card">
+                            <div
+                                class="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-secondary"
+                            >
+                                <GitCommit
+                                    class="size-4 text-muted-foreground"
+                                />
+                            </div>
+                            <p class="text-sm text-muted-foreground">
+                                No diffs yet. Run
+                                <code
+                                    class="font-mono text-xs rounded px-1 bg-secondary"
+                                >
+                                    tinyowl push
+                                </code>
+                                to push your first diff.
+                            </p>
+                        </div>
+                    {:else}
+                        <CommitTimeline {diffs} />
+                    {/if}
+                </div>
+            </main>
         </div>
     {:else}
         <div class="flex-1 flex items-center justify-center bg-background">

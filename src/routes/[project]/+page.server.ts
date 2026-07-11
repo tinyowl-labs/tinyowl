@@ -17,7 +17,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) readme = await res.text();
   } catch (_) {}
 
-  return { readme };
+  return { readme, accessToken };
 };
 
 export const actions: Actions = {

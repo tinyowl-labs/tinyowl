@@ -37,6 +37,8 @@
         lat: number | null;
         lng: number | null;
         radius: number | null;
+        dateFrom: number | null;
+        dateTo: number | null;
         projects: SearchProject[];
         entities: Record<string, EntityResult[]>;
     };
@@ -51,6 +53,8 @@
     let centerLat = $state(untrack(() => data.lat));
     let centerLng = $state(untrack(() => data.lng));
     let radius = $state(untrack(() => data.radius ?? 5000));
+    let dateFrom = $state(untrack(() => data.dateFrom?.toString() ?? ""));
+    let dateTo = $state(untrack(() => data.dateTo?.toString() ?? ""));
 
     // Result markers for the spatial map
     const resultMarkers = $derived(
@@ -70,29 +74,29 @@
         expanded = { ...expanded, [slug]: !expanded[slug] };
     }
 
-    function handleSubmit(e: SubmitEvent) {
-        e.preventDefault();
-        const q = query.trim();
+    function buildParams(): URLSearchParams {
         const params = new URLSearchParams();
+        const q = query.trim();
         if (q) params.set("q", q);
         if (centerLat !== null && centerLng !== null) {
             params.set("lat", centerLat.toString());
             params.set("lng", centerLng.toString());
             params.set("radius", radius.toString());
         }
-        goto(`/search?${params.toString()}`);
+        const df = dateFrom.trim();
+        const dt = dateTo.trim();
+        if (df !== "" && !Number.isNaN(Number(df))) params.set("date_from", df);
+        if (dt !== "" && !Number.isNaN(Number(dt))) params.set("date_to", dt);
+        return params;
+    }
+
+    function handleSubmit(e: SubmitEvent) {
+        e.preventDefault();
+        goto(`/search?${buildParams().toString()}`);
     }
 
     function updateSpatial() {
-        const params = new URLSearchParams();
-        const q = query.trim();
-        if (q) params.set("q", q);
-        if (centerLat !== null && centerLng !== null) {
-            params.set("lat", centerLat.toString());
-            params.set("lng", centerLng.toString());
-            params.set("radius", radius.toString());
-        }
-        goto(`/search?${params.toString()}`);
+        goto(`/search?${buildParams().toString()}`);
     }
 
     let spatialTimeout: ReturnType<typeof setTimeout>;
@@ -118,6 +122,12 @@
         radius = 5000;
         updateSpatial();
     }
+
+    function clearDates() {
+        dateFrom = "";
+        dateTo = "";
+        goto(`/search?${buildParams().toString()}`);
+    }
 </script>
 
 <svelte:head>
@@ -141,7 +151,7 @@
         </form>
 
         <!-- Spatial filter toggle -->
-        <div class="flex items-center gap-3 mb-6">
+        <div class="flex flex-wrap items-center gap-3 mb-3">
             <button
                 onclick={() => (showMap = !showMap)}
                 class="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors {showMap
@@ -165,6 +175,53 @@
                 </button>
             {/if}
         </div>
+
+        <!-- Temporal year filter (astronomical: negative = BCE) -->
+        <form
+            onsubmit={handleSubmit}
+            class="flex flex-wrap items-end gap-2 mb-6"
+        >
+            <label class="flex flex-col gap-1">
+                <span class="text-[10px] uppercase tracking-wide text-muted-foreground"
+                    >From year</span
+                >
+                <input
+                    type="number"
+                    bind:value={dateFrom}
+                    placeholder="-8000"
+                    class="w-24 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+                />
+            </label>
+            <label class="flex flex-col gap-1">
+                <span class="text-[10px] uppercase tracking-wide text-muted-foreground"
+                    >To year</span
+                >
+                <input
+                    type="number"
+                    bind:value={dateTo}
+                    placeholder="2024"
+                    class="w-24 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+                />
+            </label>
+            <button
+                type="submit"
+                class="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+            >
+                Apply dates
+            </button>
+            {#if dateFrom || dateTo}
+                <button
+                    type="button"
+                    onclick={clearDates}
+                    class="text-xs text-muted-foreground hover:text-foreground"
+                >
+                    Clear dates
+                </button>
+            {/if}
+            <span class="text-[10px] text-muted-foreground self-center"
+                >Negative = BCE</span
+            >
+        </form>
 
         <!-- Map -->
         {#if showMap}
