@@ -119,13 +119,17 @@ Each `[[columns]]` entry defines one column in the table.
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | Yes | Column name |
-| `type` | string | Yes | `string`, `integer`, `double`, `boolean`, `date`, `datetime`, `arch_date`, `enum`, `media`, `geometry`, `id` |
+| `type` | string | Yes | `string`, `integer`, `double`, `boolean`, `date`, `datetime`, `arch_date`, `enum`, `array`, `media`, `geometry`, `id` |
 | `label` | string | Yes | Display label |
 | `vocabulary` | string | No | Vocabulary namespace (`periodo`, `aat`, …). Triggers value-level indexing |
 | `property` | string | No | CRM property URI (e.g. `crm:P3_has_note`) |
 | `range` | string | No | CRM range class |
 | `references` | string | No | FK reference `Table.column` (also from QGIS ValueRelation import) |
-| `values` | string[] | No | Allowed values when `type = "enum"` |
+| `values` | string[] | No | Allowed values when `type = "enum"` or `item = "enum"` |
+| `item` | string | No | Array element type: `string`, `integer`, `enum`, `id` |
+| `delimiter` | string | No | Array separator (default `,`) |
+| `wrapper` | string | No | Array wrapper: `{}`, `[]`, `()`, `none` |
+| `allow_multi` | bool | No | QGIS multi-FK; treated as `type=array` with `wrapper={}` |
 
 ### Column Annotations
 
@@ -140,6 +144,21 @@ vocabulary = "periodo"
 ```
 
 Stored as TEXT. Prefer compact JSON `{"start":-8000,"end":-6000,"label":"Early Holocene"}`. Plain strings like `1200 BCE` or `Roman` are accepted; the server parses years when possible and unions them into the project temporal extent.
+
+#### Arrays (multi-value / multi-FK)
+
+```toml
+[[columns]]
+name = "equipment"
+type = "array"
+label = "Equipment"
+item = "integer"
+wrapper = "{}"
+references = "Equipment_Used.fid"
+allow_multi = true
+```
+
+Accepts `{1,5,8}`, `[uuid,…]`, `(a;b)`, or raw `a|b` with an explicit `delimiter`. See workspace `docs/array-types.md`.
 
 #### Vocabulary Columns
 

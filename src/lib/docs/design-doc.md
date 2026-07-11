@@ -5,7 +5,7 @@
 > Source of truth for this document lives in the workspace `docs/design_doc.md`.
 > This copy is served by the embedded docs site.
 
-Last updated: 2026-07-11 (arch_date + temporal bbox).
+Last updated: 2026-07-11 (array types).
 
 ---
 
@@ -40,8 +40,11 @@ TinyOwl is a collaborative archaeological data platform. Field teams work offlin
 | TOML → GPKG including `arch_date` | ✅ |
 | `arch_date` parse / validate / heuristics | ✅ |
 | Temporal search (`date_from` / `date_to`) | ✅ |
+| Array / enum TOML types | ✅ |
 | Auth (HS256 + ES256 JWKS + PAT) | ✅ |
 | Mappings split + UI tabs | ✅ |
+| `mappings.toml` export | ✅ |
+| Similar projects | ✅ |
 | QGIS ValueRelation FK preservation | ✅ |
 | OpenAlex research accordion | ✅ |
 | JS SDK | ❌ Removed |
@@ -50,10 +53,7 @@ TinyOwl is a collaborative archaeological data platform. Field teams work offlin
 
 ## Remaining priorities
 
-1. **`mappings.toml` export** — round-trip DB manual mappings to disk
-2. **Similar projects** — API + lazy right-rail accordion
-3. **Enum/array TOML types** + delimiter decomposition
-4. **QField plugin / Cloud hooks**
+1. **QField plugin / Cloud hooks**
 
 Skip: diff rewrite. Keep: `cli_tokens` (PATs).
 

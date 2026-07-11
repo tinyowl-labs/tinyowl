@@ -1,6 +1,5 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
-    import SettingsIcon from "@lucide/svelte/icons/settings";
     import UsersIcon from "@lucide/svelte/icons/users";
     import LinkIcon from "@lucide/svelte/icons/link";
     import PlusIcon from "@lucide/svelte/icons/plus";
@@ -9,11 +8,11 @@
     import XIcon from "@lucide/svelte/icons/x";
     import SearchIcon from "@lucide/svelte/icons/search";
     import LoaderIcon from "@lucide/svelte/icons/loader";
+    import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
 
     let { data, form: rawForm } = $props();
-    // Cast form to any for dynamic action error fields
     const form = $derived(rawForm as any);
 
     const members = $derived(data?.members ?? []);
@@ -25,7 +24,7 @@
     const isOwner = $derived(userRole === "owner");
     const canManage = $derived(userRole === "owner" || userRole === "admin");
 
-    let activeTab = $state("members");
+    let activeTab = $state("general");
     let showInvite = $state(false);
     let inviteEmail = $state("");
     let inviteRole = $state("viewer");
@@ -75,17 +74,16 @@
     });
 
     const tabs = $derived([
+        { value: "general", label: "General" },
         { value: "members", label: "Members", count: members.length },
-        { value: "visibility", label: "Visibility" },
-        { value: "licence", label: "Licence" },
         {
             value: "columns",
-            label: "Column mapping",
+            label: "Columns",
             count: annotations.length,
         },
         {
             value: "values",
-            label: "Value mapping",
+            label: "Values",
             count: mappings.length,
         },
     ]);
@@ -122,7 +120,6 @@
         vocabLoading = false;
     }
 
-    // Vocab search state
     let vocabResults = $state<any[]>([]);
     let vocabLoading = $state(false);
 
@@ -166,7 +163,14 @@
         confidence: "",
     });
 
-    let pendingBulk = $state<{ local_value: string; column_name: string; count: number; concept_uri: string; vocabulary: string; confidence: string } | null>(null);
+    let pendingBulk = $state<{
+        local_value: string;
+        column_name: string;
+        count: number;
+        concept_uri: string;
+        vocabulary: string;
+        confidence: string;
+    } | null>(null);
 
     async function doBulkApply() {
         if (!pendingBulk) return;
@@ -197,19 +201,27 @@
         editingMapping = null;
         vocabResults = [];
         vocabLoading = false;
-        const similar = mappings.filter((m: any) =>
-            !m.concept_uri &&
-            m.local_value === mapping.local_value &&
-            m.column_name === mapping.column_name &&
-            m.entity_type !== mapping.entity_type
+        const similar = mappings.filter(
+            (m: any) =>
+                !m.concept_uri &&
+                m.local_value === mapping.local_value &&
+                m.column_name === mapping.column_name &&
+                m.entity_type !== mapping.entity_type,
         );
-        pendingBulk = similar.length > 0
-            ? { local_value: mapping.local_value, column_name: mapping.column_name, count: similar.length, concept_uri: result.uri, vocabulary: result.vocabulary, confidence: String(Math.round(result.score * 100) / 100) }
-            : null;
+        pendingBulk =
+            similar.length > 0
+                ? {
+                      local_value: mapping.local_value,
+                      column_name: mapping.column_name,
+                      count: similar.length,
+                      concept_uri: result.uri,
+                      vocabulary: result.vocabulary,
+                      confidence: String(Math.round(result.score * 100) / 100),
+                  }
+                : null;
         setTimeout(() => vocabForm?.requestSubmit(), 0);
     }
 
-    // Visibility & licence state
     const project = $derived(data?.project);
     const globalVisibility = $derived(
         (project as any)?.visibility ?? "private",
@@ -226,320 +238,90 @@
     const LICENCES = [
         {
             key: "CC0",
-            label: "CC0 — Public Domain",
+            label: "CC0",
+            desc: "Public Domain",
             url: "https://creativecommons.org/publicdomain/zero/1.0/",
         },
         {
             key: "CC_BY_4",
-            label: "CC BY 4.0 — Attribution",
+            label: "CC BY 4.0",
+            desc: "Attribution",
             url: "https://creativecommons.org/licenses/by/4.0/",
         },
         {
             key: "CC_BY_SA_4",
-            label: "CC BY-SA 4.0 — Attribution-ShareAlike",
+            label: "CC BY-SA 4.0",
+            desc: "Attribution-ShareAlike",
             url: "https://creativecommons.org/licenses/by-sa/4.0/",
         },
         {
             key: "CC_BY_NC_4",
-            label: "CC BY-NC 4.0 — Attribution-NonCommercial",
+            label: "CC BY-NC 4.0",
+            desc: "Attribution-NonCommercial",
             url: "https://creativecommons.org/licenses/by-nc/4.0/",
         },
         {
             key: "CC_BY_NC_SA_4",
-            label: "CC BY-NC-SA 4.0 — Attribution-NonCommercial-ShareAlike",
+            label: "CC BY-NC-SA 4.0",
+            desc: "Attribution-NonCommercial-ShareAlike",
             url: "https://creativecommons.org/licenses/by-nc-sa/4.0/",
         },
         {
             key: "ODbL",
-            label: "ODbL — Open Database Licence",
+            label: "ODbL",
+            desc: "Open Database Licence",
             url: "https://opendatacommons.org/licenses/odbl/",
         },
-        { key: "ALL_RIGHTS", label: "All Rights Reserved", url: "" },
+        { key: "ALL_RIGHTS", label: "All Rights Reserved", desc: "", url: "" },
     ];
 
-    let saving = $state(false);
-
-    $effect(() => {
-        if (form?.visibilityAction || form?.licenceAction) {
-            saving = false;
-        }
-    });
+    const selectClass =
+        "h-8 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+    const inputClass =
+        "h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm placeholder:text-muted-foreground/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 </script>
 
 <svelte:head>
     <title>{projectTitle} Settings — TinyOwl</title>
 </svelte:head>
 
-<div class="flex flex-col h-full px-6 py-4">
-    <div class="shrink-0 mb-4">
-        <div class="flex items-center gap-2.5">
-            <SettingsIcon class="size-5 text-muted-foreground" />
-            <h1 class="text-xl font-bold tracking-tight text-foreground">
-                Settings
-            </h1>
-        </div>
-        <p class="mt-0.5 text-sm text-muted-foreground">
-            {projectTitle}
-        </p>
-    </div>
+<div class="mx-auto w-full max-w-4xl px-6 py-8">
+    <header class="mb-6">
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+            Settings
+        </h1>
+        <p class="mt-1 text-sm text-muted-foreground">{projectTitle}</p>
+    </header>
 
-    <div class="flex-1 min-h-0">
-        <Tabs bind:value={activeTab} {tabs}>
-            {#snippet children(tabValue: string)}
-                {#if tabValue === "members"}
-                    <div class="pt-2">
-                        <div class="flex items-center justify-between mb-4">
-                            <div>
-                                <p class="text-sm text-muted-foreground">
-                                    Manage who has access to this project.
-                                </p>
-                            </div>
-                            {#if canManage}
-                                <Button
-                                    size="sm"
-                                    onclick={() => (showInvite = !showInvite)}
-                                >
-                                    <PlusIcon class="size-3.5 mr-1" />
-                                    Add member
-                                </Button>
-                            {/if}
+    <Tabs bind:value={activeTab} {tabs}>
+        {#snippet children(tabValue: string)}
+            {#if tabValue === "general"}
+                <div class="space-y-10 max-w-xl">
+                    <section>
+                        <div class="mb-4">
+                            <h2 class="text-sm font-medium text-foreground">
+                                Visibility
+                            </h2>
+                            <p class="mt-1 text-sm text-muted-foreground">
+                                Private tables require authentication. Overrides
+                                apply per table.
+                            </p>
                         </div>
 
-                        {#if form?.error && form?.memberAction}
-                            <p
-                                class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm text-destructive"
-                            >
-                                {form.error}
-                            </p>
-                        {/if}
-                        {#if form?.success && form?.memberAction}
-                            <p
-                                class="mb-4 rounded-lg border border-green-500/30 bg-green-50 px-4 py-2.5 text-sm text-green-700 dark:border-green-500/20 dark:bg-green-950/50 dark:text-green-400"
-                            >
-                                Member {form.memberAction} successfully.
-                            </p>
-                        {/if}
-
-                        {#if showInvite && canManage}
-                            <form
-                                method="POST"
-                                action="?/addMember"
-                                class="mb-4 rounded-lg border border-border p-4"
-                                use:enhance
-                            >
-                                <h4 class="text-sm font-medium mb-3">
-                                    Invite a collaborator
-                                </h4>
-                                <div class="flex gap-2">
-                                    <input
-                                        type="email"
-                                        name="email"
-                                        required
-                                        placeholder="colleague@example.com"
-                                        bind:value={inviteEmail}
-                                        class="flex-1 h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                    />
-                                    <select
-                                        name="role"
-                                        bind:value={inviteRole}
-                                        class="h-9 w-28 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                    >
-                                        <option value="viewer">Viewer</option>
-                                        <option value="collaborator"
-                                            >Collaborator</option
-                                        >
-                                        <option value="admin">Admin</option>
-                                        <option value="owner">Owner</option>
-                                    </select>
-                                    <Button type="submit" size="sm">Add</Button>
-                                </div>
-                            </form>
-                        {/if}
-
-                        {#if members.length > 0}
+                        <div
+                            class="rounded-lg border border-border divide-y divide-border"
+                        >
                             <div
-                                class="rounded-lg border border-border overflow-hidden"
+                                class="flex items-center justify-between gap-4 px-4 py-3"
                             >
-                                {#each members as member, i (member.user_id)}
-                                    <div
-                                        class="flex items-center justify-between gap-4 px-4 py-3 {i <
-                                        members.length - 1
-                                            ? 'border-b border-border'
-                                            : ''}"
-                                    >
-                                        <div
-                                            class="flex items-center gap-3 min-w-0"
-                                        >
-                                            <div
-                                                class="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-muted-foreground"
-                                            >
-                                                {member.email
-                                                    ?.charAt(0)
-                                                    .toUpperCase() ?? "?"}
-                                            </div>
-                                            <div class="min-w-0">
-                                                <p
-                                                    class="text-sm font-medium text-foreground truncate"
-                                                >
-                                                    {member.email}
-                                                </p>
-                                                <p
-                                                    class="text-[11px] text-muted-foreground"
-                                                >
-                                                    {ROLE_LABELS[member.role] ??
-                                                        member.role}
-                                                </p>
-                                            </div>
-                                            {#if member.user_id === currentUserId}
-                                                <span
-                                                    class="ml-1 inline-flex items-center rounded-full bg-primary/10 px-2 py-0 text-[10px] font-medium text-primary"
-                                                >
-                                                    You
-                                                </span>
-                                            {/if}
-                                        </div>
-
-                                        {#if isOwner && member.user_id !== currentUserId}
-                                            <div
-                                                class="flex items-center gap-1.5"
-                                            >
-                                                <form
-                                                    method="POST"
-                                                    action="?/updateRole"
-                                                    use:enhance
-                                                >
-                                                    <input
-                                                        type="hidden"
-                                                        name="userId"
-                                                        value={member.user_id}
-                                                    />
-                                                    <select
-                                                        name="role"
-                                                        value={member.role}
-                                                        onchange={(e) => {
-                                                            e.currentTarget
-                                                                .closest("form")
-                                                                ?.requestSubmit();
-                                                        }}
-                                                        class="h-7 rounded-md border border-input bg-background px-1.5 py-0 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                                    >
-                                                        <option value="viewer"
-                                                            >Viewer</option
-                                                        >
-                                                        <option
-                                                            value="collaborator"
-                                                            >Collaborator</option
-                                                        >
-                                                        <option value="admin"
-                                                            >Admin</option
-                                                        >
-                                                        <option value="owner"
-                                                            >Owner</option
-                                                        >
-                                                    </select>
-                                                </form>
-                                                <form
-                                                    method="POST"
-                                                    action="?/removeMember"
-                                                    use:enhance
-                                                >
-                                                    <input
-                                                        type="hidden"
-                                                        name="userId"
-                                                        value={member.user_id}
-                                                    />
-                                                    <button
-                                                        type="submit"
-                                                        title="Remove member"
-                                                        class="flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                                                        onclick={(e) => {
-                                                            if (
-                                                                !confirm(
-                                                                    `Remove ${member.email} from this project?`,
-                                                                )
-                                                            )
-                                                                e.preventDefault();
-                                                        }}
-                                                    >
-                                                        <Trash2Icon
-                                                            class="size-3.5"
-                                                        />
-                                                    </button>
-                                                </form>
-                                            </div>
-                                        {/if}
-                                    </div>
-                                {/each}
-                                {#if filteredMappings.length === 0 && mappings.length > 0}
-                                    <div
-                                        class="flex flex-col items-center justify-center py-12"
-                                    >
-                                        <p
-                                            class="text-sm text-muted-foreground"
-                                        >
-                                            All terms mapped
-                                        </p>
-                                        <button
-                                            onclick={() =>
-                                                (mappingFilter = "all")}
-                                            class="mt-1 text-xs text-primary hover:underline"
-                                        >
-                                            Show all terms
-                                        </button>
-                                    </div>
-                                {/if}
-                            </div>
-                        {:else}
-                            <div
-                                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-                            >
-                                <UsersIcon
-                                    class="size-10 text-muted-foreground/30 mb-3"
-                                />
-                                <p class="text-sm text-muted-foreground mb-1">
-                                    No members yet
-                                </p>
-                                <p
-                                    class="text-xs text-muted-foreground max-w-xs text-center mb-5"
-                                >
-                                    Invite collaborators to work on this project
-                                    together.
-                                </p>
-                                {#if canManage}
-                                    <Button
-                                        size="sm"
-                                        onclick={() => (showInvite = true)}
-                                    >
-                                        <PlusIcon class="size-3.5 mr-1" />
-                                        Add your first member
-                                    </Button>
-                                {/if}
-                            </div>
-                        {/if}
-                    </div>
-                {:else if tabValue === "visibility"}
-                    <div class="pt-2 max-w-xl">
-                        <p class="text-sm text-muted-foreground mb-6">
-                            Control which tables are publicly visible. Private
-                            tables require authentication to access.
-                        </p>
-
-                        <!-- Global toggle -->
-                        <div class="rounded-lg border border-border p-4 mb-4">
-                            <div
-                                class="flex items-center justify-between gap-4"
-                            >
-                                <div>
-                                    <p
-                                        class="text-sm font-medium text-foreground"
-                                    >
-                                        Default visibility
+                                <div class="min-w-0">
+                                    <p class="text-sm text-foreground">
+                                        Default
                                     </p>
                                     <p
                                         class="text-xs text-muted-foreground mt-0.5"
                                     >
-                                        Applies to all tables unless overridden
-                                        below.
+                                        Used when a table has no override
                                     </p>
                                 </div>
                                 <form
@@ -554,38 +336,25 @@
                                             e.currentTarget
                                                 .closest("form")
                                                 ?.requestSubmit()}
-                                        disabled={saving}
-                                        class="h-8 w-28 rounded-md border border-input bg-background px-2 py-0 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        class="{selectClass} w-28"
                                     >
                                         <option value="private">Private</option>
                                         <option value="public">Public</option>
                                     </select>
                                 </form>
                             </div>
-                        </div>
 
-                        <!-- Per-table toggles -->
-                        {#if tableNames.length > 0}
-                            <div
-                                class="rounded-lg border border-border overflow-hidden"
-                            >
-                                <div
-                                    class="grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-2.5 bg-secondary/50 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                                >
-                                    <span>Table</span>
-                                    <span>Visibility</span>
-                                </div>
-                                {#each tableNames as name, i}
+                            {#if tableNames.length > 0}
+                                {#each tableNames as name}
                                     {@const vis =
                                         tableVisibility[name] ??
                                         globalVisibility}
                                     <div
-                                        class="grid grid-cols-[1fr_auto] gap-3 items-center px-4 py-2.5 {i <
-                                        tableNames.length - 1
-                                            ? 'border-b border-border'
-                                            : ''} text-sm"
+                                        class="flex items-center justify-between gap-4 px-4 py-2.5"
                                     >
-                                        <span class="truncate text-foreground">
+                                        <span
+                                            class="truncate text-sm text-foreground"
+                                        >
                                             {name.replace(/_/g, " ")}
                                         </span>
                                         <form
@@ -605,7 +374,7 @@
                                                     e.currentTarget
                                                         .closest("form")
                                                         ?.requestSubmit()}
-                                                class="h-7 w-24 rounded-md border border-input bg-background px-1.5 py-0 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                class="{selectClass} h-7 w-24 text-xs"
                                             >
                                                 <option value="public"
                                                     >Public</option
@@ -617,47 +386,32 @@
                                         </form>
                                     </div>
                                 {/each}
-                                {#if filteredMappings.length === 0 && mappings.length > 0}
-                                    <div
-                                        class="flex flex-col items-center justify-center py-12"
-                                    >
-                                        <p
-                                            class="text-sm text-muted-foreground"
-                                        >
-                                            All terms mapped
-                                        </p>
-                                        <button
-                                            onclick={() =>
-                                                (mappingFilter = "all")}
-                                            class="mt-1 text-xs text-primary hover:underline"
-                                        >
-                                            Show all terms
-                                        </button>
-                                    </div>
-                                {/if}
-                            </div>
-                        {:else}
-                            <div
-                                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
-                            >
-                                <p class="text-sm text-muted-foreground">
-                                    No tables yet. Push data to configure
-                                    per-table visibility.
-                                </p>
-                            </div>
-                        {/if}
-                    </div>
-                {:else if tabValue === "licence"}
-                    <div class="pt-2 max-w-xl">
-                        <p class="text-sm text-muted-foreground mb-6">
-                            Choose a licence that governs how others can use and
-                            share your project data.
-                        </p>
+                            {:else}
+                                <div
+                                    class="px-4 py-6 text-center text-sm text-muted-foreground"
+                                >
+                                    No tables yet — push data to set per-table
+                                    visibility.
+                                </div>
+                            {/if}
+                        </div>
+                    </section>
+
+                    <section>
+                        <div class="mb-4">
+                            <h2 class="text-sm font-medium text-foreground">
+                                Licence
+                            </h2>
+                            <p class="mt-1 text-sm text-muted-foreground">
+                                How others may use and share this project’s
+                                data.
+                            </p>
+                        </div>
 
                         <div
-                            class="rounded-lg border border-border overflow-hidden"
+                            class="rounded-lg border border-border divide-y divide-border"
                         >
-                            {#each LICENCES as lic, i}
+                            {#each LICENCES as lic}
                                 <form
                                     method="POST"
                                     action="?/updateLicence"
@@ -670,81 +424,278 @@
                                     />
                                     <button
                                         type="submit"
-                                        disabled={saving}
-                                        class="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-secondary/50 transition-colors {i <
-                                        LICENCES.length - 1
-                                            ? 'border-b border-border'
-                                            : ''} {currentLicence === lic.key
-                                            ? 'bg-accent'
+                                        class="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-secondary/40 transition-colors {currentLicence ===
+                                        lic.key
+                                            ? 'bg-secondary/50'
                                             : ''}"
                                     >
-                                        <div class="min-w-0">
-                                            <p
-                                                class="text-sm font-medium text-foreground"
-                                            >
-                                                {lic.label}
-                                            </p>
-                                            {#if lic.url}
-                                                <a
-                                                    href={lic.url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    class="text-[11px] text-muted-foreground hover:text-primary transition-colors no-underline"
-                                                    onclick={(e) =>
-                                                        e.stopPropagation()}
-                                                >
-                                                    View licence
-                                                </a>
-                                            {/if}
-                                        </div>
-                                        {#if currentLicence === lic.key}
-                                            <span
-                                                class="shrink-0 size-5 rounded-full bg-primary flex items-center justify-center"
-                                            >
+                                        <span
+                                            class="flex size-4 shrink-0 items-center justify-center rounded-full border {currentLicence ===
+                                            lic.key
+                                                ? 'border-primary bg-primary'
+                                                : 'border-border'}"
+                                        >
+                                            {#if currentLicence === lic.key}
                                                 <CheckIcon
-                                                    class="size-3 text-primary-foreground"
+                                                    class="size-2.5 text-primary-foreground"
                                                 />
-                                            </span>
-                                        {:else}
+                                            {/if}
+                                        </span>
+                                        <span class="min-w-0 flex-1">
                                             <span
-                                                class="shrink-0 size-5 rounded-full border-2 border-border"
-                                            ></span>
+                                                class="text-sm text-foreground"
+                                                >{lic.label}</span
+                                            >
+                                            {#if lic.desc}
+                                                <span
+                                                    class="text-sm text-muted-foreground"
+                                                >
+                                                    — {lic.desc}</span
+                                                >
+                                            {/if}
+                                        </span>
+                                        {#if lic.url}
+                                            <a
+                                                href={lic.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                class="shrink-0 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                                                title="View licence"
+                                                onclick={(e) =>
+                                                    e.stopPropagation()}
+                                            >
+                                                <ExternalLinkIcon
+                                                    class="size-3.5"
+                                                />
+                                            </a>
                                         {/if}
                                     </button>
                                 </form>
                             {/each}
                         </div>
-                    </div>
-                {:else if tabValue === "columns"}
-                    <div class="pt-2">
-                        <div class="mb-4">
-                            <p class="text-sm text-muted-foreground">
-                                Column semantics from TOML — vocabulary and CRM
-                                annotations. Edit
-                                <code class="font-mono text-xs rounded px-1 bg-secondary"
-                                    >tables/*.toml</code
-                                >
-                                and push to update.
-                            </p>
-                        </div>
-                        {#if annotations.length > 0}
-                            <div
-                                class="rounded-lg border border-border overflow-hidden"
+                    </section>
+                </div>
+            {:else if tabValue === "members"}
+                <div>
+                    <div class="flex items-start justify-between gap-4 mb-5">
+                        <p class="text-sm text-muted-foreground">
+                            Who can access this project.
+                        </p>
+                        {#if canManage}
+                            <Button
+                                size="sm"
+                                variant={showInvite ? "outline" : "default"}
+                                onclick={() => (showInvite = !showInvite)}
                             >
-                                <div
-                                    class="grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5 bg-secondary/50 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                                <PlusIcon class="size-3.5 mr-1" />
+                                Add member
+                            </Button>
+                        {/if}
+                    </div>
+
+                    {#if form?.error && form?.memberAction}
+                        <p
+                            class="mb-4 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                        >
+                            {form.error}
+                        </p>
+                    {/if}
+                    {#if form?.success && form?.memberAction}
+                        <p
+                            class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                        >
+                            Member {form.memberAction}.
+                        </p>
+                    {/if}
+
+                    {#if showInvite && canManage}
+                        <form
+                            method="POST"
+                            action="?/addMember"
+                            class="mb-5 rounded-lg border border-border p-4"
+                            use:enhance
+                        >
+                            <div class="flex flex-wrap gap-2">
+                                <input
+                                    type="email"
+                                    name="email"
+                                    required
+                                    placeholder="colleague@example.com"
+                                    bind:value={inviteEmail}
+                                    class="{inputClass} min-w-[14rem] flex-1"
+                                />
+                                <select
+                                    name="role"
+                                    bind:value={inviteRole}
+                                    class="{selectClass} h-9 w-32"
                                 >
-                                    <span>Table</span>
-                                    <span>Column</span>
-                                    <span>Vocabulary</span>
-                                    <span>CRM property</span>
+                                    <option value="viewer">Viewer</option>
+                                    <option value="collaborator"
+                                        >Collaborator</option
+                                    >
+                                    <option value="admin">Admin</option>
+                                    <option value="owner">Owner</option>
+                                </select>
+                                <Button type="submit" size="sm">Add</Button>
+                            </div>
+                        </form>
+                    {/if}
+
+                    {#if members.length > 0}
+                        <div
+                            class="rounded-lg border border-border divide-y divide-border"
+                        >
+                            {#each members as member (member.user_id)}
+                                <div
+                                    class="flex items-center justify-between gap-4 px-4 py-3"
+                                >
+                                    <div class="flex items-center gap-3 min-w-0">
+                                        <div
+                                            class="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium text-muted-foreground"
+                                        >
+                                            {member.email
+                                                ?.charAt(0)
+                                                .toUpperCase() ?? "?"}
+                                        </div>
+                                        <div class="min-w-0">
+                                            <p
+                                                class="text-sm text-foreground truncate"
+                                            >
+                                                {member.email}
+                                                {#if member.user_id === currentUserId}
+                                                    <span
+                                                        class="ml-1.5 text-xs text-muted-foreground"
+                                                        >you</span
+                                                    >
+                                                {/if}
+                                            </p>
+                                            <p
+                                                class="text-xs text-muted-foreground"
+                                            >
+                                                {ROLE_LABELS[member.role] ??
+                                                    member.role}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {#if isOwner && member.user_id !== currentUserId}
+                                        <div class="flex items-center gap-1.5">
+                                            <form
+                                                method="POST"
+                                                action="?/updateRole"
+                                                use:enhance
+                                            >
+                                                <input
+                                                    type="hidden"
+                                                    name="userId"
+                                                    value={member.user_id}
+                                                />
+                                                <select
+                                                    name="role"
+                                                    value={member.role}
+                                                    onchange={(e) => {
+                                                        e.currentTarget
+                                                            .closest("form")
+                                                            ?.requestSubmit();
+                                                    }}
+                                                    class="{selectClass} h-7 text-xs"
+                                                >
+                                                    <option value="viewer"
+                                                        >Viewer</option
+                                                    >
+                                                    <option value="collaborator"
+                                                        >Collaborator</option
+                                                    >
+                                                    <option value="admin"
+                                                        >Admin</option
+                                                    >
+                                                    <option value="owner"
+                                                        >Owner</option
+                                                    >
+                                                </select>
+                                            </form>
+                                            <form
+                                                method="POST"
+                                                action="?/removeMember"
+                                                use:enhance
+                                            >
+                                                <input
+                                                    type="hidden"
+                                                    name="userId"
+                                                    value={member.user_id}
+                                                />
+                                                <button
+                                                    type="submit"
+                                                    title="Remove member"
+                                                    class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                                    onclick={(e) => {
+                                                        if (
+                                                            !confirm(
+                                                                `Remove ${member.email} from this project?`,
+                                                            )
+                                                        )
+                                                            e.preventDefault();
+                                                    }}
+                                                >
+                                                    <Trash2Icon
+                                                        class="size-3.5"
+                                                    />
+                                                </button>
+                                            </form>
+                                        </div>
+                                    {/if}
                                 </div>
-                                {#each annotations as ann, i}
+                            {/each}
+                        </div>
+                    {:else}
+                        <div
+                            class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
+                        >
+                            <UsersIcon
+                                class="size-8 text-muted-foreground/40 mb-3"
+                            />
+                            <p class="text-sm text-muted-foreground">
+                                No members yet
+                            </p>
+                            {#if canManage}
+                                <button
+                                    type="button"
+                                    onclick={() => (showInvite = true)}
+                                    class="mt-2 text-sm text-primary hover:underline"
+                                >
+                                    Invite someone
+                                </button>
+                            {/if}
+                        </div>
+                    {/if}
+                </div>
+            {:else if tabValue === "columns"}
+                <div>
+                    <p class="mb-5 text-sm text-muted-foreground">
+                        Column semantics from TOML. Edit
+                        <code
+                            class="font-mono text-xs rounded px-1 py-0.5 bg-secondary"
+                            >tables/*.toml</code
+                        >
+                        and push to update.
+                    </p>
+
+                    {#if annotations.length > 0}
+                        <div
+                            class="rounded-lg border border-border overflow-hidden"
+                        >
+                            <div
+                                class="grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-4 py-2 bg-secondary/40 border-b border-border text-[11px] font-medium text-muted-foreground uppercase tracking-wide"
+                            >
+                                <span>Table</span>
+                                <span>Column</span>
+                                <span>Vocabulary</span>
+                                <span>CRM</span>
+                            </div>
+                            <div class="divide-y divide-border">
+                                {#each annotations as ann}
                                     <div
-                                        class="grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5 text-sm {i <
-                                        annotations.length - 1
-                                            ? 'border-b border-border'
-                                            : ''}"
+                                        class="grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5 text-sm"
                                     >
                                         <span class="truncate text-foreground"
                                             >{ann.entity_type}</span
@@ -764,103 +715,106 @@
                                     </div>
                                 {/each}
                             </div>
-                        {:else}
-                            <div
-                                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-                            >
-                                <LinkIcon
-                                    class="size-10 text-muted-foreground/30 mb-3"
-                                />
-                                <p class="text-sm text-muted-foreground mb-1">
-                                    No column annotations yet
-                                </p>
-                                <p
-                                    class="text-xs text-muted-foreground max-w-xs text-center"
-                                >
-                                    Add
-                                    <code
-                                        class="font-mono text-xs rounded px-1 bg-secondary"
-                                        >vocabulary</code
-                                    >
-                                    or
-                                    <code
-                                        class="font-mono text-xs rounded px-1 bg-secondary"
-                                        >property</code
-                                    >
-                                    on columns in TOML, then
-                                    <code
-                                        class="font-mono text-xs rounded px-1 bg-secondary"
-                                        >tinyowl push</code
-                                    >.
-                                </p>
-                            </div>
-                        {/if}
-                    </div>
-                {:else if tabValue === "values"}
-                    <div class="pt-2">
-                        <form
-                            method="POST"
-                            action="?/updateMapping"
-                            use:enhance
-                            bind:this={vocabForm}
-                            class="hidden"
+                        </div>
+                    {:else}
+                        <div
+                            class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
                         >
-                            <input
-                                type="hidden"
-                                name="entity_type"
-                                value={vocabFormData.entity_type}
+                            <LinkIcon
+                                class="size-8 text-muted-foreground/40 mb-3"
                             />
-                            <input
-                                type="hidden"
-                                name="column_name"
-                                value={vocabFormData.column_name}
-                            />
-                            <input
-                                type="hidden"
-                                name="local_value"
-                                value={vocabFormData.local_value}
-                            />
-                            <input
-                                type="hidden"
-                                name="concept_uri"
-                                value={vocabFormData.concept_uri}
-                            />
-                            <input
-                                type="hidden"
-                                name="vocabulary"
-                                value={vocabFormData.vocabulary}
-                            />
-                            <input
-                                type="hidden"
-                                name="confidence"
-                                value={vocabFormData.confidence}
-                            />
-                        </form>
-                        <div class="mb-4">
-                            <p class="text-sm text-muted-foreground">
-                                Map distinct cell values to external concepts
-                                (PeriodO, AAT, …). Filter by table and column.
+                            <p class="text-sm text-muted-foreground mb-1">
+                                No column annotations
+                            </p>
+                            <p
+                                class="text-xs text-muted-foreground max-w-sm text-center"
+                            >
+                                Add
+                                <code
+                                    class="font-mono rounded px-1 bg-secondary"
+                                    >vocabulary</code
+                                >
+                                or
+                                <code
+                                    class="font-mono rounded px-1 bg-secondary"
+                                    >property</code
+                                >
+                                in TOML, then
+                                <code
+                                    class="font-mono rounded px-1 bg-secondary"
+                                    >tinyowl push</code
+                                >.
                             </p>
                         </div>
+                    {/if}
+                </div>
+            {:else if tabValue === "values"}
+                <div>
+                    <form
+                        method="POST"
+                        action="?/updateMapping"
+                        use:enhance
+                        bind:this={vocabForm}
+                        class="hidden"
+                    >
+                        <input
+                            type="hidden"
+                            name="entity_type"
+                            value={vocabFormData.entity_type}
+                        />
+                        <input
+                            type="hidden"
+                            name="column_name"
+                            value={vocabFormData.column_name}
+                        />
+                        <input
+                            type="hidden"
+                            name="local_value"
+                            value={vocabFormData.local_value}
+                        />
+                        <input
+                            type="hidden"
+                            name="concept_uri"
+                            value={vocabFormData.concept_uri}
+                        />
+                        <input
+                            type="hidden"
+                            name="vocabulary"
+                            value={vocabFormData.vocabulary}
+                        />
+                        <input
+                            type="hidden"
+                            name="confidence"
+                            value={vocabFormData.confidence}
+                        />
+                    </form>
 
-                        {#if mappings.length > 0}
-                            <div class="mb-4 space-y-3">
+                    <p class="mb-5 text-sm text-muted-foreground">
+                        Map distinct cell values to external concepts (PeriodO,
+                        AAT, …).
+                    </p>
+
+                    {#if mappings.length > 0}
+                        <div class="mb-4 space-y-3">
+                            <div class="flex flex-wrap items-center gap-3">
                                 <div
-                                    class="flex items-center gap-1 rounded-lg bg-secondary p-1 w-fit"
+                                    class="flex items-center gap-0.5 rounded-md bg-secondary p-0.5"
                                 >
                                     <button
+                                        type="button"
                                         onclick={() => (mappingFilter = "all")}
-                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter ===
+                                        class="px-2.5 py-1 rounded text-xs font-medium transition-colors {mappingFilter ===
                                         'all'
                                             ? 'bg-background text-foreground shadow-sm'
                                             : 'text-muted-foreground hover:text-foreground'}"
                                     >
-                                        All terms
+                                        All
                                     </button>
                                     <button
+                                        type="button"
                                         onclick={() =>
                                             (mappingFilter = "unmapped")}
-                                        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors {mappingFilter ===
+                                        class="px-2.5 py-1 rounded text-xs font-medium transition-colors {mappingFilter ===
                                         'unmapped'
                                             ? 'bg-background text-foreground shadow-sm'
                                             : 'text-muted-foreground hover:text-foreground'}"
@@ -868,9 +822,9 @@
                                         Unmapped ({unmappedCount})
                                     </button>
                                 </div>
-                                <div class="flex items-center gap-2">
+                                <div class="flex items-center gap-2 min-w-0 flex-1">
                                     <div
-                                        class="h-1.5 flex-1 rounded-full bg-secondary overflow-hidden"
+                                        class="h-1 flex-1 max-w-48 rounded-full bg-secondary overflow-hidden"
                                     >
                                         <div
                                             class="h-full rounded-full bg-primary transition-all duration-300"
@@ -879,93 +833,93 @@
                                     </div>
                                     <span
                                         class="text-xs text-muted-foreground tabular-nums whitespace-nowrap"
-                                        >{mappedCount} of {mappings.length} mapped
-                                        ({pctMapped}%)</span
+                                        >{mappedCount}/{mappings.length}</span
                                     >
-                                </div>
-                                <div class="flex flex-wrap gap-2">
-                                    <select
-                                        bind:value={tableFilter}
-                                        onchange={() => (columnFilter = "")}
-                                        class="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs"
-                                    >
-                                        <option value="">All tables</option>
-                                        {#each tableOptions as t}
-                                            <option value={t}>{t}</option>
-                                        {/each}
-                                    </select>
-                                    <select
-                                        bind:value={columnFilter}
-                                        class="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs"
-                                    >
-                                        <option value="">All columns</option>
-                                        {#each columnOptions as c}
-                                            <option value={c}>{c}</option>
-                                        {/each}
-                                    </select>
                                 </div>
                             </div>
-                        {/if}
-
-                        {#if form?.error && form?.mappingAction}
-                            <p
-                                class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm text-destructive"
-                            >
-                                {form.error}
-                            </p>
-                        {/if}
-                        {#if form?.success && form?.mappingAction}
-                            <p
-                                class="mb-4 rounded-lg border border-green-500/30 bg-green-50 px-4 py-2.5 text-sm text-green-700 dark:border-green-500/20 dark:bg-green-950/50 dark:text-green-400"
-                            >
-                                Mapping updated.
-                            </p>
-                        {/if}
-
-                        {#if pendingBulk}
-                            <div
-                                class="mb-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm flex items-center justify-between gap-3"
-                            >
-                                <span class="text-foreground"
-                                    >Also map <strong>{pendingBulk.count}</strong
-                                    > other &ldquo;{pendingBulk.local_value}&rdquo;
-                                    terms?</span
+                            <div class="flex flex-wrap gap-2">
+                                <select
+                                    bind:value={tableFilter}
+                                    onchange={() => (columnFilter = "")}
+                                    class="{selectClass} h-8 text-xs"
                                 >
-                                <button
-                                    onclick={doBulkApply}
-                                    class="shrink-0 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                                    <option value="">All tables</option>
+                                    {#each tableOptions as t}
+                                        <option value={t}>{t}</option>
+                                    {/each}
+                                </select>
+                                <select
+                                    bind:value={columnFilter}
+                                    class="{selectClass} h-8 text-xs"
                                 >
-                                    Apply to all
-                                </button>
+                                    <option value="">All columns</option>
+                                    {#each columnOptions as c}
+                                        <option value={c}>{c}</option>
+                                    {/each}
+                                </select>
                             </div>
-                        {/if}
-                        {#if mappings.length > 0}
-                            <div
-                                class="rounded-lg border border-border overflow-hidden"
+                        </div>
+                    {/if}
+
+                    {#if form?.error && form?.mappingAction}
+                        <p
+                            class="mb-4 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                        >
+                            {form.error}
+                        </p>
+                    {/if}
+                    {#if form?.success && form?.mappingAction}
+                        <p
+                            class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                        >
+                            Mapping updated.
+                        </p>
+                    {/if}
+
+                    {#if pendingBulk}
+                        <div
+                            class="mb-4 rounded-md border border-border bg-secondary/40 px-3 py-2.5 text-sm flex items-center justify-between gap-3"
+                        >
+                            <span class="text-foreground"
+                                >Also map <strong>{pendingBulk.count}</strong> other
+                                “{pendingBulk.local_value}” terms?</span
                             >
-                                <div
-                                    class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5 bg-secondary/50 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                                >
-                                    <span>Value</span>
-                                    <span>Table</span>
-                                    <span>Column</span>
-                                    <span>Concept URI</span>
-                                    <span></span>
-                                </div>
-                                {#each filteredMappings as mapping, i (mappingKey(mapping))}
+                            <button
+                                type="button"
+                                onclick={doBulkApply}
+                                class="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                Apply to all
+                            </button>
+                        </div>
+                    {/if}
+
+                    {#if mappings.length > 0}
+                        <div
+                            class="rounded-lg border border-border overflow-hidden"
+                        >
+                            <div
+                                class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2 bg-secondary/40 border-b border-border text-[11px] font-medium text-muted-foreground uppercase tracking-wide"
+                            >
+                                <span>Value</span>
+                                <span>Table</span>
+                                <span>Column</span>
+                                <span>Concept</span>
+                                <span class="w-7"></span>
+                            </div>
+                            <div class="divide-y divide-border">
+                                {#each filteredMappings as mapping (mappingKey(mapping))}
                                     {@const key = mappingKey(mapping)}
                                     {@const isEditing = editingMapping === key}
                                     <div
-                                        class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 items-center px-4 py-2.5 {i <
-                                        filteredMappings.length - 1
-                                            ? 'border-b border-border'
-                                            : ''} text-sm"
+                                        class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 items-center px-4 py-2.5 text-sm"
                                     >
                                         <span
                                             class="truncate text-foreground font-medium"
                                             >{mapping.local_value}</span
                                         >
-                                        <span class="truncate text-muted-foreground"
+                                        <span
+                                            class="truncate text-muted-foreground"
                                             >{mapping.entity_type}</span
                                         >
                                         <span
@@ -976,14 +930,14 @@
                                         {#if isEditing}
                                             {#if !mapping.concept_uri}
                                                 <span
-                                                    class="truncate text-xs text-primary"
+                                                    class="truncate text-xs text-muted-foreground"
                                                     >searching…</span
                                                 >
                                                 <button
                                                     type="button"
                                                     title="Cancel"
                                                     onclick={cancelEdit}
-                                                    class="flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                                                    class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                                                 >
                                                     <XIcon class="size-3.5" />
                                                 </button>
@@ -1016,7 +970,7 @@
                                                             editConceptUri
                                                         }
                                                         placeholder="periodo:p0abc123"
-                                                        class="h-7 w-full rounded border border-input bg-background px-2 py-0 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                        class="h-7 w-full rounded border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                     />
                                                     <div
                                                         class="flex items-center gap-0.5"
@@ -1024,7 +978,7 @@
                                                         <button
                                                             type="submit"
                                                             title="Save"
-                                                            class="flex items-center justify-center size-6 rounded text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                                                            class="flex size-6 items-center justify-center rounded text-foreground hover:bg-secondary"
                                                         >
                                                             <CheckIcon
                                                                 class="size-3.5"
@@ -1034,7 +988,7 @@
                                                             type="button"
                                                             title="Cancel"
                                                             onclick={cancelEdit}
-                                                            class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-secondary"
+                                                            class="flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-secondary"
                                                         >
                                                             <XIcon
                                                                 class="size-3.5"
@@ -1047,12 +1001,13 @@
                                             <span
                                                 class="truncate {mapping.concept_uri
                                                     ? 'text-foreground font-mono text-xs'
-                                                    : 'text-muted-foreground/40 italic text-xs'}"
+                                                    : 'text-muted-foreground/50 italic text-xs'}"
                                             >
                                                 {mapping.concept_uri ??
                                                     "unmapped"}
                                             </span>
                                             <button
+                                                type="button"
                                                 onclick={() => {
                                                     if (!mapping.concept_uri) {
                                                         editingMapping =
@@ -1064,7 +1019,7 @@
                                                         startEdit(mapping);
                                                     }
                                                 }}
-                                                class="flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                                                class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                                                 title={mapping.concept_uri
                                                     ? "Edit mapping"
                                                     : "Search vocabularies"}
@@ -1075,33 +1030,32 @@
                                     </div>
                                     {#if isEditing && !mapping.concept_uri}
                                         <div
-                                            class="col-span-full px-4 py-3 bg-secondary/30 border-t border-border"
+                                            class="px-4 py-3 bg-secondary/25 border-t border-border"
                                         >
                                             {#if vocabLoading}
                                                 <div
-                                                    class="flex items-center gap-2 text-xs text-muted-foreground py-4"
+                                                    class="flex items-center gap-2 text-xs text-muted-foreground py-3"
                                                 >
                                                     <LoaderIcon
                                                         class="size-3.5 animate-spin"
                                                     />
-                                                    Searching vocabularies...
+                                                    Searching vocabularies…
                                                 </div>
                                             {:else if vocabResults.length > 0}
                                                 <div
-                                                    class="space-y-1 max-h-48 overflow-y-auto"
+                                                    class="space-y-0.5 max-h-48 overflow-y-auto"
                                                 >
                                                     {#each vocabResults as result}
                                                         <button
+                                                            type="button"
                                                             onclick={() =>
                                                                 selectVocabMapping(
                                                                     mapping,
                                                                     result,
                                                                 )}
-                                                            class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded text-left text-xs hover:bg-background transition-colors"
+                                                            class="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-md text-left text-xs hover:bg-background transition-colors"
                                                         >
-                                                            <div
-                                                                class="min-w-0"
-                                                            >
+                                                            <div class="min-w-0">
                                                                 <span
                                                                     class="font-medium text-foreground truncate block"
                                                                     >{result.label}</span
@@ -1129,6 +1083,7 @@
                                                     No matching terms found.
                                                 </p>
                                                 <button
+                                                    type="button"
                                                     onclick={() =>
                                                         startEdit(mapping)}
                                                     class="text-xs text-primary hover:underline"
@@ -1139,7 +1094,7 @@
                                         </div>
                                     {/if}
                                 {/each}
-                                {#if filteredMappings.length === 0 && mappings.length > 0}
+                                {#if filteredMappings.length === 0}
                                     <div
                                         class="flex flex-col items-center justify-center py-12"
                                     >
@@ -1149,6 +1104,7 @@
                                             No terms match this filter
                                         </p>
                                         <button
+                                            type="button"
                                             onclick={() => {
                                                 mappingFilter = "all";
                                                 tableFilter = "";
@@ -1161,32 +1117,31 @@
                                     </div>
                                 {/if}
                             </div>
-                        {:else}
-                            <div
-                                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                        </div>
+                    {:else}
+                        <div
+                            class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
+                        >
+                            <LinkIcon
+                                class="size-8 text-muted-foreground/40 mb-3"
+                            />
+                            <p class="text-sm text-muted-foreground mb-1">
+                                No value mappings yet
+                            </p>
+                            <p
+                                class="text-xs text-muted-foreground max-w-sm text-center"
                             >
-                                <LinkIcon
-                                    class="size-10 text-muted-foreground/30 mb-3"
-                                />
-                                <p class="text-sm text-muted-foreground mb-1">
-                                    No value mappings yet
-                                </p>
-                                <p
-                                    class="text-xs text-muted-foreground max-w-xs text-center"
+                                Run
+                                <code
+                                    class="font-mono rounded px-1 bg-secondary"
+                                    >tinyowl push</code
                                 >
-                                    Run
-                                    <code
-                                        class="font-mono text-xs rounded px-1 bg-secondary"
-                                        >tinyowl push</code
-                                    >
-                                    to index distinct values from vocabulary
-                                    columns, then map them here.
-                                </p>
-                            </div>
-                        {/if}
-                    </div>
-                {/if}
-            {/snippet}
-        </Tabs>
-    </div>
+                                to index distinct values, then map them here.
+                            </p>
+                        </div>
+                    {/if}
+                </div>
+            {/if}
+        {/snippet}
+    </Tabs>
 </div>

@@ -67,6 +67,44 @@
         return a ?? b;
     });
 
+    // Quieter tag display: prefer manual, de-dupe, drop noisy auto heading crumbs.
+    const noisyAuto = new Set([
+        "details",
+        "project-details",
+        "overview",
+        "introduction",
+        "excavations",
+        "project",
+    ]);
+    const displayTags = $derived.by(() => {
+        const manual = [...new Set(tagsManual.map((t) => t.trim()).filter(Boolean))];
+        const manualSet = new Set(manual.map((t) => t.toLowerCase()));
+        const auto = [
+            ...new Set(
+                tagsAuto
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                    .filter((t) => !manualSet.has(t.toLowerCase()))
+                    .filter((t) => !noisyAuto.has(t.toLowerCase()))
+                    .filter((t) => !t.includes("-excavations"))
+                    .filter((t) => t.length >= 3 && t.length <= 32),
+            ),
+        ].slice(0, 8);
+        return { manual, auto };
+    });
+
+    // Drop leading H1 when it duplicates the project title.
+    const readmeHtml = $derived.by(() => {
+        let raw = readmeRaw ?? "";
+        if (!raw.trim()) return "";
+        const title = ((project?.title as string) ?? "").trim().toLowerCase();
+        const m = raw.match(/^#\s+(.+?)\s*\n+/);
+        if (m && title && m[1].trim().toLowerCase() === title) {
+            raw = raw.slice(m[0].length);
+        }
+        return marked.parse(raw) as string;
+    });
+
     let editing = $state(false);
     let editContent = $state("");
 
@@ -178,9 +216,8 @@
     <title>{project?.title ?? "Project"} — TinyOwl</title>
 </svelte:head>
 
-<article class="mx-auto max-w-6xl px-6 py-12">
-    <!-- Title -->
-    <div class="mb-10">
+<article class="mx-auto max-w-5xl px-6 py-12">
+    <div class="mb-8">
         <div class="flex items-center gap-3">
             <h1 class="text-4xl font-bold tracking-tight text-foreground">
                 {project?.title ?? "Untitled"}
@@ -195,125 +232,131 @@
                 </a>
             {/if}
         </div>
-        {#if updated}
-            <div
-                class="mt-3 flex items-center gap-1 text-sm text-muted-foreground"
-            >
-                <ClockIcon class="size-3.5" />
-                Updated {updated}
-            </div>
-        {/if}
-        {#if dateRangeText}
-            <p class="mt-3 text-sm text-foreground/80">
-                <span class="text-muted-foreground">Temporal extent</span>
-                <span class="mx-2 text-muted-foreground/50">·</span>
-                {dateRangeText}
-            </p>
-        {/if}
-        {#if tagsManual.length > 0 || tagsAuto.length > 0}
-            <div class="mt-4 flex flex-wrap gap-2">
-                {#each tagsManual as tag}
-                    <span
-                        class="text-xs tracking-wide text-foreground border-b border-foreground/30 pb-0.5"
-                        >{tag}</span
-                    >
-                {/each}
-                {#each tagsAuto as tag}
-                    <span
-                        class="text-xs tracking-wide text-muted-foreground border-b border-border pb-0.5"
-                        title="Auto-derived tag">{tag}</span
-                    >
-                {/each}
-            </div>
-        {/if}
+        <div
+            class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
+        >
+            {#if updated}
+                <span class="inline-flex items-center gap-1">
+                    <ClockIcon class="size-3.5" />
+                    Updated {updated}
+                </span>
+            {/if}
+            {#if dateRangeText}
+                {#if updated}<span class="text-muted-foreground/40">·</span>{/if}
+                <span>{dateRangeText}</span>
+            {/if}
+            {#if project?.entity_count != null || project?.table_count != null}
+                <span class="text-muted-foreground/40">·</span>
+                <span>
+                    {#if project?.entity_count != null}{project.entity_count} entities{/if}
+                    {#if project?.entity_count != null && project?.table_count != null} · {/if}
+                    {#if project?.table_count != null}{project.table_count} tables{/if}
+                </span>
+            {/if}
+        </div>
     </div>
 
-    <!-- Project extent map -->
-    {#if (project as any)?.bbox}
-        <section class="mb-10 max-w-3xl">
-            <BboxMap
-                bbox={(project as any).bbox}
-                href={`/${project?.slug}/layers`}
-                class="h-48"
-            />
-        </section>
-    {/if}
-
-    <!-- README + suggestions rail -->
-    <section class="mb-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+    <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-start">
         <div class="min-w-0">
-            {#if editing}
-                <form
-                    method="POST"
-                    action="?/saveReadme"
-                    use:enhance
-                    class="space-y-3"
-                >
-                    <div class="flex items-center justify-between">
+            {#if (project as any)?.bbox}
+                <section class="mb-8">
+                    <BboxMap
+                        bbox={(project as any).bbox}
+                        href={`/${project?.slug}/layers`}
+                        class="h-48"
+                    />
+                </section>
+            {/if}
+
+            <section>
+                {#if displayTags.manual.length > 0 || displayTags.auto.length > 0}
+                    <div class="mb-5 flex flex-wrap items-center gap-2">
+                        {#each displayTags.manual as tag}
+                            <span
+                                class="rounded-md bg-secondary px-2 py-1 text-[12px] text-foreground/85"
+                                >{tag}</span
+                            >
+                        {/each}
+                        {#if displayTags.manual.length > 0 && displayTags.auto.length > 0}
+                            <span class="text-muted-foreground/30 mx-0.5">·</span>
+                        {/if}
+                        {#each displayTags.auto as tag, i}
+                            <span
+                                class="text-[12px] text-muted-foreground/65"
+                                title="Auto-derived">{tag}</span
+                            >
+                            {#if i < displayTags.auto.length - 1}
+                                <span class="text-muted-foreground/25">·</span>
+                            {/if}
+                        {/each}
+                    </div>
+                {/if}
+
+                {#if editing}
+                    <form
+                        method="POST"
+                        action="?/saveReadme"
+                        use:enhance
+                        class="space-y-3"
+                    >
                         <div class="flex items-center gap-2">
                             <FileTextIcon class="size-4 text-muted-foreground" />
                             <span class="text-sm font-medium text-foreground"
                                 >README.md</span
                             >
                         </div>
+                        <textarea
+                            name="content"
+                            bind:value={editContent}
+                            rows={16}
+                            class="w-full rounded-lg border border-input bg-background px-3.5 py-3 text-sm font-mono shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+                            placeholder="# Project Title&#10;&#10;Describe your project here..."
+                        ></textarea>
+                        {#if form?.error}
+                            <p class="text-sm text-destructive">{form.error}</p>
+                        {/if}
+                        <div class="flex gap-2 justify-end">
+                            <button
+                                type="button"
+                                onclick={() => (editing = false)}
+                                class="inline-flex items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-secondary transition-colors"
+                                >Cancel</button
+                            >
+                            <button
+                                type="submit"
+                                class="inline-flex items-center rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 transition-colors"
+                                >Save</button
+                            >
+                        </div>
+                    </form>
+                {:else if readmeRaw}
+                    <div class="group relative">
+                        {#if canManage}
+                            <button
+                                onclick={startEdit}
+                                class="absolute -right-2 -top-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
+                                title="Edit README"
+                            >
+                                <PencilIcon class="size-3.5" />
+                            </button>
+                        {/if}
+                        <div class="readme-content">{@html readmeHtml}</div>
                     </div>
-                    <textarea
-                        name="content"
-                        bind:value={editContent}
-                        rows={16}
-                        class="w-full rounded-lg border border-input bg-background px-3.5 py-3 text-sm font-mono shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
-                        placeholder="# Project Title&#10;&#10;Describe your project here..."
-                    ></textarea>
-                    {#if form?.error}
-                        <p class="text-sm text-destructive">{form.error}</p>
-                    {/if}
-                    <div class="flex gap-2 justify-end">
-                        <button
-                            type="button"
-                            onclick={() => (editing = false)}
-                            class="inline-flex items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-secondary transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            class="inline-flex items-center rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 transition-colors"
-                        >
-                            Save
-                        </button>
-                    </div>
-                </form>
-            {:else if readmeRaw}
-                <div class="group relative">
-                    {#if canManage}
-                        <button
-                            onclick={startEdit}
-                            class="absolute -right-2 -top-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
-                            title="Edit README"
-                        >
-                            <PencilIcon class="size-3.5" />
-                        </button>
-                    {/if}
-                    <div class="readme-content">
-                        {@html marked.parse(readmeRaw ?? "")}
-                    </div>
-                </div>
-            {:else if canManage}
-                <button
-                    onclick={startEdit}
-                    class="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 w-full text-left hover:bg-secondary/50 transition-colors"
-                >
-                    <FileTextIcon class="size-4 text-muted-foreground" />
-                    <span class="text-sm text-muted-foreground"
-                        >Add a README.md to describe this project</span
+                {:else if canManage}
+                    <button
+                        onclick={startEdit}
+                        class="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 w-full text-left hover:bg-secondary/50 transition-colors"
                     >
-                </button>
-            {/if}
+                        <FileTextIcon class="size-4 text-muted-foreground" />
+                        <span class="text-sm text-muted-foreground"
+                            >Add a README.md to describe this project</span
+                        >
+                    </button>
+                {/if}
+            </section>
         </div>
 
-        <!-- Right rail: lazy suggestions -->
-        <aside class="space-y-3 lg:sticky lg:top-6">
-            <!-- Similar projects -->
+        <aside class="flex flex-col gap-3 lg:sticky lg:top-6">
             <div class="rounded-lg border border-border overflow-hidden">
                 <button
                     onclick={toggleSimilar}
@@ -323,13 +366,13 @@
                         <LayersIcon
                             class="size-4 shrink-0 text-muted-foreground"
                         />
-                        <span class="text-sm font-medium text-foreground">
-                            Similar projects
-                        </span>
+                        <span class="text-sm font-medium text-foreground"
+                            >Similar projects</span
+                        >
                         {#if similar.length > 0 && !similarLoading}
-                            <span class="text-xs text-muted-foreground">
-                                ({similar.length})
-                            </span>
+                            <span class="text-xs text-muted-foreground"
+                                >({similar.length})</span
+                            >
                         {/if}
                     </div>
                     <ChevronDownIcon
@@ -338,15 +381,13 @@
                             : ''}"
                     />
                 </button>
-
                 {#if similarOpen}
                     <div class="border-t border-border">
                         {#if similarLoading}
                             <div
                                 class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground"
                             >
-                                <Loader2Icon class="size-4 animate-spin" />
-                                Finding…
+                                <Loader2Icon class="size-4 animate-spin" /> Finding…
                             </div>
                         {:else if similarError}
                             <div
@@ -400,7 +441,6 @@
                 {/if}
             </div>
 
-            <!-- Related research -->
             <div class="rounded-lg border border-border overflow-hidden">
                 <button
                     onclick={toggleResearch}
@@ -410,13 +450,13 @@
                         <BookOpenIcon
                             class="size-4 shrink-0 text-muted-foreground"
                         />
-                        <span class="text-sm font-medium text-foreground">
-                            Related research
-                        </span>
+                        <span class="text-sm font-medium text-foreground"
+                            >Related research</span
+                        >
                         {#if articles.length > 0 && !researchLoading}
-                            <span class="text-xs text-muted-foreground">
-                                ({articles.length})
-                            </span>
+                            <span class="text-xs text-muted-foreground"
+                                >({articles.length})</span
+                            >
                         {/if}
                     </div>
                     <ChevronDownIcon
@@ -425,15 +465,13 @@
                             : ''}"
                     />
                 </button>
-
                 {#if researchOpen}
                     <div class="border-t border-border">
                         {#if researchLoading}
                             <div
                                 class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground"
                             >
-                                <Loader2Icon class="size-4 animate-spin" />
-                                Searching…
+                                <Loader2Icon class="size-4 animate-spin" /> Searching…
                             </div>
                         {:else if researchError}
                             <div
@@ -465,8 +503,7 @@
                                             <p
                                                 class="text-xs text-muted-foreground mt-0.5"
                                             >
-                                                {article.authors || "Unknown"}
-                                                {#if article.year}
+                                                {article.authors || "Unknown"}{#if article.year}
                                                     · {article.year}{/if}
                                             </p>
                                         </div>
@@ -477,7 +514,6 @@
                                 {/each}
                             </div>
                         {/if}
-
                         <div
                             class="px-4 py-2 border-t border-border bg-secondary/30"
                         >
@@ -489,176 +525,102 @@
                 {/if}
             </div>
         </aside>
-    </section>
-
-    <!-- Project stats -->
-    {#if project?.entity_count != null || project?.table_count != null}
-        <section class="mb-10">
-            <div class="flex gap-6">
-                {#if project?.entity_count != null}
-                    <div>
-                        <span class="text-2xl font-bold text-foreground"
-                            >{project.entity_count}</span
-                        >
-                        <p class="text-xs text-muted-foreground mt-0.5">
-                            entities
-                        </p>
-                    </div>
-                {/if}
-                {#if project?.table_count != null}
-                    <div>
-                        <span class="text-2xl font-bold text-foreground"
-                            >{project.table_count}</span
-                        >
-                        <p class="text-xs text-muted-foreground mt-0.5">
-                            tables
-                        </p>
-                    </div>
-                {/if}
-            </div>
-        </section>
-    {/if}
+    </div>
 </article>
 
 <style>
     :global(.readme-content) {
         font-size: 0.9375rem;
         line-height: 1.7;
-        color: hsl(var(--foreground));
+        color: var(--color-foreground);
         max-width: none;
     }
-
     :global(.readme-content h1) {
         font-size: 1.75rem;
         font-weight: 600;
         margin: 1.5em 0 0.5em;
         padding-bottom: 0.3em;
-        border-bottom: 1px solid hsl(var(--border));
-        color: hsl(var(--foreground));
+        border-bottom: 1px solid var(--color-border);
+        color: var(--color-foreground);
         line-height: 1.3;
     }
-    :global(.readme-content h1:first-child) {
-        margin-top: 0;
-    }
+    :global(.readme-content h1:first-child) { margin-top: 0; }
     :global(.readme-content h2) {
         font-size: 1.35rem;
         font-weight: 600;
         margin: 1.8em 0 0.4em;
         padding-bottom: 0.25em;
-        border-bottom: 1px solid hsl(var(--border));
-        color: hsl(var(--foreground));
+        border-bottom: 1px solid var(--color-border);
+        color: var(--color-foreground);
         line-height: 1.3;
     }
     :global(.readme-content h3) {
         font-size: 1.15rem;
         font-weight: 600;
         margin: 1.4em 0 0.3em;
-        color: hsl(var(--foreground));
+        color: var(--color-foreground);
         line-height: 1.3;
     }
     :global(.readme-content h4) {
         font-size: 1rem;
         font-weight: 600;
         margin: 1.2em 0 0.2em;
-        color: hsl(var(--foreground));
+        color: var(--color-foreground);
     }
-    :global(.readme-content p) {
-        margin: 0.8em 0;
-    }
-    :global(.readme-content p:first-child) {
-        margin-top: 0;
-    }
-    :global(.readme-content strong) {
-        font-weight: 600;
-    }
-    :global(.readme-content a) {
-        color: hsl(var(--primary));
-        text-decoration: none;
-    }
-    :global(.readme-content a:hover) {
-        text-decoration: underline;
-    }
+    :global(.readme-content p) { margin: 0.8em 0; }
+    :global(.readme-content p:first-child) { margin-top: 0; }
+    :global(.readme-content strong) { font-weight: 600; }
+    :global(.readme-content a) { color: var(--color-primary); text-decoration: none; }
+    :global(.readme-content a:hover) { text-decoration: underline; }
     :global(.readme-content ul),
-    :global(.readme-content ol) {
-        margin: 0.5em 0;
-        padding-left: 1.8em;
-    }
-    :global(.readme-content li) {
-        margin: 0.15em 0;
-    }
-    :global(.readme-content ul) {
-        list-style-type: disc;
-    }
-    :global(.readme-content ul ul) {
-        list-style-type: circle;
-    }
-    :global(.readme-content ul ul ul) {
-        list-style-type: square;
-    }
+    :global(.readme-content ol) { margin: 0.5em 0; padding-left: 1.8em; }
+    :global(.readme-content li) { margin: 0.15em 0; }
+    :global(.readme-content ul) { list-style-type: disc; }
+    :global(.readme-content ul ul) { list-style-type: circle; }
+    :global(.readme-content ul ul ul) { list-style-type: square; }
     :global(.readme-content blockquote) {
         margin: 0.8em 0;
         padding: 0.5em 1em;
-        border-left: 4px solid hsl(var(--border));
-        background: hsl(var(--secondary) / 0.5);
-        color: hsl(var(--muted-foreground));
+        border-left: 4px solid var(--color-border);
+        background: color-mix(in oklab, var(--color-secondary) 50%, transparent);
+        color: var(--color-muted-foreground);
     }
-    :global(.readme-content blockquote p) {
-        margin: 0.3em 0;
-    }
+    :global(.readme-content blockquote p) { margin: 0.3em 0; }
     :global(.readme-content code) {
-        font-family:
-            ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-            monospace;
+        font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
         font-size: 0.875em;
-        background: hsl(var(--secondary) / 0.7);
+        background: color-mix(in oklab, var(--color-secondary) 70%, transparent);
         padding: 0.15em 0.4em;
         border-radius: 3px;
     }
     :global(.readme-content pre) {
         margin: 0.8em 0;
         padding: 1em 1.2em;
-        background: hsl(var(--secondary) / 0.5);
-        border: 1px solid hsl(var(--border));
+        background: color-mix(in oklab, var(--color-secondary) 50%, transparent);
+        border: 1px solid var(--color-border);
         border-radius: 6px;
         overflow-x: auto;
         font-size: 0.85em;
         line-height: 1.5;
     }
-    :global(.readme-content pre code) {
-        background: none;
-        padding: 0;
-        font-size: inherit;
-    }
-    :global(.readme-content table) {
-        width: 100%;
-        margin: 0.8em 0;
-        border-collapse: collapse;
-        font-size: 0.9em;
-    }
+    :global(.readme-content pre code) { background: none; padding: 0; font-size: inherit; }
+    :global(.readme-content table) { width: 100%; margin: 0.8em 0; border-collapse: collapse; font-size: 0.9em; }
     :global(.readme-content thead th) {
-        background: hsl(var(--secondary) / 0.6);
+        background: color-mix(in oklab, var(--color-secondary) 60%, transparent);
         font-weight: 600;
         text-align: left;
         padding: 0.5em 0.75em;
-        border: 1px solid hsl(var(--border));
+        border: 1px solid var(--color-border);
         font-size: 0.9em;
     }
     :global(.readme-content tbody td) {
         padding: 0.4em 0.75em;
-        border: 1px solid hsl(var(--border));
+        border: 1px solid var(--color-border);
         vertical-align: top;
     }
     :global(.readme-content tbody tr:nth-child(even)) {
-        background: hsl(var(--secondary) / 0.3);
+        background: color-mix(in oklab, var(--color-secondary) 30%, transparent);
     }
-    :global(.readme-content hr) {
-        margin: 1.5em 0;
-        border: none;
-        border-top: 1px solid hsl(var(--border));
-    }
-    :global(.readme-content img) {
-        max-width: 100%;
-        height: auto;
-        border-radius: 4px;
-    }
+    :global(.readme-content hr) { margin: 1.5em 0; border: none; border-top: 1px solid var(--color-border); }
+    :global(.readme-content img) { max-width: 100%; height: auto; border-radius: 4px; }
 </style>

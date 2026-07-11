@@ -170,6 +170,45 @@ export const actions: Actions = {
     return { success: true, memberAction: "removed" };
   },
 
+  updateAnnotation: async ({ request, locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in" };
+
+    const data = await request.formData();
+    const entityType = String(data.get("entity_type") ?? "").trim();
+    const columnName = String(data.get("column_name") ?? "").trim();
+    const vocabulary = String(data.get("vocabulary") ?? "").trim() || null;
+    const crmProperty = String(data.get("crm_property") ?? "").trim() || null;
+    const crmRange = String(data.get("crm_range") ?? "").trim() || null;
+
+    if (!entityType || !columnName) {
+      return { error: "Missing required fields." };
+    }
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/column-annotations`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          entity_type: entityType,
+          column_name: columnName,
+          vocabulary,
+          crm_property: crmProperty,
+          crm_range: crmRange,
+        }),
+      },
+    );
+    if (!res.ok) return { error: `Failed: ${await res.text()}` };
+    return { success: true, annotationAction: "updated" };
+  },
+
   updateMapping: async ({ request, locals, params, fetch }) => {
     const { user } = await locals.getSession();
     if (!user) return { error: "Not signed in" };
