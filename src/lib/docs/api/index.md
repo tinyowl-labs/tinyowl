@@ -102,6 +102,7 @@ Device-code flow for CLI authentication:
 | `POST` | `/auth/cli/start` | Start a device-code auth session |
 | `GET` | `/auth/cli/token` | Poll for token (pass `?code=`) |
 | `POST` | `/auth/cli/verify` | Verify and link a token to a code |
+| `GET` | `/api/auth/cli-token` | List CLI tokens (prefix, label, timestamps) |
 | `POST` | `/api/auth/cli-token` | Create a long-lived CLI token |
 | `DELETE` | `/api/auth/cli-token` | Revoke a CLI token |
 

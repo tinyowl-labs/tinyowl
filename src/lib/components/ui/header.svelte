@@ -82,6 +82,11 @@
                 class="tw-nav-link rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
                 >Profile</a
             >
+            <a
+                href="/settings"
+                class="tw-nav-link rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                >Settings</a
+            >
         {:else}
             <a
                 href="/auth/login"
