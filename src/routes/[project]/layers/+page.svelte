@@ -2,6 +2,7 @@
     import LayersIcon from "@lucide/svelte/icons/layers";
     import TableIcon from "@lucide/svelte/icons/table";
     import MapIcon from "@lucide/svelte/icons/map";
+    import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import DownloadIcon from "@lucide/svelte/icons/download";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { DataTable } from "$lib/components/ui/data-table/index.js";
@@ -12,6 +13,10 @@
     import { page } from "$app/stores";
     import { onMount, untrack } from "svelte";
     import LayerMap from "$lib/components/dashboard/LayerMap.svelte";
+    import SchemaGraph, {
+        type SchemaTable,
+        type SchemaEdge,
+    } from "$lib/components/dashboard/SchemaGraph.svelte";
     import RowNum from "$lib/components/ui/row-num.svelte";
 
     let { data } = $props();
@@ -44,7 +49,6 @@
     ): ColumnDef<Record<string, unknown>>[] {
         const cols = tables[tableName] ?? [];
 
-        // Media column
         const mediaCol: ColumnDef<Record<string, unknown>> =
             columnHelper.display({
                 id: "_media",
@@ -65,7 +69,6 @@
                 size: 50,
             });
 
-        // Data columns
         const dataCols = cols
             .filter((col) => !/^_?geom/i.test(col))
             .map((col) =>
@@ -80,7 +83,6 @@
                 }),
             );
 
-        // Row number column
         const rowNumCol = columnHelper.display({
             id: "__row_number",
             header: "#",
@@ -132,9 +134,8 @@
             : "";
     }
 
-    // Map view state
-    type ViewMode = "table" | "map";
-    let viewMode = $state<ViewMode>("table");
+    type ViewMode = "schema" | "table" | "map";
+    let viewMode = $state<ViewMode>("schema");
     let mapLayers = $state<
         {
             name: string;
@@ -143,6 +144,15 @@
         }[]
     >([]);
     let mapLoading = $state(false);
+
+    let schemaTables = $state<SchemaTable[]>([]);
+    let schemaEdges = $state<SchemaEdge[]>([]);
+    let schemaLoading = $state(false);
+    let schemaLoaded = $state(false);
+
+    function authHeaders(): HeadersInit {
+        return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+    }
 
     async function loadAllGeoJSON() {
         mapLoading = true;
@@ -154,13 +164,7 @@
             try {
                 const res = await fetch(
                     `/api/v1/projects/${slug}/layers/${name}/geojson`,
-                    accessToken
-                        ? {
-                              headers: {
-                                  Authorization: `Bearer ${accessToken}`,
-                              },
-                          }
-                        : {},
+                    { headers: authHeaders() },
                 );
                 if (res.ok) {
                     const geo = await res.json();
@@ -175,16 +179,40 @@
         mapLoading = false;
     }
 
+    async function loadSchema() {
+        if (schemaLoaded || schemaLoading) return;
+        schemaLoading = true;
+        try {
+            const slug = $page.params.project;
+            const res = await fetch(`/api/v1/projects/${slug}/schema`, {
+                headers: authHeaders(),
+            });
+            if (res.ok) {
+                const json = await res.json();
+                schemaTables = json.tables ?? [];
+                schemaEdges = json.edges ?? [];
+                schemaLoaded = true;
+            }
+        } catch (_) {
+            schemaTables = [];
+            schemaEdges = [];
+        } finally {
+            schemaLoading = false;
+        }
+    }
+
     $effect(() => {
         if (viewMode === "map" && tableNames.length > 0) {
             loadAllGeoJSON();
+        }
+        if (viewMode === "schema" && tableNames.length > 0) {
+            loadSchema();
         }
     });
 
     let tableContainer = $state<HTMLDivElement>();
     let currentPage = $state(untrack(() => highlightPage));
 
-    // Reset to page 0 when switching to a tab that isn't the highlighted one
     $effect(() => {
         if (activeTab && activeTab !== layerParam) {
             currentPage = 0;
@@ -193,7 +221,6 @@
 
     onMount(() => {
         if (highlightId) {
-            // Wait for table to render, then scroll to highlighted row
             setTimeout(() => {
                 const el = tableContainer?.querySelector(".bg-accent");
                 el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -227,8 +254,18 @@
                     class="ml-2 flex items-center rounded-md border border-border overflow-hidden"
                 >
                     <button
+                        onclick={() => (viewMode = "schema")}
+                        class="px-2.5 py-1 text-xs {viewMode === 'schema'
+                            ? 'bg-secondary text-foreground font-medium'
+                            : 'text-muted-foreground hover:text-foreground'} transition-colors"
+                        title="Schema graph"
+                    >
+                        <WaypointsIcon class="size-3.5" />
+                    </button>
+                    <button
                         onclick={() => (viewMode = "table")}
-                        class="px-2.5 py-1 text-xs {viewMode === 'table'
+                        class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
+                        'table'
                             ? 'bg-secondary text-foreground font-medium'
                             : 'text-muted-foreground hover:text-foreground'} transition-colors"
                         title="Table view"
@@ -253,11 +290,21 @@
             {tableNames.length === 1 ? " table" : " tables"}
             {#if entityCount != null}
                 · {entityCount} entities{/if}
+            {#if viewMode === "schema" && schemaEdges.length > 0}
+                · {schemaEdges.length} relations{/if}
         </p>
     </div>
 
     {#if tableNames.length > 0}
-        {#if viewMode === "map"}
+        {#if viewMode === "schema"}
+            <div class="flex-1 min-h-0 flex flex-col">
+                <SchemaGraph
+                    tables={schemaTables}
+                    edges={schemaEdges}
+                    loading={schemaLoading}
+                />
+            </div>
+        {:else if viewMode === "map"}
             <div class="flex-1 min-h-0">
                 <LayerMap layers={mapLayers} loading={mapLoading} {rows} />
             </div>

@@ -3,6 +3,7 @@
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import ClockIcon from "@lucide/svelte/icons/clock";
     import BookOpenIcon from "@lucide/svelte/icons/book-open";
+    import LayersIcon from "@lucide/svelte/icons/layers";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import Loader2Icon from "@lucide/svelte/icons/loader-2";
@@ -35,10 +36,15 @@
     const tagsAuto = $derived(
         ((project as any)?.tags_auto as string[] | undefined) ?? [],
     );
-    const dateStart = $derived((project as any)?.date_start as number | null | undefined);
-    const dateEnd = $derived((project as any)?.date_end as number | null | undefined);
+    const dateStart = $derived(
+        (project as any)?.date_start as number | null | undefined,
+    );
+    const dateEnd = $derived(
+        (project as any)?.date_end as number | null | undefined,
+    );
     const dateStartLabel = $derived(
-        ((project as any)?.date_start_label as string | null | undefined) ?? null,
+        ((project as any)?.date_start_label as string | null | undefined) ??
+            null,
     );
     const dateEndLabel = $derived(
         ((project as any)?.date_end_label as string | null | undefined) ?? null,
@@ -61,50 +67,6 @@
         return a ?? b;
     });
 
-    // Split markdown into H1-headed sections for accordion rendering.
-    // Sections without an H1 get an empty title (rendered as a non-collapsible preamble).
-    interface Section {
-        title: string;
-        html: string;
-    }
-    const sections = $derived.by(() => {
-        const raw = (project?.description as string) ?? "";
-        if (!raw.trim()) return [];
-
-        // Split on lines that start with "# " (H1)
-        const parts = raw.split(/^(?=# )/m);
-        return parts
-            .map((part) => {
-                const trimmed = part.trim();
-                const m = trimmed.match(/^# (.+)$/m);
-                if (m) {
-                    const body = trimmed.replace(/^# .+\n?/, "").trim();
-                    return {
-                        title: m[1].trim(),
-                        html: body ? marked.parse(body) : "",
-                    };
-                }
-                // Preamble text before first H1
-                return {
-                    title: "",
-                    html: marked.parse(trimmed),
-                };
-            })
-            .filter((s) => s.html);
-    });
-
-    // Track which accordion sections are collapsed. All start expanded.
-    let collapsed = $state<Record<number, boolean>>({});
-    function toggleSection(idx: number) {
-        collapsed = { ...collapsed, [idx]: !collapsed[idx] };
-    }
-
-    let expanded = $state(false);
-    let articles = $state<Article[]>([]);
-    let loading = $state(false);
-    let error = $state("");
-
-    // Readme editing
     let editing = $state(false);
     let editContent = $state("");
 
@@ -126,11 +88,33 @@
         url: string;
     }
 
-    async function toggle() {
-        expanded = !expanded;
-        if (expanded && articles.length === 0 && !loading) {
-            loading = true;
-            error = "";
+    interface SimilarItem {
+        slug: string;
+        title: string;
+        description?: string | null;
+        score: number;
+        tag_overlap: number;
+        shared_tags?: string[];
+        temporal_overlap?: boolean;
+        spatial_overlap?: boolean;
+    }
+
+    let researchOpen = $state(false);
+    let articles = $state<Article[]>([]);
+    let researchLoading = $state(false);
+    let researchError = $state("");
+
+    let similarOpen = $state(false);
+    let similar = $state<SimilarItem[]>([]);
+    let similarLoading = $state(false);
+    let similarError = $state("");
+    let similarFetched = $state(false);
+
+    async function toggleResearch() {
+        researchOpen = !researchOpen;
+        if (researchOpen && articles.length === 0 && !researchLoading) {
+            researchLoading = true;
+            researchError = "";
             try {
                 const tagBits = [...tagsManual, ...tagsAuto]
                     .filter(Boolean)
@@ -162,9 +146,29 @@
                     }))
                     .filter((a: Article) => a.title);
             } catch (e: any) {
-                error = e?.message ?? "Failed to load";
+                researchError = e?.message ?? "Failed to load";
             } finally {
-                loading = false;
+                researchLoading = false;
+            }
+        }
+    }
+
+    async function toggleSimilar() {
+        similarOpen = !similarOpen;
+        if (similarOpen && !similarFetched && !similarLoading) {
+            similarLoading = true;
+            similarError = "";
+            try {
+                const res = await fetch(
+                    `/api/v1/projects/${project?.slug}/similar?limit=6`,
+                );
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                similar = await res.json();
+                similarFetched = true;
+            } catch (e: any) {
+                similarError = e?.message ?? "Failed to load";
+            } finally {
+                similarLoading = false;
             }
         }
     }
@@ -174,7 +178,7 @@
     <title>{project?.title ?? "Project"} — TinyOwl</title>
 </svelte:head>
 
-<article class="mx-auto max-w-4xl px-6 py-12">
+<article class="mx-auto max-w-6xl px-6 py-12">
     <!-- Title -->
     <div class="mb-10">
         <div class="flex items-center gap-3">
@@ -224,73 +228,9 @@
         {/if}
     </div>
 
-    <!-- Description (markdown, Wikipedia-style accordion) -->
-    {#if sections.length > 0}
-        <section class="mb-10 max-w-2xl">
-            {#each sections as section, idx}
-                {#if section.title}
-                    <!-- H1 accordion section -->
-                    <div
-                        class="rounded-lg border border-border mb-3 overflow-hidden"
-                    >
-                        <button
-                            onclick={() => toggleSection(idx)}
-                            class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/30 transition-colors"
-                        >
-                            <h2
-                                class="text-lg font-semibold tracking-tight text-foreground"
-                            >
-                                {section.title}
-                            </h2>
-                            <ChevronDownIcon
-                                class="size-4 shrink-0 text-muted-foreground transition-transform duration-150 {collapsed[
-                                    idx
-                                ]
-                                    ? ''
-                                    : 'rotate-180'}"
-                            />
-                        </button>
-                        {#if !collapsed[idx]}
-                            <div class="border-t border-border px-4 py-4">
-                                <div
-                                    class="prose dark:prose-invert max-w-none
-                                        prose-headings:font-semibold prose-headings:tracking-tight prose-headings:text-foreground
-                                        prose-h2:text-2xl prose-h2:mt-8 prose-h2:mb-3
-                                        prose-h3:text-xl prose-h3:mt-6 prose-h3:mb-2
-                                        prose-h4:text-lg prose-h4:mt-4 prose-h4:mb-1.5
-                                        prose-p:text-foreground/80 prose-p:leading-relaxed prose-p:text-base
-                                        prose-a:text-primary prose-a:no-underline hover:prose-a:underline
-                                        prose-strong:text-foreground
-                                        prose-li:text-foreground/80
-                                        prose-code:text-sm prose-code:bg-secondary prose-code:rounded prose-code:px-1.5 prose-code:py-0.5
-                                        prose-pre:bg-secondary"
-                                >
-                                    {@html section.html}
-                                </div>
-                            </div>
-                        {/if}
-                    </div>
-                {:else}
-                    <!-- Preamble (no H1) -->
-                    <div
-                        class="prose dark:prose-invert max-w-none prose-headings:text-foreground prose-p:text-foreground/80 prose-p:leading-relaxed prose-a:text-primary mb-6"
-                    >
-                        {@html section.html}
-                    </div>
-                {/if}
-            {/each}
-        </section>
-    {:else}
-        <section class="mb-10">
-            <p class="text-base leading-relaxed text-foreground/80 max-w-2xl">
-                {project?.description ?? ""}
-            </p>
-        </section>
-    {/if}
-
     <!-- Project extent map -->
     {#if (project as any)?.bbox}
-        <section class="mb-10 max-w-2xl">
+        <section class="mb-10 max-w-3xl">
             <BboxMap
                 bbox={(project as any).bbox}
                 href={`/${project?.slug}/layers`}
@@ -299,183 +239,256 @@
         </section>
     {/if}
 
-    <!-- Research accordion -->
-    <section class="mb-10 max-w-2xl">
-        <div class="rounded-lg border border-border overflow-hidden">
-            <button
-                onclick={toggle}
-                class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/50 transition-colors"
-            >
-                <div class="flex items-center gap-2.5 min-w-0">
-                    <BookOpenIcon
-                        class="size-4 shrink-0 text-muted-foreground"
-                    />
-                    <span class="text-sm font-medium text-foreground">
-                        Related research
-                    </span>
-                    {#if articles.length > 0 && !loading}
-                        <span class="text-xs text-muted-foreground">
-                            ({articles.length})
-                        </span>
+    <!-- README + suggestions rail -->
+    <section class="mb-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+        <div class="min-w-0">
+            {#if editing}
+                <form
+                    method="POST"
+                    action="?/saveReadme"
+                    use:enhance
+                    class="space-y-3"
+                >
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <FileTextIcon class="size-4 text-muted-foreground" />
+                            <span class="text-sm font-medium text-foreground"
+                                >README.md</span
+                            >
+                        </div>
+                    </div>
+                    <textarea
+                        name="content"
+                        bind:value={editContent}
+                        rows={16}
+                        class="w-full rounded-lg border border-input bg-background px-3.5 py-3 text-sm font-mono shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+                        placeholder="# Project Title&#10;&#10;Describe your project here..."
+                    ></textarea>
+                    {#if form?.error}
+                        <p class="text-sm text-destructive">{form.error}</p>
                     {/if}
+                    <div class="flex gap-2 justify-end">
+                        <button
+                            type="button"
+                            onclick={() => (editing = false)}
+                            class="inline-flex items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-secondary transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            class="inline-flex items-center rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 transition-colors"
+                        >
+                            Save
+                        </button>
+                    </div>
+                </form>
+            {:else if readmeRaw}
+                <div class="group relative">
+                    {#if canManage}
+                        <button
+                            onclick={startEdit}
+                            class="absolute -right-2 -top-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
+                            title="Edit README"
+                        >
+                            <PencilIcon class="size-3.5" />
+                        </button>
+                    {/if}
+                    <div class="readme-content">
+                        {@html marked.parse(readmeRaw ?? "")}
+                    </div>
                 </div>
-                <ChevronDownIcon
-                    class="size-4 shrink-0 text-muted-foreground transition-transform duration-150 {expanded
-                        ? 'rotate-180'
-                        : ''}"
-                />
-            </button>
+            {:else if canManage}
+                <button
+                    onclick={startEdit}
+                    class="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 w-full text-left hover:bg-secondary/50 transition-colors"
+                >
+                    <FileTextIcon class="size-4 text-muted-foreground" />
+                    <span class="text-sm text-muted-foreground"
+                        >Add a README.md to describe this project</span
+                    >
+                </button>
+            {/if}
+        </div>
 
-            {#if expanded}
-                <div class="border-t border-border">
-                    {#if loading}
-                        <div
-                            class="flex items-center justify-center py-10 gap-2 text-sm text-muted-foreground"
-                        >
-                            <Loader2Icon class="size-4 animate-spin" />
-                            Searching…
-                        </div>
-                    {:else if error}
-                        <div
-                            class="py-10 text-center text-sm text-muted-foreground px-4"
-                        >
-                            {error}
-                        </div>
-                    {:else if articles.length === 0}
-                        <div
-                            class="py-10 text-center text-sm text-muted-foreground px-4"
-                        >
-                            No articles found for this project.
-                        </div>
-                    {:else}
-                        <div class="divide-y divide-border">
-                            {#each articles as article}
-                                <a
-                                    href={article.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    class="flex items-start justify-between gap-3 px-4 py-3 hover:bg-secondary/50 transition-colors no-underline group"
-                                >
-                                    <div class="min-w-0">
+        <!-- Right rail: lazy suggestions -->
+        <aside class="space-y-3 lg:sticky lg:top-6">
+            <!-- Similar projects -->
+            <div class="rounded-lg border border-border overflow-hidden">
+                <button
+                    onclick={toggleSimilar}
+                    class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/50 transition-colors"
+                >
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <LayersIcon
+                            class="size-4 shrink-0 text-muted-foreground"
+                        />
+                        <span class="text-sm font-medium text-foreground">
+                            Similar projects
+                        </span>
+                        {#if similar.length > 0 && !similarLoading}
+                            <span class="text-xs text-muted-foreground">
+                                ({similar.length})
+                            </span>
+                        {/if}
+                    </div>
+                    <ChevronDownIcon
+                        class="size-4 shrink-0 text-muted-foreground transition-transform duration-150 {similarOpen
+                            ? 'rotate-180'
+                            : ''}"
+                    />
+                </button>
+
+                {#if similarOpen}
+                    <div class="border-t border-border">
+                        {#if similarLoading}
+                            <div
+                                class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground"
+                            >
+                                <Loader2Icon class="size-4 animate-spin" />
+                                Finding…
+                            </div>
+                        {:else if similarError}
+                            <div
+                                class="py-8 text-center text-sm text-muted-foreground px-4"
+                            >
+                                {similarError}
+                            </div>
+                        {:else if similar.length === 0}
+                            <div
+                                class="py-8 text-center text-sm text-muted-foreground px-4"
+                            >
+                                No similar projects yet. Tags and dates improve
+                                matches.
+                            </div>
+                        {:else}
+                            <div class="divide-y divide-border">
+                                {#each similar as item}
+                                    <a
+                                        href="/{item.slug}"
+                                        class="block px-4 py-3 hover:bg-secondary/50 transition-colors no-underline group"
+                                    >
                                         <p
                                             class="text-sm font-medium text-foreground group-hover:text-primary transition-colors line-clamp-2 leading-snug"
                                         >
-                                            {article.title}
+                                            {item.title}
                                         </p>
-                                        <p
-                                            class="text-xs text-muted-foreground mt-0.5"
-                                        >
-                                            {article.authors || "Unknown"}
-                                            {#if article.year}
-                                                · {article.year}{/if}
-                                            {#if article.citedBy > 0}
-                                                <span
-                                                    class="text-muted-foreground/50"
-                                                >
-                                                    · Cited {article.citedBy}
-                                                    {article.citedBy === 1
-                                                        ? "time"
-                                                        : "times"}
-                                                </span>
-                                            {/if}
-                                        </p>
-                                        {#if article.journal}
+                                        {#if item.shared_tags?.length}
                                             <p
-                                                class="text-[10px] text-muted-foreground/60 mt-0.5 truncate"
+                                                class="text-[11px] text-muted-foreground mt-1 line-clamp-1"
                                             >
-                                                {article.journal}
+                                                {item.shared_tags
+                                                    .slice(0, 4)
+                                                    .join(" · ")}
+                                            </p>
+                                        {:else if item.temporal_overlap || item.spatial_overlap}
+                                            <p
+                                                class="text-[11px] text-muted-foreground mt-1"
+                                            >
+                                                {#if item.spatial_overlap}Nearby{/if}
+                                                {#if item.spatial_overlap && item.temporal_overlap}
+                                                    ·
+                                                {/if}
+                                                {#if item.temporal_overlap}Overlapping dates{/if}
                                             </p>
                                         {/if}
-                                    </div>
-                                    <ExternalLinkIcon
-                                        class="size-3.5 shrink-0 mt-0.5 text-muted-foreground/20 group-hover:text-muted-foreground/50 transition-colors"
-                                    />
-                                </a>
-                            {/each}
-                        </div>
-                    {/if}
-
-                    <div
-                        class="px-4 py-2 border-t border-border bg-secondary/30"
-                    >
-                        <p class="text-[10px] text-muted-foreground">
-                            via openalex.org
-                        </p>
+                                    </a>
+                                {/each}
+                            </div>
+                        {/if}
                     </div>
-                </div>
-            {/if}
-        </div>
-    </section>
-
-    <!-- README -->
-    <section class="mb-10 max-w-2xl">
-        {#if editing}
-            <form
-                method="POST"
-                action="?/saveReadme"
-                use:enhance
-                class="space-y-3"
-            >
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <FileTextIcon class="size-4 text-muted-foreground" />
-                        <span class="text-sm font-medium text-foreground"
-                            >README.md</span
-                        >
-                    </div>
-                </div>
-                <textarea
-                    name="content"
-                    bind:value={editContent}
-                    rows={12}
-                    class="w-full rounded-lg border border-input bg-background px-3.5 py-3 text-sm font-mono shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
-                    placeholder="# Project Title&#10;&#10;Describe your project here..."
-                ></textarea>
-                {#if form?.error}
-                    <p class="text-sm text-destructive">{form.error}</p>
                 {/if}
-                <div class="flex gap-2 justify-end">
-                    <button
-                        type="button"
-                        onclick={() => (editing = false)}
-                        class="inline-flex items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-secondary transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="submit"
-                        class="inline-flex items-center rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 transition-colors"
-                    >
-                        Save
-                    </button>
-                </div>
-            </form>
-        {:else if readmeRaw}
-            <div class="group relative">
-                {#if canManage}
-                    <button
-                        onclick={startEdit}
-                        class="absolute -right-2 -top-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
-                        title="Edit README"
-                    >
-                        <PencilIcon class="size-3.5" />
-                    </button>
-                {/if}
-                <div class="readme-content">
-                    {@html marked.parse(readmeRaw ?? "")}
-                </div>
             </div>
-        {:else if canManage}
-            <button
-                onclick={startEdit}
-                class="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 w-full text-left hover:bg-secondary/50 transition-colors"
-            >
-                <FileTextIcon class="size-4 text-muted-foreground" />
-                <span class="text-sm text-muted-foreground"
-                    >Add a README.md to describe this project</span
+
+            <!-- Related research -->
+            <div class="rounded-lg border border-border overflow-hidden">
+                <button
+                    onclick={toggleResearch}
+                    class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/50 transition-colors"
                 >
-            </button>
-        {/if}
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <BookOpenIcon
+                            class="size-4 shrink-0 text-muted-foreground"
+                        />
+                        <span class="text-sm font-medium text-foreground">
+                            Related research
+                        </span>
+                        {#if articles.length > 0 && !researchLoading}
+                            <span class="text-xs text-muted-foreground">
+                                ({articles.length})
+                            </span>
+                        {/if}
+                    </div>
+                    <ChevronDownIcon
+                        class="size-4 shrink-0 text-muted-foreground transition-transform duration-150 {researchOpen
+                            ? 'rotate-180'
+                            : ''}"
+                    />
+                </button>
+
+                {#if researchOpen}
+                    <div class="border-t border-border">
+                        {#if researchLoading}
+                            <div
+                                class="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground"
+                            >
+                                <Loader2Icon class="size-4 animate-spin" />
+                                Searching…
+                            </div>
+                        {:else if researchError}
+                            <div
+                                class="py-8 text-center text-sm text-muted-foreground px-4"
+                            >
+                                {researchError}
+                            </div>
+                        {:else if articles.length === 0}
+                            <div
+                                class="py-8 text-center text-sm text-muted-foreground px-4"
+                            >
+                                No articles found for this project.
+                            </div>
+                        {:else}
+                            <div class="divide-y divide-border">
+                                {#each articles as article}
+                                    <a
+                                        href={article.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        class="flex items-start justify-between gap-3 px-4 py-3 hover:bg-secondary/50 transition-colors no-underline group"
+                                    >
+                                        <div class="min-w-0">
+                                            <p
+                                                class="text-sm font-medium text-foreground group-hover:text-primary transition-colors line-clamp-2 leading-snug"
+                                            >
+                                                {article.title}
+                                            </p>
+                                            <p
+                                                class="text-xs text-muted-foreground mt-0.5"
+                                            >
+                                                {article.authors || "Unknown"}
+                                                {#if article.year}
+                                                    · {article.year}{/if}
+                                            </p>
+                                        </div>
+                                        <ExternalLinkIcon
+                                            class="size-3.5 shrink-0 mt-0.5 text-muted-foreground/20 group-hover:text-muted-foreground/50 transition-colors"
+                                        />
+                                    </a>
+                                {/each}
+                            </div>
+                        {/if}
+
+                        <div
+                            class="px-4 py-2 border-t border-border bg-secondary/30"
+                        >
+                            <p class="text-[10px] text-muted-foreground">
+                                via openalex.org
+                            </p>
+                        </div>
+                    </div>
+                {/if}
+            </div>
+        </aside>
     </section>
 
     <!-- Project stats -->

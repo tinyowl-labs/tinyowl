@@ -4,7 +4,7 @@ TinyOwl uses TOML files to define projects and table schemas. These files are us
 
 ## Project TOML (`project.toml`)
 
-The project TOML defines top-level project metadata. Place it at the root of your data directory.
+The project TOML defines top-level project metadata. Place it at the root of your project directory.
 
 ### Format
 
@@ -12,7 +12,17 @@ The project TOML defines top-level project metadata. Place it at the root of you
 [project]
 name = "My Excavation Project"
 slug = "my-excavation"
-machine = "archaeology"
+description = "Short summary"
+machine = "a1b"
+
+[project.tags]
+manual = ["rock-art", "survey"]
+
+[project.dates]
+start_year = -20000
+end_year = 2024
+start_label = "Pleistocene"
+end_label = "Present"
 ```
 
 ### Fields
@@ -20,16 +30,30 @@ machine = "archaeology"
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | Yes | Human-readable project title |
-| `slug` | string | Yes | URL-safe project identifier. Use `org/project` for namespaced projects |
-| `machine` | string | No | Domain hint for the project (e.g., `archaeology`, `ecology`, `geology`) |
+| `slug` | string | Yes | URL-safe project identifier |
+| `description` | string | No | Short project summary |
+| `machine` | string | No | Worker machine id for source_id generation (e.g. `a1b`) |
+| `tags.manual` | string[] | No | Curator tags (`tags_manual` in Postgres) |
+| `dates.start_year` / `end_year` | int | No | Astronomical years (negative = BCE) |
+| `dates.start_label` / `end_label` | string | No | Human labels for the extent |
+| `dates.start_uri` / `end_uri` | string | No | Optional PeriodO (or other) concept URIs |
 
 ### Example
 
 ```toml
 [project]
 name = "Injalak Rock Art Survey 2026"
-slug = "injalak/rock-art-survey"
-machine = "archaeology"
+slug = "injalak-hill"
+machine = "a1b"
+
+[project.tags]
+manual = ["rock-art", "kakadu"]
+
+[project.dates]
+start_year = -20000
+end_year = 2024
+start_label = "Pleistocene"
+end_label = "Present"
 ```
 
 ---
@@ -42,36 +66,43 @@ Each entity type (table) in your project needs a corresponding TOML file. The fi
 
 ```toml
 [table]
-key = "Site_Points"
+key = "contexts"
+label = "Stratigraphic Context"
 
 [[columns]]
 name = "site_name"
-type = "text"
+type = "string"
+label = "Site name"
 
 [[columns]]
 name = "period"
-type = "text"
+type = "arch_date"
+label = "Period"
 vocabulary = "periodo"
 
 [[columns]]
 name = "depth_cm"
 type = "integer"
+label = "Depth (cm)"
 
 [[columns]]
-name = "soil_type"
-type = "text"
-vocabulary = "soil"
+name = "compaction"
+type = "enum"
+label = "Compaction"
+values = ["loose", "firm", "compact"]
 
 [[columns]]
 name = "description"
-type = "text"
+type = "string"
+label = "Description"
 property = "crm:P3_has_note"
 range = "crm:E62_String"
 
 [[columns]]
 name = "overlies"
-type = "text"
-references = "Contexts.source_id"
+type = "string"
+label = "Overlies"
+references = "contexts.source_id"
 ```
 
 ### `[table]` Section
@@ -79,6 +110,7 @@ references = "Contexts.source_id"
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `key` | string | Yes | Table name. Becomes the entity type and GeoPackage table name. Must be a valid SQLite table name |
+| `label` | string | Yes | Human-readable table label |
 
 ### `[[columns]]` Sections
 
@@ -86,14 +118,28 @@ Each `[[columns]]` entry defines one column in the table.
 
 | Key | Type | Required | Description |
 |---|---|---|---|
-| `name` | string | Yes | Column name. Must be a valid SQLite column name |
-| `type` | string | Yes | SQLite column type. Common values: `text`, `integer`, `real`, `blob` |
-| `vocabulary` | string | No | Vocabulary namespace for this column. Triggers value-level indexing. Examples: `periodo`, `wikidata`, `soil` |
-| `property` | string | No | CRM property URI (e.g., `crm:P3_has_note`). Marks this as a CRM-annotated column |
-| `range` | string | No | CRM range class (e.g., `crm:E62_String`). Used with `property` |
-| `references` | string | No | Foreign key reference in the form `Table.column` (e.g., `Contexts.source_id`) |
+| `name` | string | Yes | Column name |
+| `type` | string | Yes | `string`, `integer`, `double`, `boolean`, `date`, `datetime`, `arch_date`, `enum`, `media`, `geometry`, `id` |
+| `label` | string | Yes | Display label |
+| `vocabulary` | string | No | Vocabulary namespace (`periodo`, `aat`, …). Triggers value-level indexing |
+| `property` | string | No | CRM property URI (e.g. `crm:P3_has_note`) |
+| `range` | string | No | CRM range class |
+| `references` | string | No | FK reference `Table.column` (also from QGIS ValueRelation import) |
+| `values` | string[] | No | Allowed values when `type = "enum"` |
 
 ### Column Annotations
+
+#### Archaeological dates (`arch_date`)
+
+```toml
+[[columns]]
+name = "occupation"
+type = "arch_date"
+label = "Occupation"
+vocabulary = "periodo"
+```
+
+Stored as TEXT. Prefer compact JSON `{"start":-8000,"end":-6000,"label":"Early Holocene"}`. Plain strings like `1200 BCE` or `Roman` are accepted; the server parses years when possible and unions them into the project temporal extent.
 
 #### Vocabulary Columns
 
@@ -102,11 +148,11 @@ Set `vocabulary` on columns whose values come from a controlled terminology:
 ```toml
 [[columns]]
 name = "period"
-type = "text"
+type = "string"
 vocabulary = "periodo"
 ```
 
-During push, the server scans distinct values in this column and creates value-level `column_mappings` rows. You can then assign concept URIs via the [Column Mappings API](/docs/api/column-mappings/).
+During push, the server scans distinct values and creates `value_mappings` rows. Assign concept URIs via the [Column Mappings API](/docs/api/column-mappings/).
 
 #### CRM Property Columns
 
@@ -115,25 +161,21 @@ Set `property` on columns whose semantics are defined by a CIDOC CRM property:
 ```toml
 [[columns]]
 name = "description"
-type = "text"
+type = "string"
 property = "crm:P3_has_note"
 range = "crm:E62_String"
 ```
 
-The `vocabulary` is auto-set to the prefix of the property (e.g., `crm` for `crm:P3_has_note`). The `concept_uri` is set to the property URI.
-
 #### Reference Columns
 
-Set `references` on columns that reference entities in another table:
+Set `references` on columns that reference entities in another table (or import from QGIS ValueRelation widgets):
 
 ```toml
 [[columns]]
 name = "overlies"
-type = "text"
-references = "Contexts.source_id"
+type = "string"
+references = "contexts.source_id"
 ```
-
-This declares that values in this column are `source_id` values from the `Contexts` table. The CLI uses this to validate referential integrity during import.
 
 ---
 
