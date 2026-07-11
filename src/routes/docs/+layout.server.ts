@@ -54,9 +54,5 @@ export const load = () => ({
         { href: "/docs/deployment/cloud-run", label: "Cloud Run" },
       ],
     },
-    {
-      section: "SDK",
-      items: [{ href: "/docs/sdk/js", label: "JavaScript" }],
-    },
   ],
 });
