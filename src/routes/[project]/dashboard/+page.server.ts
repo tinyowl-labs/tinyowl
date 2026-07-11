@@ -13,16 +13,18 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 
   // Check role — only collaborator+
   let role = "viewer";
-  try {
-    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (res.ok) {
-      const projects: { slug: string; role: string }[] = await res.json();
-      const member = projects.find((p) => p.slug === slug);
-      if (member) role = member.role;
-    }
-  } catch (_) {}
+  if (accessToken) {
+    try {
+      const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const projects: { slug: string; role: string }[] = await res.json();
+        const member = projects.find((p) => p.slug === slug);
+        if (member) role = member.role;
+      }
+    } catch (_) {}
+  }
 
   if (role !== "owner" && role !== "admin" && role !== "collaborator") {
     throw redirect(303, `/${slug}`);

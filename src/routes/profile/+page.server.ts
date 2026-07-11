@@ -6,6 +6,7 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
   if (!user) return { user: null, projects: [], diffs: [] };
 
   const accessToken = await locals.getAccessToken();
+  if (!accessToken) return { user, projects: [], diffs: [] };
 
   let projects: { slug: string; title: string; role: string }[] = [];
   try {

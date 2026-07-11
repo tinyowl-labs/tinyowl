@@ -18,6 +18,13 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
     entity_count?: number | null;
     table_count?: number | null;
     updated_at?: string | null;
+    machine?: string | null;
+    tags_manual?: string[];
+    tags_auto?: string[];
+    date_start?: number | null;
+    date_end?: number | null;
+    date_start_label?: string | null;
+    date_end_label?: string | null;
   } | null = null;
 
   try {
@@ -34,15 +41,17 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
   if (user && project) {
     try {
       const accessToken = await locals.getAccessToken();
-      const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res.ok) {
-        const projects: { slug: string; role: string }[] = await res.json();
-        const member = projects.find((p) => p.slug === slug);
-        if (member) {
-          isMember = true;
-          role = member.role;
+      if (accessToken) {
+        const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (res.ok) {
+          const projects: { slug: string; role: string }[] = await res.json();
+          const member = projects.find((p) => p.slug === slug);
+          if (member) {
+            isMember = true;
+            role = member.role;
+          }
         }
       }
     } catch (_) {}

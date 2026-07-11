@@ -29,6 +29,38 @@
     );
     const readmeRaw = $derived(data?.readme ?? null);
 
+    const tagsManual = $derived(
+        ((project as any)?.tags_manual as string[] | undefined) ?? [],
+    );
+    const tagsAuto = $derived(
+        ((project as any)?.tags_auto as string[] | undefined) ?? [],
+    );
+    const dateStart = $derived((project as any)?.date_start as number | null | undefined);
+    const dateEnd = $derived((project as any)?.date_end as number | null | undefined);
+    const dateStartLabel = $derived(
+        ((project as any)?.date_start_label as string | null | undefined) ?? null,
+    );
+    const dateEndLabel = $derived(
+        ((project as any)?.date_end_label as string | null | undefined) ?? null,
+    );
+    const dateRangeText = $derived.by(() => {
+        const fmt = (y: number | null | undefined, label: string | null) => {
+            if (y == null && !label) return null;
+            if (label && y != null) {
+                const era = y < 0 ? `${Math.abs(y)} BCE` : `${y} CE`;
+                return `${label} (${era})`;
+            }
+            if (label) return label;
+            if (y == null) return null;
+            return y < 0 ? `${Math.abs(y)} BCE` : `${y} CE`;
+        };
+        const a = fmt(dateStart, dateStartLabel);
+        const b = fmt(dateEnd, dateEndLabel);
+        if (!a && !b) return null;
+        if (a && b) return `${a} – ${b}`;
+        return a ?? b;
+    });
+
     // Split markdown into H1-headed sections for accordion rendering.
     // Sections without an H1 get an empty title (rendered as a non-collapsible preamble).
     interface Section {
@@ -100,7 +132,12 @@
             loading = true;
             error = "";
             try {
-                const query = encodeURIComponent(project?.title ?? "");
+                const tagBits = [...tagsManual, ...tagsAuto]
+                    .filter(Boolean)
+                    .slice(0, 6)
+                    .join(" ");
+                const q = [project?.title, tagBits].filter(Boolean).join(" ");
+                const query = encodeURIComponent(q);
                 const res = await fetch(
                     `https://api.openalex.org/works?search=${query}&per_page=6&sort=cited_by_count:desc`,
                 );
@@ -160,6 +197,29 @@
             >
                 <ClockIcon class="size-3.5" />
                 Updated {updated}
+            </div>
+        {/if}
+        {#if dateRangeText}
+            <p class="mt-3 text-sm text-foreground/80">
+                <span class="text-muted-foreground">Temporal extent</span>
+                <span class="mx-2 text-muted-foreground/50">·</span>
+                {dateRangeText}
+            </p>
+        {/if}
+        {#if tagsManual.length > 0 || tagsAuto.length > 0}
+            <div class="mt-4 flex flex-wrap gap-2">
+                {#each tagsManual as tag}
+                    <span
+                        class="text-xs tracking-wide text-foreground border-b border-foreground/30 pb-0.5"
+                        >{tag}</span
+                    >
+                {/each}
+                {#each tagsAuto as tag}
+                    <span
+                        class="text-xs tracking-wide text-muted-foreground border-b border-border pb-0.5"
+                        title="Auto-derived tag">{tag}</span
+                    >
+                {/each}
             </div>
         {/if}
     </div>

@@ -18,6 +18,7 @@
 
     const members = $derived(data?.members ?? []);
     const mappings = $derived(data?.mappings ?? []);
+    const annotations = $derived((data as any)?.annotations ?? []);
     const currentUserId = $derived(data?.currentUserId ?? "");
     const userRole = $derived(data?.role ?? "viewer");
     const projectTitle = $derived(data?.project?.title ?? "Project");
@@ -31,6 +32,8 @@
     let editingMapping = $state<string | null>(null);
     let editConceptUri = $state("");
     let mappingFilter = $state<"all" | "unmapped">("all");
+    let tableFilter = $state("");
+    let columnFilter = $state("");
 
     const unmappedCount = $derived(
         mappings.filter((m: any) => !m.concept_uri).length,
@@ -41,10 +44,22 @@
             ? Math.round((mappedCount / mappings.length) * 100)
             : 0,
     );
+    const tableOptions = $derived(
+        [...new Set(mappings.map((m: any) => m.entity_type as string))].sort(),
+    );
+    const columnOptions = $derived.by(() => {
+        const cols = mappings
+            .filter((m: any) => !tableFilter || m.entity_type === tableFilter)
+            .map((m: any) => m.column_name as string);
+        return [...new Set(cols)].sort();
+    });
     const filteredMappings = $derived(
-        mappingFilter === "unmapped"
-            ? mappings.filter((m: any) => !m.concept_uri)
-            : mappings,
+        mappings.filter((m: any) => {
+            if (mappingFilter === "unmapped" && m.concept_uri) return false;
+            if (tableFilter && m.entity_type !== tableFilter) return false;
+            if (columnFilter && m.column_name !== columnFilter) return false;
+            return true;
+        }),
     );
 
     $effect(() => {
@@ -63,7 +78,16 @@
         { value: "members", label: "Members", count: members.length },
         { value: "visibility", label: "Visibility" },
         { value: "licence", label: "Licence" },
-        { value: "mappings", label: "Mappings", count: mappings.length },
+        {
+            value: "columns",
+            label: "Column mapping",
+            count: annotations.length,
+        },
+        {
+            value: "values",
+            label: "Value mapping",
+            count: mappings.length,
+        },
     ]);
 
     const ROLE_LABELS: Record<string, string> = {
@@ -691,7 +715,88 @@
                             {/each}
                         </div>
                     </div>
-                {:else if tabValue === "mappings"}
+                {:else if tabValue === "columns"}
+                    <div class="pt-2">
+                        <div class="mb-4">
+                            <p class="text-sm text-muted-foreground">
+                                Column semantics from TOML — vocabulary and CRM
+                                annotations. Edit
+                                <code class="font-mono text-xs rounded px-1 bg-secondary"
+                                    >tables/*.toml</code
+                                >
+                                and push to update.
+                            </p>
+                        </div>
+                        {#if annotations.length > 0}
+                            <div
+                                class="rounded-lg border border-border overflow-hidden"
+                            >
+                                <div
+                                    class="grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5 bg-secondary/50 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                                >
+                                    <span>Table</span>
+                                    <span>Column</span>
+                                    <span>Vocabulary</span>
+                                    <span>CRM property</span>
+                                </div>
+                                {#each annotations as ann, i}
+                                    <div
+                                        class="grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-4 py-2.5 text-sm {i <
+                                        annotations.length - 1
+                                            ? 'border-b border-border'
+                                            : ''}"
+                                    >
+                                        <span class="truncate text-foreground"
+                                            >{ann.entity_type}</span
+                                        >
+                                        <span
+                                            class="truncate text-muted-foreground"
+                                            >{ann.column_name}</span
+                                        >
+                                        <span
+                                            class="truncate text-muted-foreground"
+                                            >{ann.vocabulary ?? "—"}</span
+                                        >
+                                        <span
+                                            class="truncate font-mono text-xs text-muted-foreground"
+                                            >{ann.crm_property ?? "—"}</span
+                                        >
+                                    </div>
+                                {/each}
+                            </div>
+                        {:else}
+                            <div
+                                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                            >
+                                <LinkIcon
+                                    class="size-10 text-muted-foreground/30 mb-3"
+                                />
+                                <p class="text-sm text-muted-foreground mb-1">
+                                    No column annotations yet
+                                </p>
+                                <p
+                                    class="text-xs text-muted-foreground max-w-xs text-center"
+                                >
+                                    Add
+                                    <code
+                                        class="font-mono text-xs rounded px-1 bg-secondary"
+                                        >vocabulary</code
+                                    >
+                                    or
+                                    <code
+                                        class="font-mono text-xs rounded px-1 bg-secondary"
+                                        >property</code
+                                    >
+                                    on columns in TOML, then
+                                    <code
+                                        class="font-mono text-xs rounded px-1 bg-secondary"
+                                        >tinyowl push</code
+                                    >.
+                                </p>
+                            </div>
+                        {/if}
+                    </div>
+                {:else if tabValue === "values"}
                     <div class="pt-2">
                         <form
                             method="POST"
@@ -733,8 +838,8 @@
                         </form>
                         <div class="mb-4">
                             <p class="text-sm text-muted-foreground">
-                                Map local values to external vocabularies and
-                                concepts.
+                                Map distinct cell values to external concepts
+                                (PeriodO, AAT, …). Filter by table and column.
                             </p>
                         </div>
 
@@ -778,6 +883,27 @@
                                         ({pctMapped}%)</span
                                     >
                                 </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <select
+                                        bind:value={tableFilter}
+                                        onchange={() => (columnFilter = "")}
+                                        class="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs"
+                                    >
+                                        <option value="">All tables</option>
+                                        {#each tableOptions as t}
+                                            <option value={t}>{t}</option>
+                                        {/each}
+                                    </select>
+                                    <select
+                                        bind:value={columnFilter}
+                                        class="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs"
+                                    >
+                                        <option value="">All columns</option>
+                                        {#each columnOptions as c}
+                                            <option value={c}>{c}</option>
+                                        {/each}
+                                    </select>
+                                </div>
                             </div>
                         {/if}
 
@@ -797,8 +923,14 @@
                         {/if}
 
                         {#if pendingBulk}
-                            <div class="mb-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm flex items-center justify-between gap-3">
-                                <span class="text-foreground">Also map <strong>{pendingBulk.count}</strong> other &ldquo;{pendingBulk.local_value}&rdquo; terms?</span>
+                            <div
+                                class="mb-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm flex items-center justify-between gap-3"
+                            >
+                                <span class="text-foreground"
+                                    >Also map <strong>{pendingBulk.count}</strong
+                                    > other &ldquo;{pendingBulk.local_value}&rdquo;
+                                    terms?</span
+                                >
                                 <button
                                     onclick={doBulkApply}
                                     class="shrink-0 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
@@ -812,9 +944,10 @@
                                 class="rounded-lg border border-border overflow-hidden"
                             >
                                 <div
-                                    class="grid grid-cols-[1fr_1fr_1fr_auto] gap-3 px-4 py-2.5 bg-secondary/50 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                                    class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 px-4 py-2.5 bg-secondary/50 border-b border-border text-xs font-medium text-muted-foreground uppercase tracking-wider"
                                 >
-                                    <span>Entity</span>
+                                    <span>Value</span>
+                                    <span>Table</span>
                                     <span>Column</span>
                                     <span>Concept URI</span>
                                     <span></span>
@@ -823,12 +956,16 @@
                                     {@const key = mappingKey(mapping)}
                                     {@const isEditing = editingMapping === key}
                                     <div
-                                        class="grid grid-cols-[1fr_1fr_1fr_auto] gap-3 items-center px-4 py-2.5 {i <
+                                        class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 items-center px-4 py-2.5 {i <
                                         filteredMappings.length - 1
                                             ? 'border-b border-border'
                                             : ''} text-sm"
                                     >
-                                        <span class="truncate text-foreground"
+                                        <span
+                                            class="truncate text-foreground font-medium"
+                                            >{mapping.local_value}</span
+                                        >
+                                        <span class="truncate text-muted-foreground"
                                             >{mapping.entity_type}</span
                                         >
                                         <span
@@ -840,7 +977,7 @@
                                             {#if !mapping.concept_uri}
                                                 <span
                                                     class="truncate text-xs text-primary"
-                                                    >{mapping.local_value}</span
+                                                    >searching…</span
                                                 >
                                                 <button
                                                     type="button"
@@ -855,7 +992,7 @@
                                                     method="POST"
                                                     action="?/updateMapping"
                                                     use:enhance
-                                                    class="flex items-center gap-1.5"
+                                                    class="flex items-center gap-1.5 col-span-1"
                                                 >
                                                     <input
                                                         type="hidden"
@@ -1009,14 +1146,17 @@
                                         <p
                                             class="text-sm text-muted-foreground"
                                         >
-                                            All terms mapped
+                                            No terms match this filter
                                         </p>
                                         <button
-                                            onclick={() =>
-                                                (mappingFilter = "all")}
+                                            onclick={() => {
+                                                mappingFilter = "all";
+                                                tableFilter = "";
+                                                columnFilter = "";
+                                            }}
                                             class="mt-1 text-xs text-primary hover:underline"
                                         >
-                                            Show all terms
+                                            Clear filters
                                         </button>
                                     </div>
                                 {/if}
@@ -1029,7 +1169,7 @@
                                     class="size-10 text-muted-foreground/30 mb-3"
                                 />
                                 <p class="text-sm text-muted-foreground mb-1">
-                                    No mappings yet
+                                    No value mappings yet
                                 </p>
                                 <p
                                     class="text-xs text-muted-foreground max-w-xs text-center"
@@ -1039,8 +1179,8 @@
                                         class="font-mono text-xs rounded px-1 bg-secondary"
                                         >tinyowl push</code
                                     >
-                                    to index column mappings, then map values to concepts
-                                    here.
+                                    to index distinct values from vocabulary
+                                    columns, then map them here.
                                 </p>
                             </div>
                         {/if}

@@ -57,6 +57,22 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) mappings = await res.json();
   } catch (_) {}
 
+  let annotations: {
+    entity_type: string;
+    column_name: string;
+    vocabulary: string | null;
+    crm_property: string | null;
+    crm_range: string | null;
+    source: string;
+  }[] = [];
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/column-annotations`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (res.ok) annotations = await res.json();
+  } catch (_) {}
+
   // Fetch tables for visibility settings
   let tables: Record<string, string[]> = {};
   try {
@@ -74,6 +90,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     role,
     members,
     mappings,
+    annotations,
     tables,
     currentUserId: user?.id ?? "",
   };
