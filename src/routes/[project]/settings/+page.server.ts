@@ -13,6 +13,12 @@ type Mapping = {
   confidence: number;
   source: string;
   entity_count: number;
+  display_label?: string;
+  column_type?: string;
+  allow_multi?: boolean;
+  item?: string;
+  references?: string;
+  references_value?: string;
 };
 
 export const load: PageServerLoad = async ({ locals, params, fetch }) => {
@@ -73,7 +79,6 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) annotations = await res.json();
   } catch (_) {}
 
-  // Fetch tables for visibility settings
   let tables: Record<string, string[]> = {};
   try {
     const res = await fetch(
@@ -85,6 +90,41 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     }
   } catch (_) {}
 
+  let qfieldLink: {
+    tinyowl_slug: string;
+    account_id: string;
+    qfc_project_id: string;
+    qfc_project_name?: string;
+    base_url?: string;
+    username?: string;
+    linked_at?: string;
+    last_job_id?: string;
+    last_synced_at?: string;
+  } | null = null;
+  let qfieldAccounts: {
+    id: string;
+    base_url: string;
+    username: string;
+    label?: string | null;
+  }[] = [];
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      qfieldLink = data ?? null;
+    }
+  } catch (_) {}
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/integrations/qfieldcloud/accounts`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (res.ok) qfieldAccounts = await res.json();
+  } catch (_) {}
+
   return {
     user,
     role,
@@ -93,6 +133,8 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     annotations,
     tables,
     currentUserId: user?.id ?? "",
+    qfieldLink,
+    qfieldAccounts,
   };
 };
 
@@ -343,5 +385,59 @@ export const actions: Actions = {
     });
     if (!res.ok) return { error: `Failed: ${await res.text()}` };
     return { success: true, licenceAction: "updated" };
+  },
+
+  linkQFieldCloud: async ({ request, locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", qfieldAction: "link" };
+
+    const data = await request.formData();
+    const accountId = String(data.get("account_id") ?? "").trim();
+    const qfcProjectId = String(data.get("qfc_project_id") ?? "").trim();
+    const qfcProjectName = String(data.get("qfc_project_name") ?? "").trim();
+    if (!accountId || !qfcProjectId) {
+      return { error: "Account and Cloud project required.", qfieldAction: "link" };
+    }
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          account_id: accountId,
+          qfc_project_id: qfcProjectId,
+          qfc_project_name: qfcProjectName || undefined,
+        }),
+      },
+    );
+    if (!res.ok) {
+      return { error: `Failed: ${await res.text()}`, qfieldAction: "link" };
+    }
+    return { success: true, qfieldAction: "linked" };
+  },
+
+  unlinkQFieldCloud: async ({ locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", qfieldAction: "unlink" };
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
+    if (!res.ok) {
+      return { error: `Failed: ${await res.text()}`, qfieldAction: "unlink" };
+    }
+    return { success: true, qfieldAction: "unlinked" };
   },
 };

@@ -1,55 +1,48 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
+    import { page } from "$app/stores";
+    import { browser } from "$app/environment";
     import { enhance } from "$app/forms";
     import UsersIcon from "@lucide/svelte/icons/users";
     import PlusIcon from "@lucide/svelte/icons/plus";
-    import LogOutIcon from "@lucide/svelte/icons/log-out";
-    import ArrowRight from "@lucide/svelte/icons/arrow-right";
-    import Settings from "@lucide/svelte/icons/settings";
     import GitCommit from "@lucide/svelte/icons/git-commit";
-    import redthreadSvg from "$lib/assets/redthread.svg?raw";
-    import { onMount } from "svelte";
-    import { isDark } from "$lib/stores/theme.svelte";
+    import PanelRightIcon from "@lucide/svelte/icons/panel-right";
+    import PanelRightCloseIcon from "@lucide/svelte/icons/panel-right-close";
+    import SettingsIcon from "@lucide/svelte/icons/settings";
+    import Header from "$lib/components/ui/header.svelte";
+    import MobileNav from "$lib/components/ui/mobile-nav.svelte";
+    import { Button } from "$lib/components/ui/button/index.js";
     import CommitTimeline from "$lib/components/dashboard/CommitTimeline.svelte";
 
-    const dark = $derived(isDark());
-    const owlSvg = $derived(
-        dark
-            ? redthreadSvg
-                  .replace(/fill:#000000/g, "fill:currentColor")
-                  .replace(/stroke:#000000/g, "stroke:currentColor")
-                  .replace(/fill:#ffffff/g, "fill:#000000")
-                  .replace(/stroke:#ffffff/g, "stroke:#000000")
-            : redthreadSvg,
-    );
-
-    let isMounted = $state(false);
     let showCreate = $state(false);
     let { data, form } = $props();
 
+    const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const user = $derived(data?.user);
     const projects = $derived(data?.projects ?? []);
     const diffs = $derived(data?.diffs ?? []);
+
     const displayName = $derived(
         user?.user_metadata?.first_name
             ? `${user.user_metadata.first_name} ${user.user_metadata.last_name ?? ""}`.trim()
             : (user?.email ?? "User"),
     );
-    const initials = $derived(
-        user?.user_metadata?.first_name
-            ? (
-                  user.user_metadata.first_name.charAt(0) +
-                  (user.user_metadata.last_name?.charAt(0) ?? "")
-              ).toUpperCase()
-            : (user?.email?.charAt(0).toUpperCase() ?? "U"),
-    );
 
-    onMount(() => {
-        isMounted = true;
+    let collapsed = $state(!browser || (browser && window.innerWidth < 768));
+    let mobileOpen = $state(false);
+
+    $effect(() => {
+        if (!browser) return;
+        const onResize = () => {
+            if (window.innerWidth >= 768) mobileOpen = false;
+            if (window.innerWidth < 768) collapsed = true;
+        };
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
     });
 
     $effect(() => {
-        if (form?.success) {
+        if (form?.success && form?.slug) {
             showCreate = false;
             goto(`/${form.slug}`);
         }
@@ -58,189 +51,216 @@
 
 <svelte:head><title>Profile — TinyOwl</title></svelte:head>
 
-<header
-    class="flex items-center gap-2 shrink-0 px-4 h-11 border-b border-border bg-background"
->
-    <a href="/" aria-label="tinyowl" class="flex items-center gap-2.5 mr-1">
-        <span
-            class="size-5 shrink-0 inline-block [&>svg]:w-full [&>svg]:h-full text-foreground"
-        >
-            {#if isMounted}{@html owlSvg}{/if}
-        </span>
-        <span class="text-sm font-semibold">tinyowl</span>
-    </a>
-    <span class="w-px h-4 shrink-0 bg-border"></span>
-    <span class="text-sm font-medium text-muted-foreground">Profile</span>
-    <div class="ml-auto flex items-center gap-1">
-        <a
-            href="/settings"
-            title="Settings"
-            class="flex items-center justify-center size-8 rounded-md text-muted-foreground hover:text-foreground transition-colors"
-        >
-            <Settings class="size-4" />
-        </a>
-        <a
-            href="/auth/logout"
-            title="Log out"
-            class="flex items-center justify-center size-8 rounded-md text-muted-foreground hover:text-destructive transition-colors"
-        >
-            <LogOutIcon class="size-4" />
-        </a>
-    </div>
-</header>
+<div class="flex flex-col h-screen overflow-hidden">
+    <Header subtitle="Profile" {hasSession} />
 
-<div class="flex-1 min-h-0 overflow-y-auto bg-background">
-    <div class="mx-auto max-w-4xl px-6 py-8">
-        {#if user}
-            <!-- Profile header -->
-            <div class="flex items-start gap-5 mb-10">
-                <div
-                    class="size-20 shrink-0 rounded-full bg-secondary flex items-center justify-center text-2xl font-medium text-muted-foreground"
-                >
-                    {initials}
-                </div>
-                <div class="min-w-0 pt-1">
-                    <h1
-                        class="text-2xl font-bold tracking-tight text-foreground"
-                    >
-                        {displayName}
-                    </h1>
-                    {#if user.email}
-                        <p class="text-sm mt-0.5 text-muted-foreground">
-                            {user.email}
-                        </p>
-                    {/if}
-                    <div class="flex items-center gap-3 mt-2">
-                        <p class="text-sm text-muted-foreground">
-                            {projects.length}
-                            {projects.length === 1 ? "project" : "projects"}
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Projects -->
-            <div class="flex items-center justify-between mb-4">
-                <h2
-                    class="text-sm font-semibold tracking-wider uppercase text-muted-foreground"
-                >
-                    Projects
-                </h2>
-                <button
-                    onclick={() => (showCreate = true)}
-                    class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                >
-                    <PlusIcon class="size-3.5" /> New project
-                </button>
-            </div>
-
-            {#if projects.length === 0}
-                <div class="rounded-lg border p-10 text-center bg-card">
-                    <div
-                        class="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-secondary"
-                    >
-                        <UsersIcon class="size-6 text-muted-foreground" />
-                    </div>
-                    <h3 class="text-base font-semibold mb-1.5 text-foreground">
-                        No projects yet
-                    </h3>
-                    <p
-                        class="text-sm max-w-xs mx-auto mb-5 text-muted-foreground"
-                    >
-                        Create your first project to start managing
-                        archaeological data.
-                    </p>
-                    <button
-                        onclick={() => (showCreate = true)}
-                        class="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                    >
-                        Create your first project
-                    </button>
-                </div>
-            {:else}
-                <div class="flex flex-col gap-2">
-                    {#each projects as project}
-                        <a
-                            href="/{project.slug}"
-                            class="group w-full rounded-lg border p-4 text-left bg-card hover:bg-accent transition-colors no-underline"
-                        >
-                            <div class="flex items-start justify-between gap-4">
-                                <div class="min-w-0">
-                                    <div class="flex items-center gap-2">
-                                        <UsersIcon
-                                            class="size-3.5 shrink-0 text-muted-foreground"
-                                        />
-                                        <h3
-                                            class="text-sm font-semibold truncate text-foreground"
-                                        >
-                                            {project.title}
-                                        </h3>
-                                    </div>
-                                    <p
-                                        class="text-xs mt-1 text-muted-foreground"
-                                    >
-                                        {project.slug}
-                                    </p>
-                                </div>
-                                <div class="flex items-center gap-3 shrink-0">
-                                    {#if project.role}
-                                        <span
-                                            class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-secondary text-muted-foreground"
-                                            >{project.role}</span
-                                        >
-                                    {/if}
-                                    <ArrowRight
-                                        class="size-4 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
-                                    />
-                                </div>
-                            </div>
-                        </a>
-                    {/each}
-                </div>
-            {/if}
-
-            <!-- Diff timeline -->
-            <div class="mt-10">
-                <h2
-                    class="text-sm font-semibold tracking-wider uppercase text-muted-foreground mb-4"
-                >
-                    Recent Diffs
-                </h2>
-
-                {#if diffs.length === 0}
-                    <div class="rounded-lg border p-8 text-center bg-card">
-                        <div
-                            class="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-secondary"
-                        >
-                            <GitCommit class="size-4 text-muted-foreground" />
-                        </div>
-                        <p class="text-sm text-muted-foreground">
-                            No diffs yet. Run
-                            <code
-                                class="font-mono text-xs rounded px-1 bg-secondary"
+    {#if user}
+        <div class="flex flex-1 min-h-0">
+            <main class="flex-1 min-h-0 overflow-y-auto bg-background">
+                <div class="mx-auto max-w-3xl px-6 py-8">
+                    <div class="flex items-start justify-between gap-4 mb-8">
+                        <div class="min-w-0">
+                            <h1
+                                class="text-2xl font-semibold tracking-tight text-foreground"
                             >
-                                tinyowl push
-                            </code>
-                            to push your first diff.
-                        </p>
+                                Recent activity
+                            </h1>
+                            <p class="mt-1 text-sm text-muted-foreground">
+                                Diffs across your projects · {displayName}
+                            </p>
+                        </div>
+                        <a
+                            href="/settings"
+                            class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline shrink-0"
+                        >
+                            <SettingsIcon class="size-3.5" />
+                            Settings
+                        </a>
+                    </div>
+
+                    {#if diffs.length === 0}
+                        <div class="rounded-lg border p-8 text-center bg-card">
+                            <div
+                                class="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-secondary"
+                            >
+                                <GitCommit
+                                    class="size-4 text-muted-foreground"
+                                />
+                            </div>
+                            <p class="text-sm text-muted-foreground">
+                                No diffs yet. Run
+                                <code
+                                    class="font-mono text-xs rounded px-1 bg-secondary"
+                                >
+                                    tinyowl push
+                                </code>
+                                to push your first diff.
+                            </p>
+                        </div>
+                    {:else}
+                        <CommitTimeline {diffs} />
+                    {/if}
+                </div>
+            </main>
+
+            <!-- Desktop right sidebar: Your projects -->
+            <aside
+                class="hidden md:flex shrink-0 border-l border-border bg-background flex-col transition-all duration-200 {collapsed
+                    ? 'w-12'
+                    : 'w-64'}"
+            >
+                <button
+                    onclick={() => (collapsed = !collapsed)}
+                    class="flex items-center justify-center h-10 shrink-0 border-b border-border text-muted-foreground hover:text-foreground hover:bg-secondary/30 transition-colors"
+                    title={collapsed ? "Expand projects" : "Collapse projects"}
+                >
+                    {#if collapsed}
+                        <PanelRightIcon class="size-4" />
+                    {:else}
+                        <PanelRightCloseIcon class="size-4" />
+                    {/if}
+                </button>
+
+                {#if !collapsed}
+                    <div
+                        class="flex items-center justify-between gap-2 px-3 py-2 border-b border-border"
+                    >
+                        <h2
+                            class="text-xs font-semibold tracking-wider uppercase text-muted-foreground"
+                        >
+                            Your projects
+                        </h2>
+                        <button
+                            type="button"
+                            onclick={() => (showCreate = true)}
+                            class="inline-flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                            title="New project"
+                        >
+                            <PlusIcon class="size-3.5" />
+                        </button>
                     </div>
                 {:else}
-                    <CommitTimeline {diffs} />
+                    <button
+                        type="button"
+                        onclick={() => (showCreate = true)}
+                        class="flex items-center justify-center m-1.5 size-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                        title="New project"
+                    >
+                        <PlusIcon class="size-4" />
+                    </button>
                 {/if}
-            </div>
-        {:else}
-            <div class="text-center py-20">
-                <p class="text-sm text-muted-foreground">
-                    <a href="/auth/login" class="underline underline-offset-4"
-                        >Sign in</a
-                    > to view your profile.
-                </p>
-            </div>
-        {/if}
-    </div>
+
+                <nav class="flex flex-col gap-0.5 p-1.5 flex-1 overflow-y-auto">
+                    {#if projects.length === 0}
+                        {#if !collapsed}
+                            <div class="px-2 py-6 text-center">
+                                <UsersIcon
+                                    class="size-5 mx-auto mb-2 text-muted-foreground"
+                                />
+                                <p class="text-xs text-muted-foreground mb-3">
+                                    No projects yet
+                                </p>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    onclick={() => (showCreate = true)}
+                                >
+                                    Create project
+                                </Button>
+                            </div>
+                        {/if}
+                    {:else}
+                        {#each projects as project}
+                            <a
+                                href="/{project.slug}"
+                                title={collapsed
+                                    ? project.title
+                                    : undefined}
+                                class="flex items-center gap-2.5 rounded-md {collapsed
+                                    ? 'justify-center px-0 py-1.5'
+                                    : 'px-2.5 py-2'} text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
+                            >
+                                <UsersIcon class="size-4 shrink-0" />
+                                {#if !collapsed}
+                                    <span class="min-w-0 flex-1">
+                                        <span
+                                            class="block truncate font-medium text-foreground"
+                                            >{project.title}</span
+                                        >
+                                        <span
+                                            class="block truncate text-[11px] text-muted-foreground"
+                                            >{project.slug}{#if project.role}
+                                                · {project.role}{/if}</span
+                                        >
+                                    </span>
+                                {/if}
+                            </a>
+                        {/each}
+                    {/if}
+                </nav>
+            </aside>
+
+            <!-- Mobile projects drawer -->
+            <MobileNav bind:open={mobileOpen} title="Your projects">
+                {#snippet children()}
+                    <div class="p-3 border-b border-border">
+                        <Button
+                            type="button"
+                            size="sm"
+                            class="w-full"
+                            onclick={() => {
+                                mobileOpen = false;
+                                showCreate = true;
+                            }}
+                        >
+                            <PlusIcon class="size-3.5" />
+                            New project
+                        </Button>
+                    </div>
+                    <nav class="flex flex-col gap-0.5 p-3">
+                        {#if projects.length === 0}
+                            <p
+                                class="px-3 py-6 text-center text-sm text-muted-foreground"
+                            >
+                                No projects yet
+                            </p>
+                        {:else}
+                            {#each projects as project}
+                                <a
+                                    href="/{project.slug}"
+                                    onclick={() => (mobileOpen = false)}
+                                    class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
+                                >
+                                    <UsersIcon class="size-4 shrink-0" />
+                                    <span class="min-w-0">
+                                        <span
+                                            class="block truncate font-medium text-foreground"
+                                            >{project.title}</span
+                                        >
+                                        <span
+                                            class="block truncate text-xs text-muted-foreground"
+                                            >{project.slug}{#if project.role}
+                                                · {project.role}{/if}</span
+                                        >
+                                    </span>
+                                </a>
+                            {/each}
+                        {/if}
+                    </nav>
+                {/snippet}
+            </MobileNav>
+        </div>
+    {:else}
+        <div class="flex-1 flex items-center justify-center bg-background">
+            <p class="text-sm text-muted-foreground">
+                <a href="/auth/login" class="underline underline-offset-4"
+                    >Sign in</a
+                > to view your profile.
+            </p>
+        </div>
+    {/if}
 </div>
 
-<!-- Create project modal -->
 {#if showCreate}
     <button
         class="fixed inset-0 z-50 bg-black/20"
@@ -267,16 +287,11 @@
                     <p class="text-xs text-destructive mb-4">{form.error}</p>
                 {/if}
                 <div class="flex gap-2">
-                    <button
-                        type="submit"
-                        class="flex-1 rounded-full bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:bg-primary/90 transition-colors"
-                        >Create</button
-                    >
-                    <button
+                    <Button type="submit" class="flex-1">Create</Button>
+                    <Button
                         type="button"
-                        onclick={() => (showCreate = false)}
-                        class="rounded-full border px-4 py-2 text-sm text-muted-foreground hover:bg-accent transition-colors"
-                        >Cancel</button
+                        variant="outline"
+                        onclick={() => (showCreate = false)}>Cancel</Button
                     >
                 </div>
             </form>
