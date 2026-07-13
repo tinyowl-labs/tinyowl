@@ -47,16 +47,14 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     throw redirect(303, `/${slug}`);
   }
 
-  // Fetch members
-  if (role !== "viewer") {
-    try {
-      const res = await fetch(
-        `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/members`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      if (res.ok) members = await res.json();
-    } catch (_) {}
-  }
+  // Fetch members (role is owner|admin after the redirect above).
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/members`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (res.ok) members = await res.json();
+  } catch (_) {}
 
   // Fetch mappings (empty org means single-org mode)
   let mappings: Mapping[] = [];

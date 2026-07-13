@@ -82,20 +82,22 @@
             return;
         }
         const prefer = highlightLayer || "";
-        let match: { name: string; layer: LType.Layer } | null = null;
+        // Box avoids TS control-flow treating callback-assigned locals as `never`.
+        const found: { name: string; layer: LType.Layer }[] = [];
         for (let i = 0; i < geoLayers.length; i++) {
             const name = layers[i]?.name;
             if (!name) continue;
             geoLayers[i]!.eachLayer((lyr) => {
-                if (match && prefer && match.name === prefer) return;
+                if (found[0] && prefer && found[0].name === prefer) return;
                 const feat = (lyr as any).feature as GeoJSON.Feature | undefined;
                 if (!feat) return;
                 if (featureEntityId(feat).trim() !== highlightId.trim()) return;
-                if (!match || name === prefer) {
-                    match = { name, layer: lyr };
+                if (!found[0] || name === prefer) {
+                    found[0] = { name, layer: lyr };
                 }
             });
         }
+        const match = found[0];
         if (!match) {
             selectedLabel = `Entity ${highlightId} not found on map`;
             return;
@@ -147,11 +149,13 @@
         selectedLeafletLayer = null;
 
         const allBounds = L.latLngBounds([]);
-        let pendingSelect: {
+        type PendingSelect = {
             layerName: string;
             entityId: string;
             layer: LType.Layer;
-        } | null = null;
+        };
+        // Array box: assignment inside onEachFeature is invisible to TS CFA.
+        const pending: PendingSelect[] = [];
 
         for (let i = 0; i < layers.length; i++) {
             const { name, geojson, visible } = layers[i];
@@ -196,7 +200,7 @@
                         selectEntity(name, id, layer);
                     });
                     if (isHighlighted(name, id)) {
-                        pendingSelect = {
+                        pending[0] = {
                             layerName: name,
                             entityId: id,
                             layer,
@@ -220,6 +224,7 @@
             hasFramed = true;
         }
 
+        const pendingSelect = pending[0];
         if (pendingSelect) {
             selectEntity(
                 pendingSelect.layerName,

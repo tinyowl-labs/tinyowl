@@ -1,17 +1,19 @@
 <script lang="ts">
+    import type { HTMLTdAttributes } from "svelte/elements";
+    import type { Snippet } from "svelte";
     import { cn } from "$lib/utils.js";
 
     let {
         class: className = "",
         children,
         ...restProps
-    }: Record<string, unknown> = $props();
+    }: HTMLTdAttributes & { children?: Snippet } = $props();
 </script>
 
 <td
     class={cn(
         "p-4 align-middle [&:has([role=checkbox])]:pr-0",
-        className as string,
+        className,
     )}
     {...restProps}
 >

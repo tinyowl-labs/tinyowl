@@ -1,15 +1,17 @@
 <script lang="ts">
+    import type { HTMLAttributes } from "svelte/elements";
+    import type { Snippet } from "svelte";
     import { cn } from "$lib/utils.js";
 
     let {
         class: className = "",
         children,
         ...restProps
-    }: Record<string, unknown> = $props();
+    }: HTMLAttributes<HTMLDivElement> & { children?: Snippet } = $props();
 </script>
 
 <div
-    class={cn("relative w-full overflow-auto", className as string)}
+    class={cn("relative w-full overflow-auto", className)}
     {...restProps}
 >
     <table class="w-full caption-bottom text-sm">

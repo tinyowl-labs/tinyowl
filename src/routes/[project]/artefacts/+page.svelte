@@ -527,7 +527,7 @@
     }
 
     function entityLink(entityType: string, entityId: string): string {
-        return entityLayersHref($page.params.project, {
+        return entityLayersHref($page.params.project ?? "", {
             layer: entityType,
             highlight: entityId,
         });
@@ -591,7 +591,7 @@
         <div class="flex flex-wrap items-center gap-2">
             {#if canUpload}
                 <MediaUpload
-                    projectSlug={$page.params.project}
+                    projectSlug={$page.params.project ?? ""}
                     {accessToken}
                     onUploaded={(info) => {
                         let prefer: TypeFilter | undefined;
