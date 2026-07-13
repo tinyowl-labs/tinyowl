@@ -16,9 +16,11 @@
 
     const hasSession = $derived(Boolean($page.data?.user));
     const project = $derived(data?.project);
-    const isMember = $derived((data as any)?.isMember);
     const role = $derived(((data as any)?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
+    const canWrite = $derived(
+        role === "owner" || role === "admin" || role === "collaborator",
+    );
 
     const allNavItems = $derived([
         {
@@ -36,8 +38,8 @@
             href: `/${data?.slug}/artefacts`,
             icon: ArchiveIcon,
         },
-        // Separator before member-specific routes
-        ...(isMember
+        // Separator before privileged routes (dashboard = collaborator+; settings = admin+)
+        ...(canWrite || canManage
             ? [
                   {
                       separator: true,
@@ -45,11 +47,15 @@
                       label: "",
                       icon: LayoutDashboardIcon,
                   },
-                  {
-                      label: "Dashboard",
-                      href: `/${data?.slug}/dashboard`,
-                      icon: GaugeIcon,
-                  },
+                  ...(canWrite
+                      ? [
+                            {
+                                label: "Dashboard",
+                                href: `/${data?.slug}/dashboard`,
+                                icon: GaugeIcon,
+                            },
+                        ]
+                      : []),
                   ...(canManage
                       ? [
                             {

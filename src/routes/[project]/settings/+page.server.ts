@@ -1,5 +1,6 @@
 import type { PageServerLoad, Actions } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
+import { redirect } from "@sveltejs/kit";
 
 type Member = { user_id: string; email: string; role: string };
 type Mapping = {
@@ -23,9 +24,9 @@ type Mapping = {
 
 export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   const { user } = await locals.getSession();
-  if (!user) return { user: null, members: [], mappings: [] };
-
   const slug = params.project;
+  if (!user) throw redirect(303, `/${slug}`);
+
   const accessToken = await locals.getAccessToken();
 
   let role = "viewer";
@@ -41,6 +42,10 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
       if (member) role = member.role;
     }
   } catch (_) {}
+
+  if (role !== "owner" && role !== "admin") {
+    throw redirect(303, `/${slug}`);
+  }
 
   // Fetch members
   if (role !== "viewer") {
@@ -386,6 +391,36 @@ export const actions: Actions = {
     });
     if (!res.ok) return { error: `Failed: ${await res.text()}` };
     return { success: true, licenceAction: "updated" };
+  },
+
+  updateEmbargo: async ({ request, locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in" };
+
+    const data = await request.formData();
+    const embargoUntil = String(data.get("embargo_until") ?? "").trim();
+    const embargoNote = String(data.get("embargo_note") ?? "");
+    const locationPrecision = String(
+      data.get("location_precision") ?? "exact",
+    ).trim();
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        embargo_until: embargoUntil === "" ? "" : embargoUntil,
+        embargo_note: embargoNote,
+        location_precision: locationPrecision,
+      }),
+    });
+    if (!res.ok) return { error: `Failed: ${await res.text()}` };
+    return { success: true, embargoAction: "updated" };
   },
 
   linkQFieldCloud: async ({ request, locals, params, fetch }) => {

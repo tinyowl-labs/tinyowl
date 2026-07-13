@@ -64,6 +64,9 @@
         file_size: number;
         url: string;
         entities: Array<{ entity_type: string; entity_id: string }>;
+        care_allow_public_view?: boolean;
+        care_allow_embed?: boolean;
+        care_note?: string | null;
     }
 
     type TypeFilter = "all" | "image" | "video" | "audio" | "pdf" | "other";
@@ -100,6 +103,54 @@
     let similarSameRegion = $state(false);
     let similarTag = $state("");
     let similarTagInput = $state("");
+    let careSaving = $state(false);
+    let careError = $state("");
+
+    async function patchCare(
+        hash: string,
+        patch: {
+            care_allow_public_view?: boolean;
+            care_allow_embed?: boolean;
+            care_note?: string;
+        },
+    ) {
+        if (!canUpload || !accessToken) return;
+        careSaving = true;
+        careError = "";
+        try {
+            const slug = $page.params.project;
+            const res = await fetch(
+                `/api/v1/projects/${slug}/media/${hash}/care`,
+                {
+                    method: "PATCH",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${accessToken}`,
+                    },
+                    body: JSON.stringify(patch),
+                },
+            );
+            if (!res.ok) {
+                careError = await res.text();
+                return;
+            }
+            const data = await res.json();
+            items = items.map((it) =>
+                it.hash === hash
+                    ? {
+                          ...it,
+                          care_allow_public_view: data.care_allow_public_view,
+                          care_allow_embed: data.care_allow_embed,
+                          care_note: data.care_note ?? null,
+                      }
+                    : it,
+            );
+        } catch (e) {
+            careError = e instanceof Error ? e.message : "CARE update failed";
+        } finally {
+            careSaving = false;
+        }
+    }
     let similarTagSuggestions = $state<string[]>([]);
     let similarFetched = $state(false);
 
@@ -836,6 +887,54 @@
                 <div
                     class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto border-t border-border p-3"
                 >
+                    {#if canUpload}
+                        <section class="space-y-2 shrink-0">
+                            <p
+                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                            >
+                                CARE
+                            </p>
+                            <label
+                                class="flex items-center justify-between gap-3 text-sm text-foreground"
+                            >
+                                <span>Allow public view</span>
+                                <input
+                                    type="checkbox"
+                                    class="size-4 accent-primary"
+                                    checked={selected.care_allow_public_view !==
+                                        false}
+                                    disabled={careSaving}
+                                    onchange={(e) =>
+                                        patchCare(selected.hash, {
+                                            care_allow_public_view:
+                                                e.currentTarget.checked,
+                                        })}
+                                />
+                            </label>
+                            <label
+                                class="flex items-center justify-between gap-3 text-sm text-foreground"
+                            >
+                                <span>Allow embedding</span>
+                                <input
+                                    type="checkbox"
+                                    class="size-4 accent-primary"
+                                    checked={selected.care_allow_embed !== false}
+                                    disabled={careSaving}
+                                    onchange={(e) =>
+                                        patchCare(selected.hash, {
+                                            care_allow_embed:
+                                                e.currentTarget.checked,
+                                        })}
+                                />
+                            </label>
+                            {#if careError}
+                                <p class="text-[11px] text-destructive">
+                                    {careError}
+                                </p>
+                            {/if}
+                        </section>
+                    {/if}
+
                     {#if isImage}
                         <section class="flex min-h-0 flex-1 flex-col gap-2">
                             <div

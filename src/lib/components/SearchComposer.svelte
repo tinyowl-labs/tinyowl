@@ -27,6 +27,7 @@
         bbox?: SearchBBox | null;
         dateFrom?: number | string | null;
         dateTo?: number | string | null;
+        /** When false, keep quiet `?semantic=0` opt-out across composer navigations. */
         semantic?: boolean;
         autofocus?: boolean;
         placeholder?: string;
@@ -44,7 +45,7 @@
         bbox = null,
         dateFrom = null,
         dateTo = null,
-        semantic = false,
+        semantic = true,
         autofocus = false,
         placeholder = "Search projects…  Type @ for filters",
         examples = [],
@@ -202,7 +203,7 @@
                 bbox,
                 dateFrom,
                 dateTo,
-                semantic,
+                semantic: semantic ? undefined : false,
             }),
         );
     }

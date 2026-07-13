@@ -184,6 +184,44 @@
         ((project as any)?.table_visibility as Record<string, string>) ?? {},
     );
     const currentLicence = $derived((project as any)?.licence ?? "");
+    const currentEmbargoUntil = $derived.by(() => {
+        const raw = (project as any)?.embargo_until as string | null | undefined;
+        if (!raw) return "";
+        // datetime-local wants YYYY-MM-DDTHH:mm
+        const d = new Date(raw);
+        if (Number.isNaN(d.getTime())) return raw.slice(0, 16);
+        return d.toISOString().slice(0, 16);
+    });
+    const currentEmbargoNote = $derived(
+        ((project as any)?.embargo_note as string | null | undefined) ?? "",
+    );
+    const currentLocationPrecision = $derived(
+        ((project as any)?.location_precision as string | undefined) ?? "exact",
+    );
+
+    const LOCATION_PRECISIONS = [
+        { key: "exact", label: "Exact", desc: "Full coordinates" },
+        {
+            key: "approx_100m",
+            label: "~100 m",
+            desc: "Snap to ~100 m grid",
+        },
+        {
+            key: "approx_1km",
+            label: "~1 km",
+            desc: "Snap to ~1 km grid",
+        },
+        {
+            key: "bbox_only",
+            label: "Bbox only",
+            desc: "Project extent only",
+        },
+        {
+            key: "hidden",
+            label: "Hidden",
+            desc: "No public locations",
+        },
+    ];
 
     const LICENCES = [
         {
@@ -423,6 +461,92 @@
                                 </form>
                             {/each}
                         </div>
+                    </section>
+
+                    <section>
+                        <div class="mb-4">
+                            <h2 class="text-sm font-medium text-foreground">
+                                Embargo &amp; location precision
+                            </h2>
+                            <p class="mt-1 text-sm text-muted-foreground">
+                                While embargoed, or when precision is reduced,
+                                viewers and anonymous readers see fuzzed or
+                                hidden locations. Collaborators always see
+                                exact coordinates.
+                            </p>
+                        </div>
+
+                        <form
+                            method="POST"
+                            action="?/updateEmbargo"
+                            use:enhance
+                            class="rounded-lg border border-border divide-y divide-border"
+                        >
+                            <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div class="min-w-0">
+                                    <p class="text-sm text-foreground">
+                                        Embargo until
+                                    </p>
+                                    <p
+                                        class="text-xs text-muted-foreground mt-0.5"
+                                    >
+                                        Clear the date to lift the embargo
+                                    </p>
+                                </div>
+                                <input
+                                    type="datetime-local"
+                                    name="embargo_until"
+                                    value={currentEmbargoUntil}
+                                    class="{inputClass} w-full sm:w-56"
+                                />
+                            </div>
+                            <div class="flex flex-col gap-2 px-4 py-3">
+                                <label
+                                    class="text-sm text-foreground"
+                                    for="embargo_note"
+                                >
+                                    Embargo note
+                                </label>
+                                <textarea
+                                    id="embargo_note"
+                                    name="embargo_note"
+                                    rows="2"
+                                    class="{inputClass} h-auto min-h-[2.5rem] py-2 w-full"
+                                    placeholder="Optional reason shown to admins"
+                                    >{currentEmbargoNote}</textarea
+                                >
+                            </div>
+                            <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div class="min-w-0">
+                                    <p class="text-sm text-foreground">
+                                        Location precision
+                                    </p>
+                                    <p
+                                        class="text-xs text-muted-foreground mt-0.5"
+                                    >
+                                        Applied to maps, centroids, and search
+                                        for non-collaborators
+                                    </p>
+                                </div>
+                                <select
+                                    name="location_precision"
+                                    value={currentLocationPrecision}
+                                    class="{selectClass} w-full sm:w-40"
+                                >
+                                    {#each LOCATION_PRECISIONS as p}
+                                        <option value={p.key}>{p.label}</option>
+                                    {/each}
+                                </select>
+                            </div>
+                            <div class="flex justify-end px-4 py-3">
+                                <button
+                                    type="submit"
+                                    class="h-8 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        </form>
                     </section>
                 </div>
             {:else if tabValue === "qfieldcloud"}

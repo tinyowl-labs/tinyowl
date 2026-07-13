@@ -21,9 +21,10 @@
         onCommit,
     }: Props = $props();
 
-    /** Fixed archaeological year axis — not derived from filtered results. */
-    const DOMAIN_MIN = -12000;
-    const DOMAIN_MAX = 2100;
+    /** Fallback when no dated results (or empty search). */
+    const FALLBACK_MIN = -12000;
+    const FALLBACK_MAX = 2100;
+    const MIN_SPAN = 100;
     const BIN_COUNT = 48;
 
     type Bin = { start: number; end: number; count: number };
@@ -39,12 +40,51 @@
             .filter((x): x is { start: number; end: number } => x != null),
     );
 
+    /** Axis stretches to result dates (and any active filter thumbs). */
+    const domain = $derived.by(() => {
+        let min = Infinity;
+        let max = -Infinity;
+        for (const d of dated) {
+            if (d.start < min) min = d.start;
+            if (d.end > max) max = d.end;
+        }
+        const parsedFrom =
+            dateFrom !== "" && !Number.isNaN(Number(dateFrom))
+                ? Number(dateFrom)
+                : null;
+        const parsedTo =
+            dateTo !== "" && !Number.isNaN(Number(dateTo))
+                ? Number(dateTo)
+                : null;
+        if (parsedFrom != null) {
+            min = Math.min(min, parsedFrom);
+            max = Math.max(max, parsedFrom);
+        }
+        if (parsedTo != null) {
+            min = Math.min(min, parsedTo);
+            max = Math.max(max, parsedTo);
+        }
+        if (!Number.isFinite(min) || !Number.isFinite(max)) {
+            return { min: FALLBACK_MIN, max: FALLBACK_MAX };
+        }
+        if (max - min < MIN_SPAN) {
+            const mid = (min + max) / 2;
+            min = Math.floor(mid - MIN_SPAN / 2);
+            max = Math.ceil(mid + MIN_SPAN / 2);
+        }
+        return { min: Math.floor(min), max: Math.ceil(max) };
+    });
+
+    const domainMin = $derived(domain.min);
+    const domainMax = $derived(domain.max);
+
     const bins = $derived.by((): Bin[] => {
-        const span = DOMAIN_MAX - DOMAIN_MIN;
+        const span = domainMax - domainMin;
+        if (span <= 0) return [];
         const width = span / BIN_COUNT;
         const out: Bin[] = [];
         for (let i = 0; i < BIN_COUNT; i++) {
-            const start = DOMAIN_MIN + i * width;
+            const start = domainMin + i * width;
             const end = start + width;
             let count = 0;
             for (const d of dated) {
@@ -57,19 +97,19 @@
 
     const maxCount = $derived(Math.max(1, ...bins.map((b) => b.count)));
 
-    let range = $state<[number, number]>([DOMAIN_MIN, DOMAIN_MAX]);
+    let range = $state<[number, number]>([FALLBACK_MIN, FALLBACK_MAX]);
 
     $effect(() => {
         const parsedFrom =
             dateFrom !== "" && !Number.isNaN(Number(dateFrom))
                 ? Number(dateFrom)
-                : DOMAIN_MIN;
+                : domainMin;
         const parsedTo =
             dateTo !== "" && !Number.isNaN(Number(dateTo))
                 ? Number(dateTo)
-                : DOMAIN_MAX;
-        let a = Math.max(DOMAIN_MIN, Math.min(DOMAIN_MAX, parsedFrom));
-        let b = Math.max(DOMAIN_MIN, Math.min(DOMAIN_MAX, parsedTo));
+                : domainMax;
+        let a = Math.max(domainMin, Math.min(domainMax, parsedFrom));
+        let b = Math.max(domainMin, Math.min(domainMax, parsedTo));
         if (a > b) [a, b] = [b, a];
         range = [a, b];
     });
@@ -77,21 +117,25 @@
     const hasFilter = $derived(dateFrom !== "" || dateTo !== "");
 
     const selectedLeft = $derived(
-        ((range[0] - DOMAIN_MIN) / (DOMAIN_MAX - DOMAIN_MIN)) * 100,
+        domainMax === domainMin
+            ? 0
+            : ((range[0] - domainMin) / (domainMax - domainMin)) * 100,
     );
     const selectedRight = $derived(
-        ((range[1] - DOMAIN_MIN) / (DOMAIN_MAX - DOMAIN_MIN)) * 100,
+        domainMax === domainMin
+            ? 100
+            : ((range[1] - domainMin) / (domainMax - domainMin)) * 100,
     );
 
     function commitValues(values: number[]) {
-        let a = Math.round(values[0] ?? DOMAIN_MIN);
-        let b = Math.round(values[1] ?? DOMAIN_MAX);
+        let a = Math.round(values[0] ?? domainMin);
+        let b = Math.round(values[1] ?? domainMax);
         if (a > b) [a, b] = [b, a];
-        a = Math.max(DOMAIN_MIN, Math.min(DOMAIN_MAX, a));
-        b = Math.max(DOMAIN_MIN, Math.min(DOMAIN_MAX, b));
+        a = Math.max(domainMin, Math.min(domainMax, a));
+        b = Math.max(domainMin, Math.min(domainMax, b));
         range = [a, b];
         // Full axis = no temporal filter (Clear semantics).
-        if (a <= DOMAIN_MIN && b >= DOMAIN_MAX) {
+        if (a <= domainMin && b >= domainMax) {
             dateFrom = "";
             dateTo = "";
             onCommit(null, null);
@@ -103,7 +147,7 @@
     }
 
     function clear() {
-        range = [DOMAIN_MIN, DOMAIN_MAX];
+        range = [domainMin, domainMax];
         dateFrom = "";
         dateTo = "";
         onCommit(null, null);
@@ -165,8 +209,8 @@
             if (v.length >= 2) range = [v[0], v[1]];
         }}
         onValueCommit={commitValues}
-        min={DOMAIN_MIN}
-        max={DOMAIN_MAX}
+        min={domainMin}
+        max={domainMax}
         step={1}
         class="relative flex w-full touch-none select-none items-center py-2"
     >
@@ -188,12 +232,12 @@
     <div
         class="flex items-center justify-between text-[11px] tabular-nums text-muted-foreground"
     >
-        <span>{formatYear(Math.round(range[0]))}</span>
+        <span>{formatYear(domainMin)}</span>
         <span class="text-foreground font-medium"
             >{formatYear(Math.round(range[0]))} – {formatYear(
                 Math.round(range[1]),
             )}</span
         >
-        <span>{formatYear(Math.round(range[1]))}</span>
+        <span>{formatYear(domainMax)}</span>
     </div>
 </div>

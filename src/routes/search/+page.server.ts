@@ -59,7 +59,8 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
 
   const params = new URLSearchParams();
   if (parsed.q) params.set("q", parsed.q);
-  if (parsed.semantic && parsed.q) params.set("semantic", "1");
+  // Boost is default-on in the API; only forward an explicit opt-out.
+  if (parsed.q && !parsed.semantic) params.set("semantic", "0");
   if (parsed.bbox) {
     params.set("bbox", formatBBox(parsed.bbox));
   } else if (parsed.lat != null && parsed.lng != null) {

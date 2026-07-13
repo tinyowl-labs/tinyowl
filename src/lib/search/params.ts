@@ -21,7 +21,10 @@ export type SearchParams = {
   vocabularies: string[];
   /** Result kinds — scaffold; always project until mixed search ships */
   types: string[];
-  /** OpenCLIP text boost (`?semantic=1`) when q is set */
+  /**
+   * OpenCLIP text boost when q is set. Default on; opt out with `?semantic=0`.
+   * Omitted from normal URLs — only `semantic=0` is written when disabled.
+   */
   semantic: boolean;
 };
 
@@ -75,8 +78,13 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     dateToRaw != null && dateToRaw !== "" ? Number(dateToRaw) : null;
 
   const semanticRaw = (sp.get("semantic") ?? "").trim().toLowerCase();
-  const semantic =
-    semanticRaw === "1" || semanticRaw === "true" || semanticRaw === "yes";
+  const semanticOff =
+    semanticRaw === "0" ||
+    semanticRaw === "false" ||
+    semanticRaw === "no" ||
+    semanticRaw === "off";
+  // Default on; only an explicit opt-out disables the boost.
+  const semantic = !semanticOff;
 
   return {
     q,
@@ -109,7 +117,8 @@ export function buildSearchParams(input: {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
   if (q) params.set("q", q);
-  if (input.semantic) params.set("semantic", "1");
+  // Boost is default-on; only persist an explicit opt-out.
+  if (input.semantic === false) params.set("semantic", "0");
 
   // Prefer explicit map-view bbox over point+radius when both present.
   if (input.bbox) {
