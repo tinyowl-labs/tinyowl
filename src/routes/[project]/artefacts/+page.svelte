@@ -261,45 +261,51 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="flex flex-col h-full px-6 py-4">
-    <div class="shrink-0 mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-            <div class="flex items-center gap-2.5">
-                <ArchiveIcon class="size-5 text-muted-foreground" />
-                <h1 class="text-xl font-bold tracking-tight text-foreground">
+    <div class="shrink-0 mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div class="min-w-0">
+            <div class="flex items-center gap-2">
+                <ArchiveIcon class="size-4 text-muted-foreground" />
+                <h1 class="text-lg font-semibold tracking-tight text-foreground">
                     Artefacts
                 </h1>
-            </div>
-            <p class="mt-0.5 text-sm text-muted-foreground">
-                Photos, reports, and other documentary media linked to entities
                 {#if totalItems || items.length}
-                    · {totalItems || items.length} item{(totalItems ||
-                        items.length) !== 1
-                        ? "s"
-                        : ""}
+                    <span class="text-xs text-muted-foreground tabular-nums">
+                        {totalItems || items.length}
+                    </span>
                 {/if}
-            </p>
+            </div>
         </div>
 
-        <div
-            class="flex items-center rounded-md border border-border overflow-hidden"
-        >
-            {#each filterTabs as tab}
-                {@const count = filterCount(tab.id)}
-                <button
-                    type="button"
-                    onclick={() => (typeFilter = tab.id)}
-                    class="px-2.5 py-1 text-xs border-l border-border first:border-l-0 transition-colors {typeFilter ===
-                    tab.id
-                        ? 'bg-secondary text-foreground font-medium'
-                        : 'text-muted-foreground hover:text-foreground'}"
-                >
-                    {tab.label}{#if count != null}<span
-                            class="text-muted-foreground/70"
-                        >
-                            {count}</span
-                        >{/if}
-                </button>
-            {/each}
+        <div class="flex flex-wrap items-center gap-2">
+            {#if canUpload}
+                <MediaUpload
+                    projectSlug={$page.params.project}
+                    {accessToken}
+                    onUploaded={reloadShelf}
+                />
+            {/if}
+            <div
+                class="flex items-center rounded-md border border-border overflow-hidden"
+            >
+                {#each filterTabs as tab}
+                    {@const count = filterCount(tab.id)}
+                    <button
+                        type="button"
+                        onclick={() => (typeFilter = tab.id)}
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs border-l border-border first:border-l-0 transition-colors {typeFilter ===
+                        tab.id
+                            ? 'bg-secondary text-foreground font-medium'
+                            : 'text-muted-foreground hover:text-foreground'}"
+                    >
+                        <span>{tab.label}</span>
+                        {#if count != null}
+                            <span class="tabular-nums text-muted-foreground/80"
+                                >{count}</span
+                            >
+                        {/if}
+                    </button>
+                {/each}
+            </div>
         </div>
     </div>
 
@@ -309,19 +315,13 @@
         >
             <AlertTriangleIcon class="size-4 shrink-0 text-amber-600 mt-0.5" />
             <p>
-                <span class="font-medium">{missingCount} media file{missingCount === 1 ? "" : "s"}</span>
+                <span class="font-medium"
+                    >{missingCount} media file{missingCount === 1
+                        ? ""
+                        : "s"}</span
+                >
                 indexed but missing on disk. Re-push media or restore blobs.
             </p>
-        </div>
-    {/if}
-
-    {#if canUpload}
-        <div class="mb-4">
-            <MediaUpload
-                projectSlug={$page.params.project}
-                {accessToken}
-                onUploaded={reloadShelf}
-            />
         </div>
     {/if}
 

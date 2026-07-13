@@ -1,6 +1,7 @@
 <script lang="ts">
     import UploadIcon from "@lucide/svelte/icons/upload";
     import LoaderIcon from "@lucide/svelte/icons/loader";
+    import XIcon from "@lucide/svelte/icons/x";
     import { entityLayersHref } from "$lib/project/entityLink";
 
     type Props = {
@@ -21,6 +22,7 @@
         Array<{ entity_type: string; entity_id: string; label?: string }>
     >([]);
     let dragOver = $state(false);
+    let open = $state(false);
 
     async function sha256Hex(buf: ArrayBuffer): Promise<string> {
         const hash = await crypto.subtle.digest("SHA-256", buf);
@@ -97,14 +99,11 @@
             if (entityId.trim()) {
                 headers["X-TinyOwl-Entity-Id"] = entityId.trim();
             }
-            const res = await fetch(
-                `/api/v1/projects/${projectSlug}/media`,
-                {
-                    method: "POST",
-                    headers,
-                    body: buf,
-                },
-            );
+            const res = await fetch(`/api/v1/projects/${projectSlug}/media`, {
+                method: "POST",
+                headers,
+                body: buf,
+            });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -131,7 +130,6 @@
             error = "Choose an image or PDF";
             return;
         }
-        // Sequential uploads keep status readable
         (async () => {
             for (const f of files) {
                 await uploadFile(f);
@@ -141,11 +139,11 @@
 </script>
 
 <div
-    class="rounded-lg border border-dashed border-border bg-secondary/15 p-3 space-y-3"
-    class:border-primary={dragOver}
+    class="relative"
     ondragover={(e) => {
         e.preventDefault();
         dragOver = true;
+        open = true;
     }}
     ondragleave={() => (dragOver = false)}
     ondrop={(e) => {
@@ -156,100 +154,124 @@
     role="region"
     aria-label="Upload artefacts"
 >
-    <div class="flex items-start gap-2">
-        <UploadIcon class="size-4 mt-0.5 text-muted-foreground shrink-0" />
-        <div class="min-w-0 flex-1">
-            <p class="text-sm font-medium text-foreground">
-                Upload photos or grey literature
-            </p>
-            <p class="text-xs text-muted-foreground mt-0.5">
-                Images and PDFs. Optionally link to a context or find.
-            </p>
-        </div>
-    </div>
+    {#if !open}
+        <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+            onclick={() => (open = true)}
+        >
+            <UploadIcon class="size-3.5" />
+            Upload
+        </button>
+    {:else}
+        <div
+            class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/30 px-2.5 py-2 {dragOver
+                ? 'ring-1 ring-primary'
+                : ''}"
+        >
+            <div class="relative min-w-[12rem] max-w-xs flex-1">
+                <input
+                    type="text"
+                    class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs placeholder:text-muted-foreground"
+                    placeholder="Link to entity (optional)"
+                    value={entityQuery}
+                    oninput={(e) => searchEntities(e.currentTarget.value)}
+                    disabled={busy}
+                />
+                {#if suggestions.length > 0}
+                    <ul
+                        class="absolute z-20 mt-1 w-full rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto"
+                    >
+                        {#each suggestions as s}
+                            <li>
+                                <button
+                                    type="button"
+                                    class="w-full text-left px-2 py-1.5 text-xs hover:bg-accent/60"
+                                    onclick={() => pickEntity(s)}
+                                >
+                                    <span class="text-foreground"
+                                        >{s.label ?? s.entity_type}</span
+                                    >
+                                    <span
+                                        class="ml-2 font-mono text-muted-foreground"
+                                        >{s.entity_id}</span
+                                    >
+                                </button>
+                            </li>
+                        {/each}
+                    </ul>
+                {/if}
+            </div>
 
-    <div class="relative">
-        <label class="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1">
-            Link to entity (optional)
-        </label>
-        <input
-            type="text"
-            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-            placeholder="Search contexts / finds…"
-            value={entityQuery}
-            oninput={(e) => searchEntities(e.currentTarget.value)}
-            disabled={busy}
-        />
-        {#if suggestions.length > 0}
-            <ul
-                class="absolute z-10 mt-1 w-full rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto"
-            >
-                {#each suggestions as s}
-                    <li>
-                        <button
-                            type="button"
-                            class="w-full text-left px-2 py-1.5 text-xs hover:bg-accent/60"
-                            onclick={() => pickEntity(s)}
-                        >
-                            <span class="text-foreground"
-                                >{s.label ?? s.entity_type}</span
-                            >
-                            <span class="ml-2 font-mono text-muted-foreground"
-                                >{s.entity_id}</span
-                            >
-                        </button>
-                    </li>
-                {/each}
-            </ul>
-        {/if}
-        {#if entityType && entityId}
-            <p class="mt-1 text-[11px] text-muted-foreground">
-                Linking to
+            {#if entityType && entityId}
                 <a
-                    class="text-primary hover:underline"
+                    class="max-w-[10rem] truncate text-[11px] text-primary hover:underline"
                     href={entityLayersHref(projectSlug, {
                         layer: entityType,
                         highlight: entityId,
-                    })}>{entityType} · {entityId}</a
+                    })}
+                    title="{entityType} · {entityId}"
                 >
+                    {entityId}
+                </a>
                 <button
                     type="button"
-                    class="ml-2 underline"
+                    class="text-[11px] text-muted-foreground hover:text-foreground"
                     onclick={() => {
                         entityType = "";
                         entityId = "";
                         entityQuery = "";
-                    }}>clear</button
+                    }}>Clear</button
                 >
-            </p>
-        {/if}
-    </div>
+            {/if}
 
-    <label
-        class="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-accent/50 cursor-pointer {busy
-            ? 'opacity-60 pointer-events-none'
-            : ''}"
-    >
-        {#if busy}
-            <LoaderIcon class="size-3.5 animate-spin" />
-        {:else}
-            <UploadIcon class="size-3.5" />
-        {/if}
-        Choose files
-        <input
-            type="file"
-            class="sr-only"
-            accept="image/*,application/pdf,.pdf"
-            multiple
-            disabled={busy}
-            onchange={(e) => onFiles(e.currentTarget.files)}
-        />
-    </label>
+            <label
+                class="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background cursor-pointer hover:opacity-90 {busy
+                    ? 'opacity-60 pointer-events-none'
+                    : ''}"
+            >
+                {#if busy}
+                    <LoaderIcon class="size-3.5 animate-spin" />
+                {:else}
+                    <UploadIcon class="size-3.5" />
+                {/if}
+                Choose files
+                <input
+                    type="file"
+                    class="sr-only"
+                    accept="image/*,application/pdf,.pdf"
+                    multiple
+                    disabled={busy}
+                    onchange={(e) => onFiles(e.currentTarget.files)}
+                />
+            </label>
 
-    {#if status}
-        <p class="text-xs text-muted-foreground">{status}</p>
-    {/if}
-    {#if error}
-        <p class="text-xs text-destructive">{error}</p>
+            <button
+                type="button"
+                class="rounded-md p-1 text-muted-foreground hover:text-foreground"
+                aria-label="Close upload"
+                onclick={() => {
+                    open = false;
+                    error = "";
+                    status = "";
+                }}
+            >
+                <XIcon class="size-3.5" />
+            </button>
+
+            {#if status}
+                <span class="w-full text-[11px] text-muted-foreground"
+                    >{status}</span
+                >
+            {/if}
+            {#if error}
+                <span class="w-full text-[11px] text-destructive">{error}</span>
+            {/if}
+            {#if dragOver}
+                <span class="w-full text-[11px] text-muted-foreground"
+                    >Drop images or PDFs here</span
+                >
+            {/if}
+        </div>
     {/if}
 </div>
