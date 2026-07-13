@@ -80,13 +80,15 @@
 </script>
 
 <div class="flex flex-col h-full min-h-0">
-    <div class="flex-1 min-h-0 overflow-auto rounded-md border">
+    <div
+        class="flex-1 min-h-0 overflow-auto rounded-md border border-border bg-card"
+    >
         <Table.Root>
-            <Table.Header>
+            <Table.Header class="sticky top-0 z-10 bg-card/95 backdrop-blur-sm">
                 {#each table.getHeaderGroups() as headerGroup}
-                    <Table.Row>
+                    <Table.Row class="hover:bg-transparent border-border">
                         {#each headerGroup.headers as header}
-                            <Table.Head class="max-w-75">
+                            <Table.Head class="max-w-75 bg-muted/40">
                                 {#if header.isPlaceholder}
                                     <!-- empty -->
                                 {:else if header.column.getCanSort()}
@@ -120,7 +122,10 @@
             </Table.Header>
             <Table.Body>
                 {#each table.getRowModel().rows as row}
-                    <Table.Row class={rowClassName?.(row.original) ?? ""}>
+                    <Table.Row
+                        class="border-border {rowClassName?.(row.original) ??
+                            ''}"
+                    >
                         {#each row.getVisibleCells() as cell}
                             <Table.Cell class="max-w-75">
                                 <span
@@ -137,7 +142,9 @@
                     </Table.Row>
                 {:else}
                     <Table.Row>
-                        <Table.Cell class="h-24 text-center">
+                        <Table.Cell
+                            class="h-24 text-center text-muted-foreground"
+                        >
                             No results.
                         </Table.Cell>
                     </Table.Row>

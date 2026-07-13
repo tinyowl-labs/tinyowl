@@ -12,6 +12,7 @@
     import ZoomOutIcon from "@lucide/svelte/icons/zoom-out";
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import { onMount } from "svelte";
+    import { entityLayersHref } from "$lib/project/entityLink";
 
     let { data } = $props();
 
@@ -268,8 +269,11 @@
     }
 
     function entityLink(entityType: string, entityId: string): string {
-        const slug = $page.params.project;
-        return `/${slug}/layers?layer=${encodeURIComponent(entityType)}&highlight=${encodeURIComponent(entityId)}`;
+        return entityLayersHref($page.params.project, {
+            layer: entityType,
+            highlight: entityId,
+            view: "table",
+        });
     }
 
     function entityLabel(entityType: string): string {

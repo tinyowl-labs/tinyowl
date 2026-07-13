@@ -17,6 +17,11 @@
 
     let { data } = $props();
 
+    const accessToken = $derived(
+        ((data as any)?.accessToken as string) ||
+            (($page.data as any)?.accessToken as string) ||
+            "",
+    );
     const project = $derived($page.data?.project);
     const visibility = $derived(
         ((project as any)?.visibility ?? "private") as string,
@@ -158,7 +163,7 @@
                                 title="Copy"
                             >
                                 {#if copied}
-                                    <CheckIcon class="size-4 text-green-500" />
+                                    <CheckIcon class="size-4 text-primary" />
                                 {:else}
                                     <CopyIcon class="size-4" />
                                 {/if}
@@ -167,7 +172,7 @@
                     </div>
                     <div class="border-t border-border my-1"></div>
                     <a
-                        href={`/api/v1/projects/${slug}/gpkg`}
+                        href={`/api/v1/projects/${slug}/gpkg${accessToken ? `?token=${encodeURIComponent(accessToken)}` : ""}`}
                         class="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors no-underline"
                     >
                         <DownloadIcon class="size-4" />
@@ -250,16 +255,16 @@
                 class="flex items-center gap-2 px-4 py-3 border-b border-border"
             >
                 {#if warnings.length > 0}
-                    <AlertTriangleIcon class="size-4 shrink-0 text-amber-500" />
+                    <AlertTriangleIcon class="size-4 shrink-0 text-destructive" />
                 {:else}
-                    <AlertTriangleIcon class="size-4 shrink-0 text-green-500" />
+                    <AlertTriangleIcon class="size-4 shrink-0 text-primary" />
                 {/if}
                 <span class="text-sm font-medium text-foreground"
                     >Validation warnings</span
                 >
                 {#if warnings.length > 0}
                     <span
-                        class="text-xs px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-medium"
+                        class="text-xs px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium"
                         >{warnings.length}</span
                     >
                 {/if}

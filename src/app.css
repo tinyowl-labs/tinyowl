@@ -2,51 +2,79 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme {
+/*
+ * Semantic tokens are plain CSS variables on :root, updated at runtime by
+ * applyTheme() from Appearance preferences. @theme inline maps them into
+ * Tailwind color/radius utilities (bg-background, rounded-md, text-primary, …).
+ */
+:root {
+    --accent-hue: 220;
+    --bg-l: 0.12;
+    --fg-l: 0.95;
+
+    --background: oklch(0.12 0.012 220);
+    --foreground: oklch(0.95 0.01 220);
+    --card: oklch(0.145 0.012 220);
+    --card-foreground: oklch(0.95 0.01 220);
+    --popover: oklch(0.145 0.012 220);
+    --popover-foreground: oklch(0.95 0.01 220);
+    --primary: oklch(0.68 0.17 220);
+    --primary-foreground: oklch(0.98 0.01 220);
+    --secondary: oklch(0.17 0.014 220);
+    --secondary-foreground: oklch(0.95 0.01 220);
+    --muted: oklch(0.19 0.012 220);
+    --muted-foreground: oklch(0.68 0.01 220);
+    --accent: oklch(0.2 0.018 220);
+    --accent-foreground: oklch(0.95 0.01 220);
+    --destructive: oklch(0.55 0.19 25);
+    --destructive-foreground: oklch(0.98 0.01 25);
+    --border: oklch(0.22 0.017 220);
+    --input: oklch(0.22 0.017 220);
+    --ring: oklch(0.68 0.17 220);
+
+    --theme-radius-xs: 2px;
+    --theme-radius-sm: 4px;
+    --theme-radius-md: 6px;
+    --theme-radius-lg: 8px;
+    --theme-radius-xl: 12px;
+
+    --blur-panel: blur(14px) saturate(1.4);
+    --blur-dock: blur(20px) saturate(1.6);
+    --blur-overlay: blur(8px) saturate(1.3);
+    --panel-bg-opacity: 0.72;
+    --dock-bg-opacity: 0.65;
+    --overlay-bg-opacity: 0.75;
+}
+
+@theme inline {
     --font-sans: "Inter", system-ui, -apple-system, sans-serif;
     --font-mono: "JetBrains Mono", "Cascadia Code", monospace;
 
-    --color-background: hsl(60 14% 99%);
-    --color-foreground: hsl(0 0% 3.9%);
-    --color-card: hsl(60 14% 99%);
-    --color-card-foreground: hsl(0 0% 3.9%);
-    --color-popover: hsl(60 14% 99%);
-    --color-popover-foreground: hsl(0 0% 3.9%);
-    --color-primary: hsl(0 100% 41%);
-    --color-primary-foreground: hsl(0 0% 98%);
-    --color-secondary: hsl(0 0% 96.1%);
-    --color-secondary-foreground: hsl(0 0% 9%);
-    --color-muted: hsl(0 0% 96.1%);
-    --color-muted-foreground: hsl(0 0% 45.1%);
-    --color-accent: hsl(0 0% 96.1%);
-    --color-accent-foreground: hsl(0 0% 9%);
-    --color-destructive: hsl(0 84.2% 60.2%);
-    --color-destructive-foreground: hsl(0 0% 98%);
-    --color-border: hsl(0 0% 89.8%);
-    --color-input: hsl(0 0% 89.8%);
-    --color-ring: hsl(0 100% 41%);
-}
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
 
-.dark {
-    --color-background: hsl(30 4% 7%);
-    --color-foreground: hsl(0 0% 98%);
-    --color-card: hsl(30 4% 7%);
-    --color-card-foreground: hsl(0 0% 98%);
-    --color-popover: hsl(30 4% 7%);
-    --color-popover-foreground: hsl(0 0% 98%);
-    --color-primary: hsl(0 85% 55%);
-    --color-primary-foreground: hsl(0 0% 98%);
-    --color-secondary: hsl(0 0% 14.9%);
-    --color-secondary-foreground: hsl(0 0% 98%);
-    --color-muted: hsl(0 0% 14.9%);
-    --color-muted-foreground: hsl(0 0% 63.9%);
-    --color-accent: hsl(0 0% 14.9%);
-    --color-accent-foreground: hsl(0 0% 98%);
-    --color-destructive: hsl(0 62.8% 30.6%);
-    --color-destructive-foreground: hsl(0 0% 98%);
-    --color-border: hsl(0 0% 14.9%);
-    --color-input: hsl(0 0% 14.9%);
-    --color-ring: hsl(0 85% 55%);
+    --radius-xs: var(--theme-radius-xs);
+    --radius-sm: var(--theme-radius-sm);
+    --radius-md: var(--theme-radius-md);
+    --radius-lg: var(--theme-radius-lg);
+    --radius-xl: var(--theme-radius-xl);
 }
 
 @layer base {
@@ -61,17 +89,154 @@
     }
 }
 
+/* Search result term highlights */
+mark.search-hit {
+    background: color-mix(in oklab, var(--primary) 28%, transparent);
+    color: inherit;
+    border-radius: var(--radius-xs);
+    padding: 0 0.12em;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+}
+
+/* ── Home ↔ Search view transitions ───────────────────────────────────────── */
+.search-vt-bar {
+    view-transition-name: search-bar;
+}
+.search-vt-brand {
+    view-transition-name: home-brand;
+}
+.search-vt-home-map {
+    view-transition-name: home-map;
+}
+.search-vt-panel {
+    view-transition-name: search-panel;
+}
+
+/* Morph the shared search field; fade brand / map / results around it */
+html[data-vt="home-search"]::view-transition-group(search-bar) {
+    animation-duration: 0.42s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    z-index: 10;
+}
+html[data-vt="home-search"]::view-transition-old(search-bar),
+html[data-vt="home-search"]::view-transition-new(search-bar) {
+    height: 100%;
+    overflow: clip;
+    object-fit: none;
+}
+
+html[data-vt="home-search"]::view-transition-old(home-brand),
+html[data-vt="home-search"]::view-transition-new(home-brand) {
+    animation-duration: 0.28s;
+    animation-timing-function: ease;
+}
+html[data-vt="home-search"]::view-transition-old(home-map),
+html[data-vt="home-search"]::view-transition-new(home-map),
+html[data-vt="home-search"]::view-transition-old(search-panel),
+html[data-vt="home-search"]::view-transition-new(search-panel) {
+    animation-duration: 0.32s;
+    animation-timing-function: ease;
+}
+
+html[data-vt="home-search"]::view-transition-old(root) {
+    animation: vt-fade-out 0.28s ease both;
+}
+html[data-vt="home-search"]::view-transition-new(root) {
+    animation: vt-fade-in 0.36s ease both;
+}
+
+@keyframes vt-fade-out {
+    to {
+        opacity: 0;
+    }
+}
+@keyframes vt-fade-in {
+    from {
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .search-vt-bar,
+    .search-vt-brand,
+    .search-vt-home-map,
+    .search-vt-panel {
+        view-transition-name: none;
+    }
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+        animation: none !important;
+    }
+}
+
+/* Glass surfaces — opacity + blur come from Appearance → blur scale */
+.glass-panel {
+    background: color-mix(
+        in oklab,
+        var(--background) calc(var(--panel-bg-opacity) * 100%),
+        transparent
+    );
+    backdrop-filter: var(--blur-panel);
+    -webkit-backdrop-filter: var(--blur-panel);
+}
+.glass-dock {
+    background: color-mix(
+        in oklab,
+        var(--background) calc(var(--dock-bg-opacity) * 100%),
+        transparent
+    );
+    backdrop-filter: var(--blur-dock);
+    -webkit-backdrop-filter: var(--blur-dock);
+}
+.glass-overlay {
+    background: color-mix(
+        in oklab,
+        var(--background) calc(var(--overlay-bg-opacity) * 100%),
+        transparent
+    );
+    backdrop-filter: var(--blur-overlay);
+    -webkit-backdrop-filter: var(--blur-overlay);
+}
+
+/* Leaflet — theme-aware chrome (tiles still inverted in .leaflet-dark) */
+.leaflet-container {
+    background: var(--background);
+    font: inherit;
+}
+.leaflet-popup-content-wrapper {
+    background: var(--card);
+    color: var(--card-foreground);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 16px color-mix(in oklab, var(--foreground) 12%, transparent);
+}
+.leaflet-popup-tip {
+    background: var(--card);
+}
+.leaflet-popup-content a {
+    color: var(--primary);
+}
+.leaflet-popup-content .map-popup-muted {
+    color: var(--muted-foreground);
+}
+.leaflet-control-attribution {
+    background: color-mix(in oklab, var(--background) 85%, transparent) !important;
+    color: var(--muted-foreground);
+}
+.leaflet-bar a {
+    background: var(--card) !important;
+    color: var(--foreground) !important;
+    border-bottom-color: var(--border) !important;
+}
+.leaflet-bar a:hover {
+    background: var(--accent) !important;
+}
+
 /* Leaflet dark mode — inverts tile images only, not overlays */
 .leaflet-dark .leaflet-tile {
     filter: invert(1) hue-rotate(180deg) brightness(0.85) saturate(0.6);
 }
 .leaflet-dark .leaflet-container {
-    background: #1a1a2e;
-}
-.leaflet-dark .leaflet-popup-content-wrapper {
-    background: #1e1e2e;
-    color: #e0e0e0;
-}
-.leaflet-dark .leaflet-popup-tip {
-    background: #1e1e2e;
+    background: var(--background);
 }

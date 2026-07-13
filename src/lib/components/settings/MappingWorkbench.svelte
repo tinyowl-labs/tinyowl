@@ -1,10 +1,10 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
     import LinkIcon from "@lucide/svelte/icons/link";
-    import CheckIcon from "@lucide/svelte/icons/check";
-    import XIcon from "@lucide/svelte/icons/x";
     import SearchIcon from "@lucide/svelte/icons/search";
     import LoaderIcon from "@lucide/svelte/icons/loader";
+    import * as Popover from "$lib/components/ui/popover/index.js";
+    import { Button } from "$lib/components/ui/button/index.js";
 
     export type ValueMappingRow = {
         entity_type: string;
@@ -197,6 +197,9 @@
     let editConcept = $state("");
     let vocabResults = $state<VocabResult[]>([]);
     let vocabLoading = $state(false);
+    let manualSearchQuery = $state("");
+    let pickerMode = $state<"search" | "manual">("search");
+    let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
     let hiddenForm = $state<HTMLFormElement | null>(null);
     let formData = $state({
@@ -221,21 +224,27 @@
 
     $effect(() => {
         if (form?.mappingAction || form?.annotationAction) {
-            editingKey = null;
-            editConcept = "";
-            vocabResults = [];
-            vocabLoading = false;
+            closePicker();
         }
     });
 
-    function cancelEdit() {
+    function closePicker() {
         editingKey = null;
         editConcept = "";
         vocabResults = [];
         vocabLoading = false;
+        manualSearchQuery = "";
+        pickerMode = "search";
+        if (searchTimer) clearTimeout(searchTimer);
     }
 
     async function searchVocab(query: string) {
+        const q = query.trim();
+        if (!q) {
+            vocabResults = [];
+            vocabLoading = false;
+            return;
+        }
         vocabLoading = true;
         vocabResults = [];
 
@@ -244,7 +253,7 @@
             const timer = setTimeout(() => ctrl.abort(), 5000);
             try {
                 const res = await fetch(
-                    `/api/v1/vocab/search?vocab=${vocab}&q=${encodeURIComponent(query)}&limit=10`,
+                    `/api/v1/vocab/search?vocab=${vocab}&q=${encodeURIComponent(q)}&limit=10`,
                     { signal: ctrl.signal },
                 );
                 clearTimeout(timer);
@@ -273,20 +282,26 @@
         vocabLoading = false;
     }
 
-    function startSearch(row: ValueMappingRow | ColumnMappingRow) {
+    function openPicker(row: ValueMappingRow | ColumnMappingRow) {
         editingKey = rowKey(row);
         editConcept = conceptLabel(row);
-        if (!isMapped(row)) {
-            searchVocab(searchQuery(row));
-        } else {
-            vocabResults = [];
-            vocabLoading = false;
-        }
+        pickerMode = "search";
+        const auto = searchQuery(row);
+        manualSearchQuery = auto;
+        void searchVocab(auto);
     }
 
-    function startManual(row: ValueMappingRow | ColumnMappingRow) {
-        editingKey = rowKey(row);
-        editConcept = conceptLabel(row);
+    function onManualQueryInput(value: string) {
+        manualSearchQuery = value;
+        pickerMode = "search";
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            void searchVocab(value);
+        }, 280);
+    }
+
+    function startManualEdit() {
+        pickerMode = "manual";
         vocabResults = [];
         vocabLoading = false;
     }
@@ -340,9 +355,39 @@
             };
             pendingBulk = null;
         }
-        editingKey = null;
-        vocabResults = [];
-        vocabLoading = false;
+        closePicker();
+        setTimeout(() => hiddenForm?.requestSubmit(), 0);
+    }
+
+    function submitManual(row: ValueMappingRow | ColumnMappingRow) {
+        const uri = editConcept.trim();
+        if (!uri) return;
+        if (mode === "values") {
+            const v = row as ValueMappingRow;
+            formData = {
+                entity_type: v.entity_type,
+                column_name: v.column_name,
+                local_value: v.local_value,
+                concept_uri: uri,
+                vocabulary: "",
+                crm_property: "",
+                crm_range: "",
+                confidence: "1",
+            };
+        } else {
+            const c = row as ColumnMappingRow;
+            formData = {
+                entity_type: c.entity_type,
+                column_name: c.column_name,
+                local_value: "",
+                concept_uri: "",
+                vocabulary: c.vocabulary ?? "",
+                crm_property: uri,
+                crm_range: c.crm_range ?? "",
+                confidence: "",
+            };
+        }
+        closePicker();
         setTimeout(() => hiddenForm?.requestSubmit(), 0);
     }
 
@@ -380,6 +425,9 @@
     const conceptHeader = $derived(mode === "values" ? "Concept" : "Property");
     const unmappedLabel = $derived(
         mode === "values" ? "unmapped" : "no property",
+    );
+    const uriPlaceholder = $derived(
+        mode === "columns" ? "CRM property URI" : "concept URI",
     );
 </script>
 
@@ -611,159 +659,154 @@
                             >
                         {/if}
 
-                        {#if editing && mapped}
-                            <form
-                                method="POST"
-                                action={formAction}
-                                use:enhance
-                                class="col-span-2 flex items-center gap-1.5 min-w-0"
-                            >
-                                <input
-                                    type="hidden"
-                                    name="entity_type"
-                                    value={row.entity_type}
-                                />
-                                <input
-                                    type="hidden"
-                                    name="column_name"
-                                    value={row.column_name}
-                                />
-                                {#if mode === "values"}
-                                    <input
-                                        type="hidden"
-                                        name="local_value"
-                                        value={(row as ValueMappingRow)
-                                            .local_value}
-                                    />
-                                    <input
-                                        type="text"
-                                        name="concept_uri"
-                                        bind:value={editConcept}
-                                        class="h-7 w-full min-w-0 rounded border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                    />
-                                {:else}
-                                    <input
-                                        type="hidden"
-                                        name="vocabulary"
-                                        value={(row as ColumnMappingRow)
-                                            .vocabulary ?? ""}
-                                    />
-                                    <input
-                                        type="text"
-                                        name="crm_property"
-                                        bind:value={editConcept}
-                                        class="h-7 w-full min-w-0 rounded border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                    />
-                                {/if}
-                                <button
-                                    type="submit"
-                                    title="Save"
-                                    class="flex size-6 shrink-0 items-center justify-center rounded text-foreground hover:bg-secondary"
-                                >
-                                    <CheckIcon class="size-3.5" />
-                                </button>
-                                <button
-                                    type="button"
-                                    title="Cancel"
-                                    onclick={cancelEdit}
-                                    class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary"
-                                >
-                                    <XIcon class="size-3.5" />
-                                </button>
-                            </form>
-                        {:else if editing && !mapped}
-                            <span class="truncate text-xs text-muted-foreground"
-                                >searching…</span
-                            >
-                            <button
-                                type="button"
-                                title="Cancel"
-                                onclick={cancelEdit}
-                                class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                            >
-                                <XIcon class="size-3.5" />
-                            </button>
-                        {:else}
-                            <span
-                                class="truncate {mapped
-                                    ? 'font-mono text-xs text-foreground'
-                                    : 'italic text-xs text-muted-foreground/50'}"
-                            >
-                                {mapped ? concept : unmappedLabel}
-                            </span>
-                            <button
-                                type="button"
-                                onclick={() => startSearch(row)}
+                        <span
+                            class="truncate {mapped
+                                ? 'font-mono text-xs text-foreground'
+                                : 'italic text-xs text-muted-foreground/50'}"
+                        >
+                            {mapped ? concept : unmappedLabel}
+                        </span>
+
+                        <Popover.Root
+                            open={editing}
+                            onOpenChange={(open) => {
+                                if (open) openPicker(row);
+                                else if (editingKey === rowKey(row)) closePicker();
+                            }}
+                        >
+                            <Popover.Trigger
                                 class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                                 title={mapped
                                     ? "Edit mapping"
                                     : "Search vocabularies"}
                             >
                                 <SearchIcon class="size-3.5" />
-                            </button>
-                        {/if}
-                    </div>
-
-                    {#if editing && !mapped}
-                        <div class="px-4 py-3 bg-secondary/25 border-t border-border">
-                            {#if vocabLoading}
-                                <div
-                                    class="flex items-center gap-2 text-xs text-muted-foreground py-3"
-                                >
-                                    <LoaderIcon class="size-3.5 animate-spin" />
-                                    Searching {mode === "columns"
-                                        ? "CRM properties"
-                                        : "vocabularies"}…
-                                </div>
-                            {:else if vocabResults.length > 0}
-                                <div
-                                    class="space-y-0.5 max-h-48 overflow-y-auto"
-                                >
-                                    {#each vocabResults as result}
+                            </Popover.Trigger>
+                            <Popover.Content
+                                class="w-80 p-0"
+                                align="end"
+                                sideOffset={6}
+                            >
+                                <div class="border-b border-border p-2.5 space-y-2">
+                                    <div class="flex items-center gap-1.5">
                                         <button
                                             type="button"
-                                            onclick={() =>
-                                                applyResult(row, result)}
-                                            class="w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-md text-left text-xs hover:bg-background transition-colors"
+                                            onclick={() => (pickerMode = "search")}
+                                            class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
+                                            'search'
+                                                ? 'bg-foreground text-background'
+                                                : 'text-muted-foreground hover:bg-muted'}"
                                         >
-                                            <div class="min-w-0">
-                                                <span
-                                                    class="font-medium text-foreground truncate block"
-                                                    >{result.label}</span
-                                                >
-                                                <span
-                                                    class="text-muted-foreground"
-                                                    >{result.vocabulary}{#if result.context}
-                                                        — {result.context}{/if}</span
-                                                >
-                                            </div>
-                                            <span
-                                                class="shrink-0 text-muted-foreground font-mono text-[10px]"
-                                                >{Math.round(
-                                                    result.score * 100,
-                                                )}%</span
-                                            >
+                                            Search
                                         </button>
-                                    {/each}
+                                        <button
+                                            type="button"
+                                            onclick={startManualEdit}
+                                            class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
+                                            'manual'
+                                                ? 'bg-foreground text-background'
+                                                : 'text-muted-foreground hover:bg-muted'}"
+                                        >
+                                            Manual
+                                        </button>
+                                    </div>
+                                    {#if pickerMode === "search"}
+                                        <div class="relative">
+                                            <SearchIcon
+                                                class="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                                            />
+                                            <input
+                                                type="search"
+                                                value={manualSearchQuery}
+                                                oninput={(e) =>
+                                                    onManualQueryInput(
+                                                        (
+                                                            e.currentTarget as HTMLInputElement
+                                                        ).value,
+                                                    )}
+                                                placeholder="Search PeriodO, AAT, CRM…"
+                                                class="h-8 w-full rounded-md border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                            />
+                                        </div>
+                                    {:else}
+                                        <input
+                                            type="text"
+                                            bind:value={editConcept}
+                                            placeholder={uriPlaceholder}
+                                            class="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        />
+                                        <div class="flex justify-end gap-1.5">
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="xs"
+                                                onclick={closePicker}
+                                            >
+                                                Cancel
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="xs"
+                                                onclick={() => submitManual(row)}
+                                            >
+                                                Save
+                                            </Button>
+                                        </div>
+                                    {/if}
                                 </div>
-                            {:else}
-                                <p
-                                    class="text-xs text-muted-foreground py-2"
-                                >
-                                    No matching terms found.
-                                </p>
-                                <button
-                                    type="button"
-                                    onclick={() => startManual(row)}
-                                    class="text-xs text-primary hover:underline"
-                                >
-                                    Enter {mode === "columns"
-                                        ? "CRM property"
-                                        : "concept URI"} manually
-                                </button>
-                            {/if}
-                        </div>
-                    {/if}
+
+                                {#if pickerMode === "search"}
+                                    <div class="max-h-56 overflow-y-auto p-1.5">
+                                        {#if vocabLoading}
+                                            <div
+                                                class="flex items-center gap-2 px-2 py-4 text-xs text-muted-foreground"
+                                            >
+                                                <LoaderIcon
+                                                    class="size-3.5 animate-spin"
+                                                />
+                                                Searching…
+                                            </div>
+                                        {:else if vocabResults.length > 0}
+                                            {#each vocabResults as result}
+                                                <button
+                                                    type="button"
+                                                    onclick={() =>
+                                                        applyResult(row, result)}
+                                                    class="w-full flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
+                                                >
+                                                    <div class="min-w-0">
+                                                        <span
+                                                            class="font-medium text-foreground truncate block"
+                                                            >{result.label}</span
+                                                        >
+                                                        <span
+                                                            class="text-muted-foreground"
+                                                            >{result.vocabulary}{#if result.context}
+                                                                — {result.context}{/if}</span
+                                                        >
+                                                    </div>
+                                                    <span
+                                                        class="shrink-0 text-muted-foreground font-mono text-[10px]"
+                                                        >{Math.round(
+                                                            result.score * 100,
+                                                        )}%</span
+                                                    >
+                                                </button>
+                                            {/each}
+                                        {:else}
+                                            <p
+                                                class="px-2 py-4 text-xs text-muted-foreground"
+                                            >
+                                                {manualSearchQuery.trim()
+                                                    ? "No matching terms. Try another query or switch to Manual."
+                                                    : "Type to search vocabularies."}
+                                            </p>
+                                        {/if}
+                                    </div>
+                                {/if}
+                            </Popover.Content>
+                        </Popover.Root>
+                    </div>
                 {/each}
 
                 {#if filteredRows.length === 0}

@@ -142,6 +142,7 @@
     let articles = $state<Article[]>([]);
     let researchLoading = $state(false);
     let researchError = $state("");
+    let researchQuery = $state("");
 
     let similarOpen = $state(false);
     let similar = $state<SimilarItem[]>([]);
@@ -176,7 +177,8 @@
                     .replace(/\s+/g, " ")
                     .trim();
                 const q = [titleBits, tagBits].filter(Boolean).join(" ");
-                const query = encodeURIComponent(q || "archaeology");
+                researchQuery = q || "archaeology";
+                const query = encodeURIComponent(researchQuery);
                 const res = await fetch(
                     `https://api.openalex.org/works?search=${query}&per_page=6&sort=cited_by_count:desc`,
                 );
@@ -503,9 +505,28 @@
                             </div>
                         {:else if articles.length === 0}
                             <div
-                                class="py-8 text-center text-sm text-muted-foreground px-4"
+                                class="py-8 text-center text-sm text-muted-foreground px-4 space-y-2"
                             >
-                                No articles found for this project.
+                                <p>
+                                    OpenAlex found no works for
+                                    {#if researchQuery}
+                                        <span
+                                            class="font-mono text-xs rounded px-1 bg-secondary text-foreground"
+                                            >{researchQuery}</span
+                                        >
+                                    {:else}
+                                        this project
+                                    {/if}.
+                                </p>
+                                <p>
+                                    Related research uses the project title and
+                                    tags. Add place or topic tags in
+                                    <code
+                                        class="font-mono text-xs rounded px-1 bg-secondary"
+                                        >project.toml</code
+                                    >
+                                    (or Settings) to improve matches.
+                                </p>
                             </div>
                         {:else}
                             <div class="divide-y divide-border">
@@ -613,14 +634,14 @@
         font-size: 0.875em;
         background: color-mix(in oklab, var(--color-secondary) 70%, transparent);
         padding: 0.15em 0.4em;
-        border-radius: 3px;
+        border-radius: var(--radius-sm);
     }
     :global(.readme-content pre) {
         margin: 0.8em 0;
         padding: 1em 1.2em;
         background: color-mix(in oklab, var(--color-secondary) 50%, transparent);
         border: 1px solid var(--color-border);
-        border-radius: 6px;
+        border-radius: var(--radius-lg);
         overflow-x: auto;
         font-size: 0.85em;
         line-height: 1.5;

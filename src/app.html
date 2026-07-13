@@ -12,16 +12,19 @@
         />
         <script>
             (function () {
-                var bg = localStorage.getItem("redthread:theme:bgBase");
-                var bgL = {
-                    pitch: 0.07,
-                    dark: 0.12,
-                    dim: 0.2,
-                    stone: 0.9,
-                    paper: 0.97,
-                };
-                var isDark = bgL[bg] !== undefined ? bgL[bg] < 0.5 : true;
-                if (isDark) document.documentElement.classList.add("dark");
+                try {
+                    var bg = localStorage.getItem("redthread:theme:bgBase") || "dark";
+                    var hue = Number(localStorage.getItem("redthread:theme:accentHue") || "220");
+                    if (!isFinite(hue)) hue = 220;
+                    var bgL = { pitch: 0.07, dark: 0.12, dim: 0.2, stone: 0.9, paper: 0.97 }[bg];
+                    if (bgL == null) bgL = 0.12;
+                    var dark = bgL < 0.5;
+                    var root = document.documentElement;
+                    if (dark) root.classList.add("dark");
+                    else root.classList.remove("dark");
+                    root.style.setProperty("--accent-hue", String(hue));
+                    root.style.setProperty("--bg-l", String(bgL));
+                } catch (e) {}
             })();
         </script>
         %sveltekit.head%

@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { browser } from "$app/environment";
-    import { isDark } from "$lib/stores/theme.svelte";
+    import { isDark, mapColors, themePrefs } from "$lib/stores/theme.svelte";
 
     type Props = {
         bbox: string;
@@ -19,11 +19,15 @@
     });
 
     $effect(() => {
+        themePrefs.accentHue;
+        themePrefs.bgBase;
         if (!mounted || !container || !browser) return;
 
         let cleanup: (() => void) | undefined;
+        let cancelled = false;
 
         import("leaflet").then(async ({ default: L }) => {
+            if (cancelled || !container) return;
             await import("leaflet/dist/leaflet.css");
 
             const map = L.map(container!, {
@@ -36,21 +40,19 @@
             }).setView([0, 0], 1);
 
             const dark = isDark();
+            const colors = mapColors();
             L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
                 maxZoom: 19,
             }).addTo(map);
-            if (dark) {
-                container!.classList.add("leaflet-dark");
-            }
+            container!.classList.toggle("leaflet-dark", dark);
 
             try {
                 const geojson = JSON.parse(bbox);
-                const bboxColor = dark ? "#93c5fd" : "#2563eb";
                 L.geoJSON(geojson, {
                     style: {
-                        color: bboxColor,
+                        color: colors.stroke,
                         weight: 3,
-                        fillColor: bboxColor,
+                        fillColor: colors.marker,
                         fillOpacity: dark ? 0.2 : 0.15,
                     },
                 }).addTo(map);
@@ -62,7 +64,10 @@
             cleanup = () => map.remove();
         });
 
-        return () => cleanup?.();
+        return () => {
+            cancelled = true;
+            cleanup?.();
+        };
     });
 </script>
 

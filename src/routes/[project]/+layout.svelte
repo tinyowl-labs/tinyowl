@@ -95,7 +95,7 @@
     <div class="flex flex-1 min-h-0">
         <!-- Desktop sidebar (hidden on mobile) -->
         <aside
-            class="hidden md:flex shrink-0 border-r border-border bg-background flex-col transition-all duration-200 {collapsed
+            class="hidden md:flex shrink-0 border-r border-border glass-panel flex-col transition-all duration-200 {collapsed
                 ? 'w-12'
                 : 'w-44'}"
         >

@@ -1,7 +1,18 @@
 import type { PageServerLoad } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
+import {
+  formatBBox,
+  hasActiveSearch,
+  parseSearchParams,
+} from "$lib/search/params";
 
-type SearchProject = {
+export type SearchMatchHit = {
+  entity_type: string;
+  column_name: string;
+  local_value: string;
+};
+
+export type SearchProject = {
   slug: string;
   title: string;
   description: string | null;
@@ -9,80 +20,69 @@ type SearchProject = {
   table_count: number;
   bbox: string | null;
   match_detail: string;
+  match_snippet?: string;
+  match_hits?: SearchMatchHit[];
   distance_m?: number;
-};
-
-type EntityResult = {
-  entity_type: string;
-  entity_id: string;
-  column_name: string;
-  match_value: string;
-  project_slug: string;
+  tags_manual?: string[];
+  tags_auto?: string[];
+  date_start?: number | null;
+  date_end?: number | null;
+  date_start_label?: string | null;
+  date_end_label?: string | null;
 };
 
 export const load: PageServerLoad = async ({ url, locals, fetch }) => {
-  const q = url.searchParams.get("q")?.trim();
-  const lat = url.searchParams.get("lat");
-  const lng = url.searchParams.get("lng");
-  const radius = url.searchParams.get("radius");
-  const dateFrom = url.searchParams.get("date_from");
-  const dateTo = url.searchParams.get("date_to");
+  const parsed = parseSearchParams(url);
+  const active = hasActiveSearch(parsed);
 
-  if (!q && !lat && !dateFrom && !dateTo)
+  if (!active) {
     return {
-      query: q ?? "",
+      query: parsed.q,
       lat: null,
       lng: null,
       radius: null,
+      bbox: null,
       dateFrom: null,
       dateTo: null,
-      projects: [],
-      entities: {},
+      projects: [] as SearchProject[],
+      accessToken: null as string | null,
     };
+  }
 
   const accessToken = await locals.getAccessToken();
   const headers: Record<string, string> = {};
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
-  // Build search URL with optional spatial + temporal params
   const params = new URLSearchParams();
-  if (q) params.set("q", q);
-  if (lat) params.set("lat", lat);
-  if (lng) params.set("lng", lng);
-  if (radius) params.set("radius", radius);
-  if (dateFrom) params.set("date_from", dateFrom);
-  if (dateTo) params.set("date_to", dateTo);
-  const searchUrl = `${TINYOWL_CORE_URL}/api/v1/search?${params.toString()}`;
+  if (parsed.q) params.set("q", parsed.q);
+  if (parsed.bbox) {
+    params.set("bbox", formatBBox(parsed.bbox));
+  } else if (parsed.lat != null && parsed.lng != null) {
+    params.set("lat", String(parsed.lat));
+    params.set("lng", String(parsed.lng));
+    if (parsed.radius != null) params.set("radius", String(parsed.radius));
+  }
+  if (parsed.dateFrom != null) params.set("date_from", String(parsed.dateFrom));
+  if (parsed.dateTo != null) params.set("date_to", String(parsed.dateTo));
 
-  // Stage 1: find matching projects
   let projects: SearchProject[] = [];
   try {
-    const res = await fetch(searchUrl, { headers });
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/search?${params.toString()}`,
+      { headers },
+    );
     if (res.ok) projects = (await res.json()) ?? [];
   } catch (_) {}
 
-  // Stage 2: search entities in top 3 matching projects (only with text query)
-  const entities: Record<string, EntityResult[]> = {};
-  if (q) {
-    for (const proj of (projects ?? []).slice(0, 3)) {
-      try {
-        const res = await fetch(
-          `${TINYOWL_CORE_URL}/api/v1/projects/${proj.slug}/search-entities?q=${encodeURIComponent(q)}&limit=5`,
-          { headers },
-        );
-        if (res.ok) entities[proj.slug] = await res.json();
-      } catch (_) {}
-    }
-  }
-
   return {
-    query: q ?? "",
-    lat: lat ? parseFloat(lat) : null,
-    lng: lng ? parseFloat(lng) : null,
-    radius: radius ? parseInt(radius) : null,
-    dateFrom: dateFrom ? parseInt(dateFrom) : null,
-    dateTo: dateTo ? parseInt(dateTo) : null,
+    query: parsed.q,
+    lat: parsed.lat,
+    lng: parsed.lng,
+    radius: parsed.radius,
+    bbox: parsed.bbox,
+    dateFrom: parsed.dateFrom,
+    dateTo: parsed.dateTo,
     projects,
-    entities,
+    accessToken,
   };
 };

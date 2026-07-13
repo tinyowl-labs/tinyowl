@@ -94,6 +94,11 @@ const LS = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function oklch(l: number, c: number, h: number, a?: number): string {
+	const base = `oklch(${l.toFixed(3)} ${c.toFixed(3)} ${h.toFixed(1)}`;
+	return a == null ? `${base})` : `${base} / ${a.toFixed(3)})`;
+}
+
 function readFromStorage(): ThemePreferences {
 	if (typeof localStorage === 'undefined') return { ...DEFAULTS };
 
@@ -112,34 +117,105 @@ function readFromStorage(): ThemePreferences {
 	};
 }
 
+/**
+ * Push theme preferences into CSS custom properties consumed by app.css / Tailwind.
+ * This is what makes Appearance settings affect the whole UI.
+ */
 export function applyTheme(prefs: ThemePreferences): void {
 	if (typeof document === 'undefined') return;
 
 	const root = document.documentElement;
 	const bgL = BG_L[prefs.bgBase];
-	const isDark = bgL < 0.5;
-	const fgL = isDark ? 0.95 : 0.1;
+	const isDarkMode = bgL < 0.5;
+	const hue = prefs.accentHue;
 	const radii = RADIUS_VALUES[prefs.radius];
 	const blurs = BLUR_VALUES[prefs.blur];
 
-	root.style.setProperty('--accent-hue', String(prefs.accentHue));
+	const fgL = isDarkMode ? 0.95 : 0.12;
+	const bgC = isDarkMode ? 0.012 : 0.008;
+	const fgC = isDarkMode ? 0.01 : 0.02;
+	const mutedL = isDarkMode ? Math.min(bgL + 0.07, 0.28) : Math.max(bgL - 0.05, 0.88);
+	const secondaryL = isDarkMode ? Math.min(bgL + 0.05, 0.24) : Math.max(bgL - 0.035, 0.9);
+	const borderL = isDarkMode ? Math.min(bgL + 0.1, 0.32) : Math.max(bgL - 0.1, 0.78);
+	const primaryL = isDarkMode ? 0.68 : 0.48;
+	const primaryC = 0.17;
+	const destructiveL = isDarkMode ? 0.55 : 0.5;
+
+	const background = oklch(bgL, bgC, hue);
+	const foreground = oklch(fgL, fgC, hue);
+	const card = oklch(isDarkMode ? Math.min(bgL + 0.025, 0.2) : bgL, bgC, hue);
+	const secondary = oklch(secondaryL, bgC * 1.2, hue);
+	const muted = oklch(mutedL, bgC, hue);
+	const mutedFg = oklch(isDarkMode ? 0.68 : 0.42, fgC, hue);
+	const border = oklch(borderL, bgC * 1.4, hue);
+	const primary = oklch(primaryL, primaryC, hue);
+	const primaryFg = oklch(isDarkMode ? 0.98 : 0.99, 0.01, hue);
+	const accent = oklch(isDarkMode ? Math.min(bgL + 0.08, 0.3) : Math.max(bgL - 0.06, 0.86), bgC * 1.5, hue);
+	const ring = primary;
+	const destructive = oklch(destructiveL, 0.19, 25);
+	const destructiveFg = oklch(0.98, 0.01, 25);
+
+	root.style.setProperty('--accent-hue', String(hue));
 	root.style.setProperty('--bg-l', String(bgL));
 	root.style.setProperty('--fg-l', String(fgL));
+
+	root.style.setProperty('--background', background);
+	root.style.setProperty('--foreground', foreground);
+	root.style.setProperty('--card', card);
+	root.style.setProperty('--card-foreground', foreground);
+	root.style.setProperty('--popover', card);
+	root.style.setProperty('--popover-foreground', foreground);
+	root.style.setProperty('--primary', primary);
+	root.style.setProperty('--primary-foreground', primaryFg);
+	root.style.setProperty('--secondary', secondary);
+	root.style.setProperty('--secondary-foreground', foreground);
+	root.style.setProperty('--muted', muted);
+	root.style.setProperty('--muted-foreground', mutedFg);
+	root.style.setProperty('--accent', accent);
+	root.style.setProperty('--accent-foreground', foreground);
+	root.style.setProperty('--destructive', destructive);
+	root.style.setProperty('--destructive-foreground', destructiveFg);
+	root.style.setProperty('--border', border);
+	root.style.setProperty('--input', border);
+	root.style.setProperty('--ring', ring);
+
+	// Leaflet overlays — same accent as UI chrome (resolve to rgb for SVG fills)
+	root.style.setProperty('--map-marker', primary);
+	root.style.setProperty(
+		'--map-marker-stroke',
+		oklch(
+			isDarkMode ? Math.max(primaryL - 0.12, 0.45) : Math.min(primaryL + 0.08, 0.4),
+			primaryC,
+			hue
+		)
+	);
+	// Result pins: same hue, slightly brighter/dimmer so they stay on-brand
+	root.style.setProperty(
+		'--map-result',
+		oklch(isDarkMode ? Math.min(primaryL + 0.08, 0.82) : Math.max(primaryL - 0.06, 0.38), primaryC * 0.95, hue)
+	);
+
 	root.style.setProperty('--blur-panel', blurs.panel);
 	root.style.setProperty('--blur-dock', blurs.dock);
 	root.style.setProperty('--blur-overlay', blurs.overlay);
 	root.style.setProperty('--panel-bg-opacity', blurs.panelOpacity);
 	root.style.setProperty('--dock-bg-opacity', blurs.dockOpacity);
 	root.style.setProperty('--overlay-bg-opacity', blurs.overlayOpacity);
+
+	root.style.setProperty('--theme-radius-xs', radii.xs);
+	root.style.setProperty('--theme-radius-sm', radii.sm);
+	root.style.setProperty('--theme-radius-md', radii.md);
+	root.style.setProperty('--theme-radius-lg', radii.lg);
+	root.style.setProperty('--theme-radius-xl', radii.xl);
+
+	// Keep aliases used by some components (e.g. button rounded-[min(var(--radius-md),…)])
 	root.style.setProperty('--radius-xs', radii.xs);
 	root.style.setProperty('--radius-sm', radii.sm);
 	root.style.setProperty('--radius-md', radii.md);
 	root.style.setProperty('--radius-lg', radii.lg);
 	root.style.setProperty('--radius-xl', radii.xl);
 
-	// Keep the dark class in sync so existing dark: Tailwind variants still work
-	// during the Phase 2 component migration
-	root.classList.toggle('dark', isDark);
+	root.classList.toggle('dark', isDarkMode);
 }
 
 function persistTheme(prefs: ThemePreferences): void {
@@ -152,10 +228,6 @@ function persistTheme(prefs: ThemePreferences): void {
 
 // ─── Reactive store ───────────────────────────────────────────────────────────
 
-// Initialise directly from localStorage when the module loads in the browser.
-// On the server (SSR) localStorage is undefined so we fall back to DEFAULTS.
-// This means prefs are correct before any $effect or onMount runs, which
-// prevents HMR / hot-reload from clobbering persisted values.
 function getInitialPrefs(): ThemePreferences {
 	if (typeof localStorage === 'undefined') return { ...DEFAULTS };
 	return readFromStorage();
@@ -171,13 +243,63 @@ export function isDark(): boolean {
 	return BG_L[prefs.bgBase] < 0.5;
 }
 
+/** Read a live CSS custom property from :root (post-applyTheme). */
+export function readCssVar(name: string, fallback = ''): string {
+	if (typeof document === 'undefined') return fallback;
+	const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+	return v || fallback;
+}
+
+/**
+ * Resolve any CSS color (incl. oklch / var()) to rgb()/rgba() for Leaflet SVG fills,
+ * which are unreliable with modern color functions in some browsers.
+ */
+export function resolveCssColor(cssColor: string, fallback = '#3b82f6'): string {
+	if (typeof document === 'undefined' || !cssColor) return fallback;
+	const probe = document.createElement('span');
+	probe.style.color = cssColor;
+	probe.style.position = 'absolute';
+	probe.style.pointerEvents = 'none';
+	probe.style.opacity = '0';
+	document.documentElement.appendChild(probe);
+	const resolved = getComputedStyle(probe).color;
+	probe.remove();
+	return resolved && resolved !== 'rgba(0, 0, 0, 0)' ? resolved : fallback;
+}
+
+/** Marker / stroke / result colors for Leaflet overlays (rgb, matching UI primary). */
+export function mapColors() {
+	const markerRaw = readCssVar('--map-marker', readCssVar('--primary', '#3b82f6'));
+	const strokeRaw = readCssVar('--map-marker-stroke', markerRaw);
+	const resultRaw = readCssVar('--map-result', markerRaw);
+	const linkRaw = readCssVar('--primary', markerRaw);
+	const mutedRaw = readCssVar('--muted-foreground', '#888888');
+	const fgRaw = readCssVar('--foreground', '#111111');
+	const cardRaw = readCssVar('--card', '#ffffff');
+	return {
+		marker: resolveCssColor(markerRaw, '#3b82f6'),
+		stroke: resolveCssColor(strokeRaw, '#1d4ed8'),
+		result: resolveCssColor(resultRaw, '#3b82f6'),
+		link: resolveCssColor(linkRaw, '#3b82f6'),
+		muted: resolveCssColor(mutedRaw, '#888888'),
+		fg: resolveCssColor(fgRaw, '#111111'),
+		card: resolveCssColor(cardRaw, '#ffffff')
+	};
+}
+
+/** Distinct layer colors derived from the current accent hue (rgb for Leaflet). */
+export function mapLayerPalette(count = 8): string[] {
+	const hue = prefs.accentHue;
+	const dark = isDark();
+	const l = dark ? 0.72 : 0.52;
+	const c = 0.16;
+	return Array.from({ length: count }, (_, i) =>
+		resolveCssColor(oklch(l, c, (hue + i * 45) % 360), '#3b82f6')
+	);
+}
+
 /**
  * Update a single preference, apply it to the DOM, and persist to localStorage.
- * This is the only place persistTheme should be called.
- *
- * Note: to also sync to Supabase after a batch of changes, call
- * `pushThemeToSupabase()` explicitly — it is intentionally NOT called here
- * to avoid per-keypress network traffic and infinite-loop risks.
  */
 export function setPreference<K extends keyof ThemePreferences>(
 	key: K,
@@ -185,20 +307,28 @@ export function setPreference<K extends keyof ThemePreferences>(
 ): void {
 	prefs[key] = value;
 	persistTheme(prefs);
+	applyTheme(prefs);
 }
 
 // ─── Supabase sync ────────────────────────────────────────────────────────────
 
-/**
- * Pull theme preferences FROM Supabase and apply them, overriding both the
- * reactive store and localStorage.  Call this on login / session restore.
- * Fails silently on network errors or when the user is not authenticated
- * (401 / 403 responses are ignored).
- */
+export async function pushThemeToSupabase(): Promise<void> {
+	try {
+		const response = await fetch('/api/user-preferences/theme', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ themePreferences: { ...prefs } })
+		});
+		if (!response.ok) return;
+	} catch (e) {
+		console.warn('[theme] pushThemeToSupabase failed:', e);
+	}
+}
+
 export async function pullThemeFromSupabase(): Promise<void> {
 	try {
 		const response = await fetch('/api/user-preferences/theme');
-		if (!response.ok) return; // 401/403/5xx — not signed in or server error
+		if (!response.ok) return;
 
 		const payload = (await response.json()) as {
 			themePreferences?: Partial<ThemePreferences>;
@@ -206,8 +336,6 @@ export async function pullThemeFromSupabase(): Promise<void> {
 		const remote = payload?.themePreferences;
 		if (!remote || typeof remote !== 'object') return;
 
-		// Validate and apply each key via setPreference so localStorage is kept
-		// in sync as well (setPreference calls persistTheme internally).
 		if (typeof remote.accentHue === 'number') {
 			setPreference('accentHue', Math.max(0, Math.min(360, remote.accentHue)));
 		}
@@ -221,8 +349,6 @@ export async function pullThemeFromSupabase(): Promise<void> {
 			setPreference('blur', remote.blur);
 		}
 
-		// Explicitly apply CSS vars in case we're running outside a reactive
-		// $effect (e.g. the very first onMount before the effect has scheduled).
 		applyTheme(prefs);
 	} catch (e) {
 		console.warn('[theme] pullThemeFromSupabase failed:', e);

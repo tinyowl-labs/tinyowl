@@ -13,6 +13,7 @@
     import SchemaTableNode from "./SchemaTableNode.svelte";
     import Loader2Icon from "@lucide/svelte/icons/loader-2";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
+    import { isDark, themePrefs } from "$lib/stores/theme.svelte";
 
     export type SchemaColumn = { name: string; type: string; pk?: boolean };
     export type SchemaTable = {
@@ -46,6 +47,12 @@
     const nodeTypes: NodeTypes = {
         schemaTable: SchemaTableNode,
     };
+
+    // Follow Appearance prefs, not OS "system" preference.
+    const flowColorMode = $derived.by(() => {
+        themePrefs.bgBase;
+        return isDark() ? "dark" : "light";
+    });
 
     function layout(
         tables: SchemaTable[],
@@ -213,12 +220,24 @@
             nodesConnectable={false}
             elementsSelectable={true}
             proOptions={{ hideAttribution: true }}
-            colorMode="system"
+            colorMode={flowColorMode}
             class="schema-flow"
         >
-            <Background gap={18} size={1} />
+            <Background
+                gap={18}
+                size={1}
+                bgColor="var(--background)"
+                patternColor="var(--border)"
+            />
             <Controls />
-            <MiniMap pannable zoomable />
+            <MiniMap
+                pannable
+                zoomable
+                bgColor="var(--card)"
+                maskColor="color-mix(in oklab, var(--foreground) 12%, transparent)"
+                nodeColor="var(--secondary)"
+                nodeStrokeColor="var(--border)"
+            />
         </SvelteFlow>
     </div>
     <p class="mt-2 text-[11px] text-muted-foreground">
@@ -240,6 +259,13 @@
     :global(.schema-flow) {
         width: 100%;
         height: 100%;
+        background: var(--background) !important;
+    }
+    :global(.schema-flow .svelte-flow__pane),
+    :global(.schema-flow .svelte-flow__viewport),
+    :global(.schema-flow .svelte-flow__renderer),
+    :global(.schema-flow .svelte-flow__background) {
+        background: var(--background) !important;
     }
     :global(.schema-flow .svelte-flow__edge-path) {
         stroke-width: 2.5px !important;
@@ -271,12 +297,9 @@
         fill: var(--color-primary);
         stroke: var(--color-primary);
     }
-    :global(.schema-flow .svelte-flow__minimap) {
-        background: hsl(from var(--color-secondary) h s l / 0.8);
-    }
     :global(.schema-flow .svelte-flow__controls) {
         border: 1px solid var(--color-border);
-        border-radius: 6px;
+        border-radius: var(--radius-md);
         overflow: hidden;
         box-shadow: none;
     }
@@ -284,5 +307,13 @@
         background: var(--color-card);
         border-bottom: 1px solid var(--color-border);
         fill: var(--color-foreground);
+    }
+    :global(.schema-flow .svelte-flow__controls-button:hover) {
+        background: var(--color-accent);
+    }
+    :global(.schema-flow .svelte-flow__minimap) {
+        background: var(--color-card) !important;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
     }
 </style>

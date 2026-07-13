@@ -22,7 +22,7 @@
     :global(.readme-content) {
         font-size: 0.9375rem;
         line-height: 1.7;
-        color: hsl(var(--foreground));
+        color: var(--foreground);
         max-width: none;
     }
 
@@ -31,8 +31,8 @@
         font-weight: 600;
         margin: 1.5em 0 0.5em;
         padding-bottom: 0.3em;
-        border-bottom: 1px solid hsl(var(--border));
-        color: hsl(var(--foreground));
+        border-bottom: 1px solid var(--border);
+        color: var(--foreground);
         line-height: 1.3;
     }
     :global(.readme-content h1:first-child) {
@@ -43,22 +43,22 @@
         font-weight: 600;
         margin: 1.8em 0 0.4em;
         padding-bottom: 0.25em;
-        border-bottom: 1px solid hsl(var(--border));
-        color: hsl(var(--foreground));
+        border-bottom: 1px solid var(--border);
+        color: var(--foreground);
         line-height: 1.3;
     }
     :global(.readme-content h3) {
         font-size: 1.15rem;
         font-weight: 600;
         margin: 1.4em 0 0.3em;
-        color: hsl(var(--foreground));
+        color: var(--foreground);
         line-height: 1.3;
     }
     :global(.readme-content h4) {
         font-size: 1rem;
         font-weight: 600;
         margin: 1.2em 0 0.2em;
-        color: hsl(var(--foreground));
+        color: var(--foreground);
     }
     :global(.readme-content p) {
         margin: 0.8em 0;
@@ -70,7 +70,7 @@
         font-weight: 600;
     }
     :global(.readme-content a) {
-        color: hsl(var(--primary));
+        color: var(--primary);
         text-decoration: none;
     }
     :global(.readme-content a:hover) {
@@ -96,9 +96,9 @@
     :global(.readme-content blockquote) {
         margin: 0.8em 0;
         padding: 0.5em 1em;
-        border-left: 4px solid hsl(var(--border));
-        background: hsl(var(--secondary) / 0.5);
-        color: hsl(var(--muted-foreground));
+        border-left: 4px solid var(--border);
+        background: color-mix(in oklab, var(--secondary) 50%, transparent);
+        color: var(--muted-foreground);
     }
     :global(.readme-content blockquote p) {
         margin: 0.3em 0;
@@ -108,16 +108,16 @@
             ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
             monospace;
         font-size: 0.875em;
-        background: hsl(var(--secondary) / 0.7);
+        background: color-mix(in oklab, var(--secondary) 70%, transparent);
         padding: 0.15em 0.4em;
-        border-radius: 3px;
+        border-radius: var(--radius-sm);
     }
     :global(.readme-content pre) {
         margin: 0.8em 0;
         padding: 1em 1.2em;
-        background: hsl(var(--secondary) / 0.5);
-        border: 1px solid hsl(var(--border));
-        border-radius: 6px;
+        background: color-mix(in oklab, var(--secondary) 50%, transparent);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
         overflow-x: auto;
         font-size: 0.85em;
         line-height: 1.5;
@@ -134,29 +134,29 @@
         font-size: 0.9em;
     }
     :global(.readme-content thead th) {
-        background: hsl(var(--secondary) / 0.6);
+        background: color-mix(in oklab, var(--secondary) 60%, transparent);
         font-weight: 600;
         text-align: left;
         padding: 0.5em 0.75em;
-        border: 1px solid hsl(var(--border));
+        border: 1px solid var(--border);
         font-size: 0.9em;
     }
     :global(.readme-content tbody td) {
         padding: 0.4em 0.75em;
-        border: 1px solid hsl(var(--border));
+        border: 1px solid var(--border);
         vertical-align: top;
     }
     :global(.readme-content tbody tr:nth-child(even)) {
-        background: hsl(var(--secondary) / 0.3);
+        background: color-mix(in oklab, var(--secondary) 30%, transparent);
     }
     :global(.readme-content hr) {
         margin: 1.5em 0;
         border: none;
-        border-top: 1px solid hsl(var(--border));
+        border-top: 1px solid var(--border);
     }
     :global(.readme-content img) {
         max-width: 100%;
         height: auto;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
     }
 </style>

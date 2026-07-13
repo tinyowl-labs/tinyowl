@@ -11,7 +11,7 @@
     import { type ColumnDef, createColumnHelper } from "@tanstack/table-core";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
-    import { onMount, untrack } from "svelte";
+    import { untrack } from "svelte";
     import LayerMap from "$lib/components/dashboard/LayerMap.svelte";
     import SchemaGraph, {
         type SchemaTable,
@@ -39,6 +39,7 @@
     const layerParam = $derived((data?.layer as string) ?? "");
     const highlightId = $derived((data?.highlight as string) ?? "");
     const highlightPage = $derived((data?.highlightPage as number) ?? 0);
+    const viewParam = $derived((data?.view as string) ?? "");
     const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
 
@@ -147,18 +148,26 @@
                 : (tableNames[0] ?? ""),
         ),
     );
+
+    // Keep tab in sync with ?layer= from media/search deep links.
     $effect(() => {
-        if (!activeTab && tableNames.length > 0) {
+        if (layerParam && tableNames.includes(layerParam)) {
+            activeTab = layerParam;
+        } else if (!activeTab && tableNames.length > 0) {
             activeTab = tableNames[0];
         }
     });
 
     function handleTabChange(value: string) {
-        if (value === layerParam) return;
+        if (value === activeTab && value === layerParam) return;
         activeTab = value;
         const params = new URLSearchParams();
         params.set("layer", value);
-        if (highlightId) params.set("highlight", highlightId);
+        params.set("view", viewMode === "schema" ? "table" : viewMode);
+        // Keep highlight only while staying on the highlighted layer.
+        if (highlightId && value === layerParam) {
+            params.set("highlight", highlightId);
+        }
         goto(`/${$page.params.project}/layers?${params.toString()}`, {
             replaceState: true,
             noScroll: true,
@@ -174,7 +183,42 @@
     }
 
     type ViewMode = "schema" | "table" | "map";
-    let viewMode = $state<ViewMode>("schema");
+    let viewMode = $state<ViewMode>(
+        untrack(() => {
+            if (
+                viewParam === "map" ||
+                viewParam === "table" ||
+                viewParam === "schema"
+            ) {
+                return viewParam;
+            }
+            return highlightId ? "table" : "schema";
+        }),
+    );
+
+    // Deep links (media / search) set view + highlight — honour them on nav.
+    $effect(() => {
+        if (
+            viewParam === "map" ||
+            viewParam === "table" ||
+            viewParam === "schema"
+        ) {
+            viewMode = viewParam;
+        } else if (highlightId) {
+            viewMode = "table";
+        }
+    });
+
+    function setViewMode(mode: ViewMode) {
+        viewMode = mode;
+        const params = new URLSearchParams($page.url.searchParams);
+        params.set("view", mode);
+        if (activeTab) params.set("layer", activeTab);
+        goto(`/${$page.params.project}/layers?${params.toString()}`, {
+            replaceState: true,
+            noScroll: true,
+        });
+    }
     let mapLayers = $state<
         {
             name: string;
@@ -215,6 +259,15 @@
         }
 
         mapLayers = results;
+        // Ensure the highlighted layer is visible for deep links.
+        if (highlightId) {
+            const target = layerParam || activeTab;
+            if (target) {
+                mapLayers = mapLayers.map((l) =>
+                    l.name === target ? { ...l, visible: true } : l,
+                );
+            }
+        }
         mapLoading = false;
     }
 
@@ -253,18 +306,23 @@
     let currentPage = $state(untrack(() => highlightPage));
 
     $effect(() => {
-        if (activeTab && activeTab !== layerParam) {
+        currentPage = highlightPage;
+    });
+
+    $effect(() => {
+        if (activeTab && activeTab !== layerParam && !highlightId) {
             currentPage = 0;
         }
     });
 
-    onMount(() => {
-        if (highlightId) {
-            setTimeout(() => {
-                const el = tableContainer?.querySelector(".bg-accent");
-                el?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }, 200);
-        }
+    $effect(() => {
+        if (!highlightId || viewMode !== "table") return;
+        // Scroll highlighted row into view after table paints.
+        const t = setTimeout(() => {
+            const el = tableContainer?.querySelector(".bg-accent");
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 200);
+        return () => clearTimeout(t);
     });
 </script>
 
@@ -293,7 +351,7 @@
                     class="ml-2 flex items-center rounded-md border border-border overflow-hidden"
                 >
                     <button
-                        onclick={() => (viewMode = "schema")}
+                        onclick={() => setViewMode("schema")}
                         class="px-2.5 py-1 text-xs {viewMode === 'schema'
                             ? 'bg-secondary text-foreground font-medium'
                             : 'text-muted-foreground hover:text-foreground'} transition-colors"
@@ -302,7 +360,7 @@
                         <WaypointsIcon class="size-3.5" />
                     </button>
                     <button
-                        onclick={() => (viewMode = "table")}
+                        onclick={() => setViewMode("table")}
                         class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
                         'table'
                             ? 'bg-secondary text-foreground font-medium'
@@ -312,7 +370,7 @@
                         <TableIcon class="size-3.5" />
                     </button>
                     <button
-                        onclick={() => (viewMode = "map")}
+                        onclick={() => setViewMode("map")}
                         class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
                         'map'
                             ? 'bg-secondary text-foreground font-medium'
@@ -345,7 +403,13 @@
             </div>
         {:else if viewMode === "map"}
             <div class="flex-1 min-h-0">
-                <LayerMap layers={mapLayers} loading={mapLoading} {rows} />
+                <LayerMap
+                    layers={mapLayers}
+                    loading={mapLoading}
+                    {rows}
+                    {highlightId}
+                    highlightLayer={layerParam || activeTab}
+                />
             </div>
         {:else}
             <div class="flex-1 min-h-0">

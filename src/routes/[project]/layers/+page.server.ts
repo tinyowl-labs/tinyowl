@@ -15,6 +15,13 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   const slug = params.project;
   const layer = url.searchParams.get("layer") ?? "";
   const highlight = url.searchParams.get("highlight") ?? "";
+  const viewRaw = url.searchParams.get("view") ?? "";
+  const view =
+    viewRaw === "map" || viewRaw === "table" || viewRaw === "schema"
+      ? viewRaw
+      : highlight
+        ? "table"
+        : "";
 
   const accessToken = await locals.getAccessToken();
   const headers: Record<string, string> = {};
@@ -88,6 +95,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     layer,
     highlight,
     highlightPage,
+    view,
     mediaByEntity,
     accessToken,
   };

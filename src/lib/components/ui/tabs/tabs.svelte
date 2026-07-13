@@ -16,12 +16,13 @@
         onValueChange?: (value: string) => void;
     } = $props();
 
-    $effect(() => {
-        if (value) onValueChange?.(value);
-    });
+    function handleChange(next: string) {
+        value = next;
+        onValueChange?.(next);
+    }
 </script>
 
-<BitsTabs.Root bind:value class={className}>
+<BitsTabs.Root {value} onValueChange={handleChange} class={className}>
     <BitsTabs.List
         class="flex w-full items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1"
     >

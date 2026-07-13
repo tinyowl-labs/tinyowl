@@ -516,7 +516,7 @@
                                     first.
                                 </p>
                                 <a
-                                    href="/settings"
+                                    href="/settings?tab=qfieldcloud"
                                     class="text-sm text-primary hover:underline"
                                     >Go to Settings</a
                                 >

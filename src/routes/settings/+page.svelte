@@ -1,7 +1,12 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
-    import { invalidateAll } from "$app/navigation";
+    import {
+        afterNavigate,
+        invalidateAll,
+        replaceState,
+    } from "$app/navigation";
     import { page } from "$app/stores";
+    import { untrack } from "svelte";
     import Header from "$lib/components/ui/header.svelte";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
@@ -16,7 +21,9 @@
     import {
         themePrefs,
         setPreference,
+        pushThemeToSupabase,
         ACCENT_PRESETS,
+        type ThemePreferences,
         type BgBase,
         type RadiusScale,
         type BlurScale,
@@ -37,8 +44,104 @@
     const qfieldLinks = $derived(data?.qfieldLinks ?? []);
     const cliTokens = $derived(data?.cliTokens ?? []);
 
-    let activeTab = $state("account");
+    const tabs = [
+        { value: "account", label: "Account" },
+        { value: "qfieldcloud", label: "QFieldCloud" },
+        { value: "tokens", label: "CLI tokens" },
+        { value: "appearance", label: "Appearance" },
+        { value: "security", label: "Security" },
+    ];
+    const tabValues = new Set(tabs.map((t) => t.value));
+
+    function tabFromUrl(url: URL = $page.url): string {
+        const t = url.searchParams.get("tab") ?? "";
+        return tabValues.has(t) ? t : "account";
+    }
+
+    let activeTab = $state(untrack(() => tabFromUrl()));
     let showQFieldConnect = $state(false);
+    let reconnectPrefill = $state<{
+        base_url: string;
+        username: string;
+        label: string;
+    } | null>(null);
+
+    // Sync tab when navigating into /settings?tab=… from another route.
+    // Ignore in-place query updates from our own replaceState (those race clicks).
+    afterNavigate(({ from, to }) => {
+        if (to?.url.pathname !== "/settings") return;
+        if (from?.url.pathname === "/settings") return;
+        activeTab = tabFromUrl(to.url);
+    });
+
+    function onTabChange(value: string) {
+        if (!tabValues.has(value) || value === activeTab) return;
+        activeTab = value;
+        const current = $page.url.searchParams.get("tab");
+        const currentNorm =
+            current && tabValues.has(current) ? current : "account";
+        if (currentNorm === value) return;
+        const url = new URL($page.url);
+        if (value === "account") url.searchParams.delete("tab");
+        else url.searchParams.set("tab", value);
+        try {
+            replaceState(`${url.pathname}${url.search}${url.hash}`, {});
+        } catch {
+            // Router not ready yet (first paint) — tab UI still updates via activeTab.
+        }
+    }
+
+    function setThemePreference<K extends keyof ThemePreferences>(
+        key: K,
+        value: ThemePreferences[K],
+    ) {
+        setPreference(key, value);
+        void pushThemeToSupabase();
+    }
+
+    function tokenExpiryHint(expiresAt: string | null | undefined): {
+        label: string;
+        urgent: boolean;
+    } | null {
+        if (!expiresAt) return null;
+        const exp = new Date(expiresAt).getTime();
+        if (Number.isNaN(exp)) return null;
+        const msLeft = exp - Date.now();
+        const days = 7 * 24 * 60 * 60 * 1000;
+        if (msLeft <= 0) {
+            return { label: "Token expired — reconnect to refresh.", urgent: true };
+        }
+        if (msLeft <= days) {
+            return {
+                label: `Token expires soon (${formatDate(expiresAt)}) — reconnect to refresh.`,
+                urgent: true,
+            };
+        }
+        return null;
+    }
+
+    function startReconnect(acct: {
+        base_url: string;
+        username: string;
+        label?: string | null;
+    }) {
+        reconnectPrefill = {
+            base_url: acct.base_url,
+            username: acct.username,
+            label: acct.label ?? "",
+        };
+        showQFieldConnect = true;
+    }
+
+    function toggleConnectForm() {
+        if (showQFieldConnect) {
+            showQFieldConnect = false;
+            reconnectPrefill = null;
+        } else {
+            reconnectPrefill = null;
+            showQFieldConnect = true;
+        }
+    }
 
     // Account
     let firstName = $state("");
@@ -193,14 +296,6 @@
         return new Date(ts).toLocaleString();
     }
 
-    const tabs = [
-        { value: "account", label: "Account" },
-        { value: "qfieldcloud", label: "QFieldCloud" },
-        { value: "tokens", label: "CLI tokens" },
-        { value: "appearance", label: "Appearance" },
-        { value: "security", label: "Security" },
-    ];
-
     const bgBases: { value: BgBase; label: string }[] = [
         { value: "pitch", label: "Pitch" },
         { value: "dark", label: "Dark" },
@@ -222,6 +317,7 @@
     $effect(() => {
         if (form?.success && form?.qfieldAction === "connected") {
             showQFieldConnect = false;
+            reconnectPrefill = null;
         }
     });
 </script>
@@ -244,7 +340,7 @@
                 </p>
             </header>
 
-            <Tabs bind:value={activeTab} {tabs}>
+            <Tabs value={activeTab} {tabs} onValueChange={onTabChange}>
                 {#snippet children(tabValue: string)}
                     {#if tabValue === "account"}
                         <div class="space-y-8 w-full">
@@ -358,9 +454,7 @@
                                         type="button"
                                         variant="outline"
                                         size="sm"
-                                        onclick={() =>
-                                            (showQFieldConnect =
-                                                !showQFieldConnect)}
+                                        onclick={toggleConnectForm}
                                     >
                                         {showQFieldConnect
                                             ? "Cancel"
@@ -401,6 +495,8 @@
                                                 name="base_url"
                                                 required
                                                 placeholder="https://app.qfield.cloud"
+                                                value={reconnectPrefill?.base_url ??
+                                                    ""}
                                             />
                                         </Field>
                                         <div class="grid grid-cols-2 gap-3">
@@ -414,6 +510,8 @@
                                                     name="username"
                                                     required
                                                     autocomplete="username"
+                                                    value={reconnectPrefill?.username ??
+                                                        ""}
                                                 />
                                             </Field>
                                             <Field>
@@ -438,15 +536,19 @@
                                                 type="text"
                                                 name="label"
                                                 placeholder="injserver"
+                                                value={reconnectPrefill?.label ??
+                                                    ""}
                                             />
                                         </Field>
                                         <p class="text-xs text-muted-foreground">
                                             Password is used once to obtain a
                                             token; it is not stored.
                                         </p>
-                                        <Button type="submit" size="sm"
-                                            >Connect</Button
-                                        >
+                                        <Button type="submit" size="sm">
+                                            {reconnectPrefill
+                                                ? "Reconnect"
+                                                : "Connect"}
+                                        </Button>
                                     </form>
                                 {/if}
 
@@ -464,6 +566,8 @@
                                             {@const links = linksForAccount(
                                                 acct.id,
                                             )}
+                                            {@const expiryHint =
+                                                tokenExpiryHint(acct.expires_at)}
                                             <div
                                                 class="rounded-lg border border-border p-4 bg-card space-y-3"
                                             >
@@ -491,34 +595,60 @@
                                                                 )}
                                                             </p>
                                                         {/if}
+                                                        {#if expiryHint}
+                                                            <p
+                                                                class="text-xs mt-1 {expiryHint.urgent
+                                                                    ? 'text-destructive'
+                                                                    : 'text-muted-foreground'}"
+                                                            >
+                                                                {expiryHint.label}
+                                                            </p>
+                                                        {/if}
                                                     </div>
-                                                    <form
-                                                        method="POST"
-                                                        action="?/disconnectQFieldCloud"
-                                                        use:enhance
+                                                    <div
+                                                        class="flex items-center gap-1 shrink-0"
                                                     >
-                                                        <input
-                                                            type="hidden"
-                                                            name="account_id"
-                                                            value={acct.id}
-                                                        />
                                                         <Button
-                                                            type="submit"
+                                                            type="button"
                                                             variant="ghost"
                                                             size="sm"
-                                                            class="text-muted-foreground hover:text-destructive"
-                                                            onclick={(e) => {
-                                                                if (
-                                                                    !confirm(
-                                                                        "Disconnect this Cloud account?",
-                                                                    )
-                                                                )
-                                                                    e.preventDefault();
-                                                            }}
+                                                            onclick={() =>
+                                                                startReconnect(
+                                                                    acct,
+                                                                )}
                                                         >
-                                                            Disconnect
+                                                            Reconnect
                                                         </Button>
-                                                    </form>
+                                                        <form
+                                                            method="POST"
+                                                            action="?/disconnectQFieldCloud"
+                                                            use:enhance
+                                                        >
+                                                            <input
+                                                                type="hidden"
+                                                                name="account_id"
+                                                                value={acct.id}
+                                                            />
+                                                            <Button
+                                                                type="submit"
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                class="text-muted-foreground hover:text-destructive"
+                                                                onclick={(
+                                                                    e,
+                                                                ) => {
+                                                                    if (
+                                                                        !confirm(
+                                                                            "Disconnect this Cloud account?",
+                                                                        )
+                                                                    )
+                                                                        e.preventDefault();
+                                                                }}
+                                                            >
+                                                                Disconnect
+                                                            </Button>
+                                                        </form>
+                                                    </div>
                                                 </div>
 
                                                 {#if links.length > 0}
@@ -753,14 +883,14 @@
                                     Background
                                 </h2>
                                 <p class="text-sm text-muted-foreground mb-4">
-                                    Stored in this browser only.
+                                    Synced to your account when signed in.
                                 </p>
                                 <div class="flex flex-wrap gap-2">
                                     {#each bgBases as opt}
                                         <button
                                             type="button"
                                             onclick={() =>
-                                                setPreference(
+                                                setThemePreference(
                                                     "bgBase",
                                                     opt.value,
                                                 )}
@@ -789,7 +919,7 @@
                                         <button
                                             type="button"
                                             onclick={() =>
-                                                setPreference(
+                                                setThemePreference(
                                                     "accentHue",
                                                     preset.hue,
                                                 )}
@@ -819,7 +949,7 @@
                                         <button
                                             type="button"
                                             onclick={() =>
-                                                setPreference(
+                                                setThemePreference(
                                                     "radius",
                                                     opt.value,
                                                 )}
@@ -845,7 +975,7 @@
                                         <button
                                             type="button"
                                             onclick={() =>
-                                                setPreference(
+                                                setThemePreference(
                                                     "blur",
                                                     opt.value,
                                                 )}

@@ -51,7 +51,7 @@
     <div class="flex flex-1 min-h-0">
         <!-- Desktop sidebar -->
         <aside
-            class="hidden lg:flex shrink-0 border-r border-border bg-background flex-col transition-all duration-200 {collapsed
+            class="hidden lg:flex shrink-0 border-r border-border glass-panel flex-col transition-all duration-200 {collapsed
                 ? 'w-12'
                 : 'w-56'}"
         >

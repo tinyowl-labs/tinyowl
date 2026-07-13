@@ -37,36 +37,34 @@
 
 <div class="flex min-h-screen items-center justify-center px-4">
     <div class="w-full max-w-sm text-center">
-        <h1
-            class="mb-4 text-lg font-semibold text-[#15110f] dark:text-[#f7f2ee]"
-        >
+        <h1 class="mb-4 text-lg font-semibold text-foreground">
             TinyOwl CLI
         </h1>
 
         {#if !data.user}
-            <p class="text-sm text-[#8b817c] dark:text-neutral-500">
+            <p class="text-sm text-muted-foreground">
                 Please
-                <a href="/auth/login" class="underline">sign in</a>
+                <a href="/auth/login" class="underline text-primary">sign in</a>
                 {" "}first, then return.
             </p>
         {:else if done}
             <div
-                class="rounded-lg border border-green-300 bg-green-50 p-4 text-left dark:border-green-800 dark:bg-green-950"
+                class="rounded-lg border border-border bg-secondary/50 p-4 text-left"
             >
-                <h2 class="font-semibold text-green-800 dark:text-green-300">
-                    Authorised
-                </h2>
-                <p class="mt-1 text-sm text-green-700 dark:text-green-400">
+                <h2 class="font-semibold text-foreground">Authorised</h2>
+                <p class="mt-1 text-sm text-muted-foreground">
                     You can close this page and return to your terminal.
                 </p>
             </div>
         {:else}
-            <p class="text-xs text-[#8b817c] dark:text-neutral-500">
+            <p class="text-xs text-muted-foreground">
                 Signed in as{" "}
-                <strong>{data.user.email ?? data.user.id}</strong>
+                <strong class="text-foreground"
+                    >{data.user.email ?? data.user.id}</strong
+                >
             </p>
 
-            <p class="mt-4 text-xs text-[#8b817c] dark:text-neutral-500">
+            <p class="mt-4 text-xs text-muted-foreground">
                 Enter the 8-character code shown in your terminal
             </p>
 
@@ -101,7 +99,7 @@
             </Button>
 
             {#if errorMsg}
-                <p class="mt-4 text-xs text-red-500">{errorMsg}</p>
+                <p class="mt-4 text-xs text-destructive">{errorMsg}</p>
             {/if}
         {/if}
     </div>

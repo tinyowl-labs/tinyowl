@@ -81,5 +81,5 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) mappings = await res.json();
   } catch (_) {}
 
-  return { tables, warnings, diffs, mappings };
+  return { tables, warnings, diffs, mappings, accessToken: accessToken ?? "" };
 };
