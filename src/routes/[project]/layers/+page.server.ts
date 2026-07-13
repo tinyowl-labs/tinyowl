@@ -18,12 +18,26 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   const layer = url.searchParams.get("layer") ?? "";
   const highlight = url.searchParams.get("highlight") ?? "";
   const viewRaw = url.searchParams.get("view") ?? "";
+  const dimRaw = url.searchParams.get("dim") ?? "";
+  // view=3d is the short form of view=map&dim=3d (dim kept for legacy links).
   const view =
-    viewRaw === "map" || viewRaw === "table" || viewRaw === "schema"
-      ? viewRaw
+    viewRaw === "3d" ||
+    viewRaw === "map" ||
+    viewRaw === "table" ||
+    viewRaw === "schema"
+      ? viewRaw === "3d"
+        ? "map"
+        : viewRaw
       : highlight
         ? "map"
         : "";
+  const dim =
+    viewRaw === "3d" || dimRaw === "3d"
+      ? "3d"
+      : dimRaw === "2d"
+        ? "2d"
+        : "";
+  const tileset = url.searchParams.get("tileset") ?? "";
 
   const accessToken = await locals.getAccessToken();
   const headers: Record<string, string> = {};
@@ -115,6 +129,8 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     highlight,
     highlightPage,
     view,
+    dim,
+    tileset,
     mediaByEntity,
     accessToken,
   };

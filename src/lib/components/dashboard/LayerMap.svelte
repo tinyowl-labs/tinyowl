@@ -7,6 +7,11 @@
         mapLayerPalette,
         themePrefs,
     } from "$lib/stores/theme.svelte";
+    import {
+        buildEntityPopupHtml,
+        featureEntityId,
+        isEntityHighlighted,
+    } from "./mapEntityPopup";
 
     type LayerData = {
         name: string;
@@ -20,6 +25,7 @@
         rows?: Record<string, Record<string, unknown>[]>;
         highlightId?: string;
         highlightLayer?: string;
+        onSelectEntity?: (layerName: string, entityId: string) => void;
     };
 
     let {
@@ -28,6 +34,7 @@
         rows = {},
         highlightId = "",
         highlightLayer = "",
+        onSelectEntity,
     }: Props = $props();
 
     let mapContainer = $state<HTMLDivElement>();
@@ -44,97 +51,54 @@
         return palette[idx % palette.length]!;
     }
 
-    function idsEqual(a: string, b: string): boolean {
-        return a.trim() === b.trim();
-    }
-
-    /** Prefer the named highlight layer when it exists; otherwise match by id anywhere. */
     function isHighlighted(layerName: string, entityId: string): boolean {
-        if (!highlightId || !entityId) return false;
-        if (!idsEqual(entityId, highlightId)) return false;
-        if (!highlightLayer) return true;
-        const namedExists = layers.some((l) => l.name === highlightLayer);
-        if (!namedExists) return true;
-        return layerName === highlightLayer;
-    }
-
-    function buildPopupContent(layerName: string, entityId: string): string {
-        const tableRows = rows[layerName] ?? [];
-        const entity = tableRows.find(
-            (r) =>
-                idsEqual(String(r.source_id ?? r.SOURCE_ID ?? ""), entityId),
-        );
-        if (!entity) {
-            return `<div class="text-sm"><strong>${escapeHtml(layerName)}</strong><br /><span class="font-mono text-xs map-popup-muted">${escapeHtml(entityId)}</span></div>`;
-        }
-
-        const fields = Object.entries(entity).filter(
-            ([k]) => !k.startsWith("_") && k !== "geom" && k !== "entity_type",
-        );
-
-        let html = `<div class="text-sm max-w-xs max-h-64 overflow-y-auto">`;
-        html += `<strong class="text-base">${escapeHtml(layerName)}</strong>`;
-        html += `<div class="font-mono text-[10px] map-popup-muted mb-2">${escapeHtml(entityId)}</div>`;
-
-        for (const [key, val] of fields) {
-            const label = key.replace(/_/g, " ");
-            const display =
-                val === null || val === undefined || val === ""
-                    ? '<span class="map-popup-muted italic">—</span>'
-                    : escapeHtml(String(val));
-            html += `<div class="mt-1"><span class="font-medium text-[11px]">${escapeHtml(label)}</span><br /><span class="text-xs break-words">${display}</span></div>`;
-        }
-        html += `</div>`;
-        return html;
-    }
-
-    function escapeHtml(s: string): string {
-        return s
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;");
-    }
-
-    function featureId(feature: GeoJSON.Feature): string {
-        return String(
-            feature.properties?.entity_id ??
-                feature.properties?.source_id ??
-                "",
+        return isEntityHighlighted(
+            layerName,
+            entityId,
+            highlightId,
+            highlightLayer,
+            layers.map((l) => l.name),
         );
     }
 
-    function latLngOfLayer(layer: LType.Layer): LType.LatLng | null {
-        const any = layer as any;
-        if (typeof any.getLatLng === "function") return any.getLatLng();
-        if (typeof any.getBounds === "function") {
-            const b = any.getBounds();
-            if (b?.isValid?.()) return b.getCenter();
-        }
-        return null;
-    }
-
-    function selectEntity(layerName: string, entityId: string, layer: LType.Layer) {
+    function selectEntity(
+        layerName: string,
+        entityId: string,
+        layer: LType.Layer,
+        notify = true,
+    ) {
         selectedLeafletLayer = layer;
         selectedLabel = `${layerName.replace(/_/g, " ")} · ${entityId}`;
-        const ll = latLngOfLayer(layer);
-        if (!map || !ll) {
-            (layer as any).openPopup?.();
+        if (notify) onSelectEntity?.(layerName, entityId);
+        (layer as any).bringToFront?.();
+        (layer as any).openPopup?.();
+    }
+
+    function applyHighlightFromUrl() {
+        if (!map || !L || !highlightId) {
+            if (!highlightId) selectedLabel = null;
             return;
         }
-        map.invalidateSize();
-        const targetZoom = Math.max(map.getZoom(), 16);
-        map.flyTo(ll, targetZoom, { duration: 0.55 });
-        // Open popup after the fly settles so it anchors correctly.
-        map.once("moveend", () => {
-            (layer as any).bringToFront?.();
-            (layer as any).openPopup?.();
-        });
-        // Fallback if already at destination (moveend may not fire).
-        setTimeout(() => {
-            (layer as any).bringToFront?.();
-            (layer as any).openPopup?.();
-        }, 650);
+        const prefer = highlightLayer || "";
+        let match: { name: string; layer: LType.Layer } | null = null;
+        for (let i = 0; i < geoLayers.length; i++) {
+            const name = layers[i]?.name;
+            if (!name) continue;
+            geoLayers[i]!.eachLayer((lyr) => {
+                if (match && prefer && match.name === prefer) return;
+                const feat = (lyr as any).feature as GeoJSON.Feature | undefined;
+                if (!feat) return;
+                if (featureEntityId(feat).trim() !== highlightId.trim()) return;
+                if (!match || name === prefer) {
+                    match = { name, layer: lyr };
+                }
+            });
+        }
+        if (!match) {
+            selectedLabel = `Entity ${highlightId} not found on map`;
+            return;
+        }
+        selectEntity(match.name, highlightId, match.layer, false);
     }
 
     onMount(() => {
@@ -159,7 +123,6 @@
                 maxZoom: 19,
             }).addTo(map);
 
-            // Layout may still be settling when first shown.
             requestAnimationFrame(() => map?.invalidateSize());
 
             if (layers.length > 0) updateLayers();
@@ -195,7 +158,7 @@
                     feature: GeoJSON.Feature,
                     latlng: LType.LatLng,
                 ) => {
-                    const id = featureId(feature);
+                    const id = featureEntityId(feature);
                     const hit = isHighlighted(name, id);
                     return L!.circleMarker(latlng, {
                         radius: hit ? 9 : 4,
@@ -207,7 +170,9 @@
                     });
                 },
                 style: (feature) => {
-                    const id = featureId(feature ?? ({ properties: {} } as any));
+                    const id = featureEntityId(
+                        feature ?? ({ properties: {} } as GeoJSON.Feature),
+                    );
                     const hit = isHighlighted(name, id);
                     return {
                         color: color,
@@ -219,13 +184,12 @@
                     feature: GeoJSON.Feature,
                     layer: LType.Layer,
                 ) => {
-                    const id = featureId(feature);
-                    layer.bindPopup(buildPopupContent(name, id), {
+                    const id = featureEntityId(feature);
+                    layer.bindPopup(buildEntityPopupHtml(name, id, rows), {
                         maxWidth: 320,
                     });
                     layer.on("click", () => {
-                        selectedLabel = `${name.replace(/_/g, " ")} · ${id}`;
-                        selectedLeafletLayer = layer;
+                        selectEntity(name, id, layer);
                     });
                     if (isHighlighted(name, id)) {
                         pendingSelect = {
@@ -246,19 +210,22 @@
 
         map.invalidateSize();
 
+        // Default framing: all layer bounds (never zoom to selection).
+        if (allBounds.isValid()) {
+            map.fitBounds(allBounds, { padding: [40, 40], maxZoom: 16 });
+        }
+
         if (pendingSelect) {
             selectEntity(
                 pendingSelect.layerName,
                 pendingSelect.entityId,
                 pendingSelect.layer,
+                false,
             );
+        } else if (highlightId) {
+            applyHighlightFromUrl();
         } else {
-            selectedLabel = highlightId
-                ? `Entity ${highlightId} not found on map`
-                : null;
-            if (allBounds.isValid()) {
-                map.fitBounds(allBounds, { padding: [40, 40], maxZoom: 16 });
-            }
+            selectedLabel = null;
         }
     }
 
@@ -274,19 +241,35 @@
         }
     }
 
+    /** Rebuild only when layer data / theme changes — not on ?highlight=. */
+    let layersDataKey = $derived(
+        layers
+            .map(
+                (l) =>
+                    `${l.name}:${l.visible}:${l.geojson?.features?.length ?? 0}`,
+            )
+            .join("|"),
+    );
+
     $effect(() => {
         themePrefs.accentHue;
         themePrefs.bgBase;
-        highlightId;
-        highlightLayer;
-        layers;
-        rows;
+        layersDataKey;
         if (mapContainer) {
             mapContainer.classList.toggle("leaflet-dark", isDark());
         }
         if (layers.length > 0 && map && L) {
             updateLayers();
         }
+    });
+
+    /** Selection sync from URL without tearing down GeoJSON. */
+    $effect(() => {
+        highlightId;
+        highlightLayer;
+        layersDataKey;
+        if (!map || !L) return;
+        applyHighlightFromUrl();
     });
 </script>
 

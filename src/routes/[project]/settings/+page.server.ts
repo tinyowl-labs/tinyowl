@@ -478,4 +478,23 @@ export const actions: Actions = {
     }
     return { success: true, qfieldAction: "unlinked" };
   },
+
+  syncQFieldCloud: async ({ locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", qfieldAction: "sync" };
+
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link/sync`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
+    if (!res.ok) {
+      return { error: `Failed: ${await res.text()}`, qfieldAction: "sync" };
+    }
+    return { success: true, qfieldAction: "sync_requested" };
+  },
 };

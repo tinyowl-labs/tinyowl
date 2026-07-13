@@ -17,6 +17,7 @@
     import CopyIcon from "@lucide/svelte/icons/copy";
     import CheckIcon from "@lucide/svelte/icons/check";
     import SparklesIcon from "@lucide/svelte/icons/sparkles";
+    import BoxIcon from "@lucide/svelte/icons/box";
     import { onMount } from "svelte";
     import { entityLayersHref } from "$lib/project/entityLink";
     import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
@@ -69,7 +70,14 @@
         care_note?: string | null;
     }
 
-    type TypeFilter = "all" | "image" | "video" | "audio" | "pdf" | "other";
+    type TypeFilter =
+        | "all"
+        | "image"
+        | "video"
+        | "audio"
+        | "pdf"
+        | "model"
+        | "other";
 
     let items = $state<MediaItem[]>([]);
     let totalItems = $state(0);
@@ -234,12 +242,31 @@
         return item.media_type === "application/pdf";
     }
 
+    function isTileset(item: MediaItem): boolean {
+        return (
+            item.media_type === "model/vnd.3dtiles" ||
+            item.media_type === "application/vnd.3dtiles+zip" ||
+            item.entities?.some((e) => e.entity_type === "tileset")
+        );
+    }
+
+    function openIn3D(hash: string) {
+        const slug = $page.params.project;
+        try {
+            sessionStorage.setItem("tinyowl:layers:focusTileset", hash);
+        } catch {
+            /* ignore */
+        }
+        goto(`/${slug}/layers?view=3d`);
+    }
+
     function linkedEntities(item: MediaItem) {
         return item.entities.filter(
             (e) =>
                 e.entity_id.trim() !== "" &&
                 e.entity_type.trim() !== "" &&
-                e.entity_type !== "unknown",
+                e.entity_type !== "unknown" &&
+                e.entity_type !== "tileset",
         );
     }
 
@@ -463,7 +490,8 @@
                 const video = body.counts.video ?? 0;
                 const audio = body.counts.audio ?? 0;
                 const application = body.counts.application ?? 0;
-                totalItems = image + video + audio + application;
+                const model = body.counts.model ?? 0;
+                totalItems = image + video + audio + application + model;
             }
             items = [...items, ...batch];
             offset = at + batch.length;
@@ -513,6 +541,7 @@
         { id: "all", label: "All" },
         { id: "image", label: "Photos" },
         { id: "pdf", label: "Reports" },
+        { id: "model", label: "3D" },
         { id: "video", label: "Videos" },
         { id: "audio", label: "Audio" },
         { id: "other", label: "Other" },
@@ -522,6 +551,9 @@
         if (id === "all") return totalItems || items.length || null;
         if (id === "pdf") {
             return typeCounts.pdf != null ? typeCounts.pdf : null;
+        }
+        if (id === "model") {
+            return typeCounts.model != null ? typeCounts.model : null;
         }
         if (id === "other") {
             const app = typeCounts.application ?? 0;
@@ -570,6 +602,11 @@
                             prefer = "video";
                         else if (info?.mediaType?.startsWith("audio/"))
                             prefer = "audio";
+                        else if (
+                            info?.mediaType === "model/vnd.3dtiles" ||
+                            info?.mediaType === "application/vnd.3dtiles+zip"
+                        )
+                            prefer = "model";
                         reloadShelf(
                             prefer ? { preferType: prefer } : undefined,
                         );
@@ -658,7 +695,9 @@
                         <p class="text-sm text-muted-foreground">
                             {typeFilter === "all"
                                 ? "Push data with photos or grey literature PDFs to see them here, linked to the entities they document."
-                                : "Try another filter, or upload files that match this type."}
+                                : typeFilter === "model"
+                                  ? "Upload a georeferenced .3tz (collaborator+) to view it in Layers → 3D."
+                                  : "Try another filter, or upload files that match this type."}
                         </p>
                     </div>
                 </div>
@@ -670,6 +709,7 @@
                         {@const isImage = item.media_type.startsWith("image/")}
                         {@const isVideo = item.media_type.startsWith("video/")}
                         {@const isAudio = item.media_type.startsWith("audio/")}
+                        {@const tileset = isTileset(item)}
                         {@const pdf = isPdf(item)}
                         {@const imgLoaded = loadedImages.has(item.hash)}
                         {@const imgFailed = failedImages.has(item.hash)}
@@ -680,13 +720,16 @@
                             ondblclick={() => {
                                 selectItem(item);
                                 if (isImage) openViewer();
+                                else if (tileset) openIn3D(item.hash);
                             }}
                             class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 outline-none transition-[box-shadow] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {active
                                 ? ''
                                 : 'hover:shadow-[inset_0_0_0_1px_var(--color-border)]'}"
-                            title={item.entities[0]
-                                ? `${entityLabel(item.entities[0].entity_type)} · ${item.entities[0].entity_id}`
-                                : item.media_type}
+                            title={tileset
+                                ? `3D model · ${shortHash(item.hash)}`
+                                : item.entities[0]
+                                  ? `${entityLabel(item.entities[0].entity_type)} · ${item.entities[0].entity_id}`
+                                  : item.media_type}
                         >
                             {#if isImage}
                                 {#if !imgLoaded && !imgFailed}
@@ -724,6 +767,9 @@
                                     {:else if pdf}
                                         <FileTextIcon class="size-6 opacity-70" />
                                         <span class="text-[10px] uppercase tracking-wide opacity-70">PDF</span>
+                                    {:else if tileset}
+                                        <BoxIcon class="size-6 opacity-70" />
+                                        <span class="text-[10px] uppercase tracking-wide opacity-70">3D</span>
                                     {:else}
                                         <FileWarningIcon
                                             class="size-6 opacity-70"
@@ -782,6 +828,7 @@
                 {@const isVideo = selected.media_type.startsWith("video/")}
                 {@const isAudio = selected.media_type.startsWith("audio/")}
                 {@const pdf = isPdf(selected)}
+                {@const tileset = isTileset(selected)}
                 {@const links = linkedEntities(selected)}
 
                 <div
@@ -791,30 +838,45 @@
                         <p class="text-xs font-medium text-foreground truncate">
                             {pdf
                                 ? "Report"
-                                : isImage
-                                  ? "Photo"
-                                  : isVideo
-                                    ? "Video"
-                                    : isAudio
-                                      ? "Audio"
-                                      : "File"}
+                                : tileset
+                                  ? "3D model"
+                                  : isImage
+                                    ? "Photo"
+                                    : isVideo
+                                      ? "Video"
+                                      : isAudio
+                                        ? "Audio"
+                                        : "File"}
                         </p>
                         <p class="text-[11px] text-muted-foreground truncate">
                             {formatBytes(selected.file_size)}
                         </p>
                     </div>
-                    {#if pdf}
-                        <a
-                            href={mediaUrl(selected)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors shrink-0"
-                            title="Open in new tab"
-                        >
-                            <ExternalLinkIcon class="size-3" />
-                            Open
-                        </a>
-                    {/if}
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        {#if tileset}
+                            <button
+                                type="button"
+                                onclick={() => openIn3D(selected.hash)}
+                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                                title="Open in Layers 3D"
+                            >
+                                <BoxIcon class="size-3" />
+                                Open in 3D
+                            </button>
+                        {/if}
+                        {#if pdf}
+                            <a
+                                href={mediaUrl(selected)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors"
+                                title="Open in new tab"
+                            >
+                                <ExternalLinkIcon class="size-3" />
+                                Open
+                            </a>
+                        {/if}
+                    </div>
                 </div>
 
                 <!-- Preview: click / hover expands images & PDFs -->
@@ -872,6 +934,25 @@
                                     controls
                                     class="w-full"
                                 ></audio>
+                            </div>
+                        {:else if tileset}
+                            <div
+                                class="flex h-full flex-col items-center justify-center gap-3 px-4 bg-secondary/40"
+                            >
+                                <BoxIcon
+                                    class="size-8 text-muted-foreground/50"
+                                />
+                                <p class="text-xs text-muted-foreground text-center">
+                                    Georeferenced 3D model package
+                                </p>
+                                <button
+                                    type="button"
+                                    onclick={() => openIn3D(selected.hash)}
+                                    class="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background hover:opacity-90"
+                                >
+                                    <BoxIcon class="size-3.5" />
+                                    Open in 3D
+                                </button>
                             </div>
                         {:else}
                             <div

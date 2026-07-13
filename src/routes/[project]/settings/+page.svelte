@@ -573,9 +573,14 @@
                             <p
                                 class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
                             >
-                                {form.qfieldAction === "linked"
-                                    ? "Linked to QFieldCloud."
-                                    : "Unlinked from QFieldCloud."}
+                                {#if form.qfieldAction === "linked"}
+                                    Linked to QFieldCloud.
+                                {:else if form.qfieldAction === "sync_requested"}
+                                    Sync requested. The bridge will force
+                                    re-pull the Cloud package on its next pass.
+                                {:else}
+                                    Unlinked from QFieldCloud.
+                                {/if}
                             </p>
                         {/if}
 
@@ -596,6 +601,11 @@
                                         · {qfieldLink.username}
                                     {/if}
                                 </p>
+                                {#if qfieldLink.sync_pending || qfieldLink.sync_requested_at}
+                                    <p class="text-xs text-amber-700">
+                                        Sync pending since {qfieldLink.sync_requested_at}
+                                    </p>
+                                {/if}
                                 {#if qfieldLink.last_synced_at}
                                     <p class="text-xs text-muted-foreground">
                                         Last bridge sync: {qfieldLink.last_synced_at}
@@ -607,28 +617,48 @@
                                     </p>
                                 {/if}
                                 {#if canLinkQField}
-                                    <form
-                                        method="POST"
-                                        action="?/unlinkQFieldCloud"
-                                        use:enhance
-                                        class="pt-2"
-                                    >
-                                        <Button
-                                            type="submit"
-                                            size="sm"
-                                            variant="outline"
-                                            onclick={(e) => {
-                                                if (
-                                                    !confirm(
-                                                        "Unlink this Cloud project?",
-                                                    )
-                                                )
-                                                    e.preventDefault();
-                                            }}
+                                    <div class="flex flex-wrap gap-2 pt-2">
+                                        <form
+                                            method="POST"
+                                            action="?/syncQFieldCloud"
+                                            use:enhance
                                         >
-                                            Unlink
-                                        </Button>
-                                    </form>
+                                            <Button
+                                                type="submit"
+                                                size="sm"
+                                                disabled={Boolean(
+                                                    qfieldLink.sync_pending ||
+                                                        qfieldLink.sync_requested_at,
+                                                )}
+                                            >
+                                                {qfieldLink.sync_pending ||
+                                                qfieldLink.sync_requested_at
+                                                    ? "Sync pending…"
+                                                    : "Sync now"}
+                                            </Button>
+                                        </form>
+                                        <form
+                                            method="POST"
+                                            action="?/unlinkQFieldCloud"
+                                            use:enhance
+                                        >
+                                            <Button
+                                                type="submit"
+                                                size="sm"
+                                                variant="outline"
+                                                onclick={(e) => {
+                                                    if (
+                                                        !confirm(
+                                                            "Unlink this Cloud project?",
+                                                        )
+                                                    )
+                                                        e.preventDefault();
+                                                }}
+                                            >
+                                                Unlink
+                                            </Button>
+                                        </form>
+                                    </div>
                                 {/if}
                             </div>
                         {:else if qfieldAccounts.length === 0}

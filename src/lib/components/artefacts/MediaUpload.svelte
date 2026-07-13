@@ -76,6 +76,22 @@
         suggestions = [];
     }
 
+    function isTilesetFile(file: File): boolean {
+        const name = file.name.toLowerCase();
+        return (
+            name.endsWith(".3tz") ||
+            file.type === "model/vnd.3dtiles" ||
+            file.type === "application/vnd.3dtiles+zip"
+        );
+    }
+
+    function mediaTypeForUpload(file: File): string {
+        if (isTilesetFile(file)) return "model/vnd.3dtiles";
+        if (file.type) return file.type;
+        if (file.name.toLowerCase().endsWith(".pdf")) return "application/pdf";
+        return "application/octet-stream";
+    }
+
     async function uploadFile(file: File) {
         if (!accessToken) {
             error = "Sign in to upload";
@@ -88,16 +104,23 @@
             const buf = await file.arrayBuffer();
             const hash = await sha256Hex(buf);
             status = `Uploading ${file.name}…`;
+            const mediaType = mediaTypeForUpload(file);
             const headers: Record<string, string> = {
                 Authorization: `Bearer ${accessToken}`,
                 "X-TinyOwl-Media-Hash": hash,
-                "X-TinyOwl-Media-Type": file.type || "application/octet-stream",
+                "X-TinyOwl-Media-Type": mediaType,
             };
-            if (entityType.trim()) {
+            if (entityType.trim() && !isTilesetFile(file)) {
                 headers["X-TinyOwl-Entity-Type"] = entityType.trim();
             }
-            if (entityId.trim()) {
+            if (entityId.trim() && !isTilesetFile(file)) {
                 headers["X-TinyOwl-Entity-Id"] = entityId.trim();
+            }
+            if (isTilesetFile(file)) {
+                headers["X-TinyOwl-Media-Label"] = file.name.replace(
+                    /\.3tz$/i,
+                    "",
+                );
             }
             const res = await fetch(`/api/v1/projects/${projectSlug}/media`, {
                 method: "POST",
@@ -108,8 +131,10 @@
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error ?? `HTTP ${res.status}`);
             }
-            status = `Stored ${file.name}`;
-            onUploaded({ mediaType: file.type || "application/octet-stream" });
+            status = isTilesetFile(file)
+                ? `Queued ${file.name} for 3D ingest`
+                : `Stored ${file.name}`;
+            onUploaded({ mediaType });
         } catch (e: any) {
             error = e?.message ?? "Upload failed";
             status = "";
@@ -124,10 +149,11 @@
             (f) =>
                 f.type.startsWith("image/") ||
                 f.type === "application/pdf" ||
-                f.name.toLowerCase().endsWith(".pdf"),
+                f.name.toLowerCase().endsWith(".pdf") ||
+                isTilesetFile(f),
         );
         if (files.length === 0) {
-            error = "Choose an image or PDF";
+            error = "Choose an image, PDF, or georeferenced .3tz";
             return;
         }
         (async () => {
@@ -239,7 +265,7 @@
                 <input
                     type="file"
                     class="sr-only"
-                    accept="image/*,application/pdf,.pdf"
+                    accept="image/*,application/pdf,.pdf,.3tz,model/vnd.3dtiles"
                     multiple
                     disabled={busy}
                     onchange={(e) => onFiles(e.currentTarget.files)}
@@ -269,7 +295,7 @@
             {/if}
             {#if dragOver}
                 <span class="w-full text-[11px] text-muted-foreground"
-                    >Drop images or PDFs here</span
+                    >Drop images, PDFs, or .3tz here</span
                 >
             {/if}
         </div>

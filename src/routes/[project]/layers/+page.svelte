@@ -4,6 +4,8 @@
     import MapIcon from "@lucide/svelte/icons/map";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import DownloadIcon from "@lucide/svelte/icons/download";
+    import MaximizeIcon from "@lucide/svelte/icons/maximize-2";
+    import MinimizeIcon from "@lucide/svelte/icons/minimize-2";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { DataTable } from "$lib/components/ui/data-table/index.js";
     import { renderComponent } from "$lib/components/ui/data-table/render-helpers.js";
@@ -13,11 +15,14 @@
     import { page } from "$app/stores";
     import { untrack } from "svelte";
     import LayerMap from "$lib/components/dashboard/LayerMap.svelte";
+    import type { ProjectTileset } from "$lib/components/dashboard/tilesetTypes";
     import SchemaGraph, {
         type SchemaTable,
         type SchemaEdge,
     } from "$lib/components/dashboard/SchemaGraph.svelte";
     import RowNum from "$lib/components/ui/row-num.svelte";
+    import { browser } from "$app/environment";
+    import { onMount } from "svelte";
 
     let { data } = $props();
 
@@ -40,6 +45,7 @@
     const highlightId = $derived((data?.highlight as string) ?? "");
     const highlightPage = $derived((data?.highlightPage as number) ?? 0);
     const viewParam = $derived((data?.view as string) ?? "");
+    const dimParam = $derived((data?.dim as string) ?? "");
     const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
 
@@ -166,26 +172,64 @@
         }
     });
 
+    /** Compact layers URL — interactive selection stays in client state. */
+    function layersSearch(opts: {
+        mode: ViewMode;
+        dim?: MapDim;
+        layer?: string;
+        highlight?: string;
+    }): string {
+        const params = new URLSearchParams();
+        if (opts.mode === "map" && opts.dim === "3d") {
+            params.set("view", "3d");
+        } else if (opts.mode === "map") {
+            params.set("view", "map");
+        } else {
+            params.set("view", opts.mode);
+        }
+        // highlight only when explicitly passed (media/search deep links keep it in the URL)
+        if (opts.highlight) {
+            params.set("highlight", opts.highlight);
+            if (opts.layer) params.set("layer", opts.layer);
+        } else if (opts.mode !== "map" && opts.layer) {
+            params.set("layer", opts.layer);
+        }
+        const q = params.toString();
+        return q ? `?${q}` : "";
+    }
+
     function handleTabChange(value: string) {
         if (value === activeTab && value === resolvedLayer) return;
         activeTab = value;
-        const params = new URLSearchParams();
-        params.set("layer", value);
-        params.set("view", viewMode === "schema" ? "table" : viewMode);
-        // Keep highlight only while staying on the highlighted layer.
-        if (highlightId && value === resolvedLayer) {
-            params.set("highlight", highlightId);
-        }
-        goto(`/${$page.params.project}/layers?${params.toString()}`, {
-            replaceState: true,
-            noScroll: true,
-        });
+        goto(
+            `/${$page.params.project}/layers${layersSearch({
+                mode: viewMode === "schema" ? "table" : viewMode,
+                dim: mapDim,
+                layer: value,
+            })}`,
+            { replaceState: true, noScroll: true },
+        );
     }
 
+    /** Interactive selection — client state only (URL highlight is for media/search deep links). */
+    let selectedId = $state("");
+    let selectedLayer = $state("");
+    let lastUrlHighlight = $state("");
+
+    $effect(() => {
+        const id = highlightId;
+        if (id && id !== lastUrlHighlight) {
+            lastUrlHighlight = id;
+            selectedId = id;
+            selectedLayer = resolvedLayer || layerParam || activeTab;
+            if (selectedLayer) activeTab = selectedLayer;
+        }
+    });
+
     function rowClassName(row: Record<string, unknown>): string {
-        if (!highlightId) return "";
+        if (!selectedId) return "";
         const id = (row.source_id ?? row.SOURCE_ID ?? "") as string;
-        return id === highlightId
+        return id === selectedId
             ? "bg-accent ring-1 ring-inset ring-primary/20"
             : "";
     }
@@ -217,14 +261,103 @@
 
     function setViewMode(mode: ViewMode) {
         viewMode = mode;
-        const params = new URLSearchParams($page.url.searchParams);
-        params.set("view", mode);
-        if (activeTab) params.set("layer", activeTab);
-        goto(`/${$page.params.project}/layers?${params.toString()}`, {
-            replaceState: true,
-            noScroll: true,
-        });
+        goto(
+            `/${$page.params.project}/layers${layersSearch({
+                mode,
+                dim: mapDim,
+                layer: activeTab,
+            })}`,
+            { replaceState: true, noScroll: true },
+        );
     }
+
+    type MapDim = "2d" | "3d";
+    let mapDim = $state<MapDim>(
+        untrack(() => (dimParam === "3d" ? "3d" : "2d")),
+    );
+    let selectedTilesetHash = $state("");
+    let tilesets = $state<ProjectTileset[]>([]);
+    let tilesetsLoading = $state(false);
+    let mapChrome = $state<HTMLDivElement>();
+    let mapFullscreen = $state(false);
+
+    /** Cesium island — loaded only in the browser after mount. */
+    let LayerSceneComp = $state<
+        typeof import("$lib/components/dashboard/LayerScene.svelte").default | null
+    >(null);
+
+    onMount(() => {
+        if (!browser) return;
+        try {
+            const focus = sessionStorage.getItem("tinyowl:layers:focusTileset");
+            if (focus) {
+                selectedTilesetHash = focus;
+                sessionStorage.removeItem("tinyowl:layers:focusTileset");
+            }
+        } catch {
+            /* ignore */
+        }
+        void import("$lib/components/dashboard/LayerScene.svelte").then((m) => {
+            LayerSceneComp = m.default;
+        });
+    });
+
+    $effect(() => {
+        mapDim = dimParam === "3d" ? "3d" : "2d";
+    });
+
+    function setMapDim(dim: MapDim) {
+        mapDim = dim;
+        viewMode = "map";
+        goto(
+            `/${$page.params.project}/layers${layersSearch({
+                mode: "map",
+                dim,
+            })}`,
+            { replaceState: true, noScroll: true },
+        );
+    }
+
+    function selectTileset(hash: string) {
+        selectedTilesetHash = hash;
+    }
+
+    function setEntityHighlight(layerName: string, entityId: string) {
+        if (entityId === selectedId && layerName === selectedLayer) return;
+        selectedId = entityId;
+        selectedLayer = layerName;
+        if (layerName) activeTab = layerName;
+    }
+
+    function clearEntityHighlight() {
+        selectedId = "";
+        selectedLayer = "";
+    }
+
+    async function toggleMapFullscreen() {
+        const el = mapChrome;
+        if (!el) return;
+        try {
+            if (!document.fullscreenElement) {
+                await el.requestFullscreen();
+                mapFullscreen = true;
+            } else {
+                await document.exitFullscreen();
+                mapFullscreen = false;
+            }
+        } catch {
+            /* ignore */
+        }
+    }
+
+    $effect(() => {
+        const onFs = () => {
+            mapFullscreen = Boolean(document.fullscreenElement);
+        };
+        document.addEventListener("fullscreenchange", onFs);
+        return () => document.removeEventListener("fullscreenchange", onFs);
+    });
+
     let mapLayers = $state<
         {
             name: string;
@@ -245,11 +378,11 @@
 
     async function loadAllGeoJSON() {
         mapLoading = true;
-        mapLayers = [];
         const slug = $page.params.project;
+        const names = untrack(() => tableNames);
         const results: typeof mapLayers = [];
 
-        for (const name of tableNames) {
+        for (const name of names) {
             try {
                 const res = await fetch(
                     `/api/v1/projects/${slug}/layers/${name}/geojson`,
@@ -265,14 +398,20 @@
         }
 
         mapLayers = results;
-        // Ensure the highlighted layer is visible for deep links.
-        if (highlightId && resolvedLayer) {
-            mapLayers = mapLayers.map((l) =>
-                l.name === resolvedLayer ? { ...l, visible: true } : l,
-            );
-        }
         mapLoading = false;
     }
+
+    /** Ensure selected layer is visible — no refetch. */
+    $effect(() => {
+        const id = selectedId;
+        const layer = selectedLayer;
+        if (!id || !layer || mapLayers.length === 0) return;
+        const idx = mapLayers.findIndex((l) => l.name === layer);
+        if (idx >= 0 && !mapLayers[idx]!.visible) {
+            mapLayers[idx]!.visible = true;
+            mapLayers = [...mapLayers];
+        }
+    });
 
     async function loadSchema() {
         if (schemaLoaded || schemaLoading) return;
@@ -296,12 +435,55 @@
         }
     }
 
-    $effect(() => {
-        if (viewMode === "map" && tableNames.length > 0) {
-            loadAllGeoJSON();
+    async function loadTilesets() {
+        tilesetsLoading = true;
+        try {
+            const slug = $page.params.project;
+            const res = await fetch(`/api/v1/projects/${slug}/tilesets`, {
+                headers: authHeaders(),
+            });
+            if (res.ok) {
+                const body = await res.json();
+                tilesets = Array.isArray(body) ? body : [];
+                if (
+                    selectedTilesetHash &&
+                    !tilesets.some((t) => t.hash === selectedTilesetHash)
+                ) {
+                    selectedTilesetHash = "";
+                }
+                if (
+                    !selectedTilesetHash &&
+                    tilesets.some((t) => t.ingest_status === "ready")
+                ) {
+                    selectedTilesetHash =
+                        tilesets.find((t) => t.ingest_status === "ready")
+                            ?.hash ?? "";
+                }
+            } else {
+                tilesets = [];
+            }
+        } catch (_) {
+            tilesets = [];
+        } finally {
+            tilesetsLoading = false;
         }
-        if (viewMode === "schema" && tableNames.length > 0) {
-            loadSchema();
+    }
+
+    // Stable key so ?highlight= URL updates (which re-run page load) don't refetch.
+    const tableNamesKey = $derived(tableNames.join("\0"));
+
+    $effect(() => {
+        const mode = viewMode;
+        const dim = mapDim;
+        const namesKey = tableNamesKey;
+        if (mode === "map" && namesKey) {
+            void loadAllGeoJSON();
+        }
+        if (mode === "map" && dim === "3d") {
+            void loadTilesets();
+        }
+        if (mode === "schema" && namesKey) {
+            void loadSchema();
         }
     });
 
@@ -313,13 +495,13 @@
     });
 
     $effect(() => {
-        if (activeTab && activeTab !== layerParam && !highlightId) {
+        if (activeTab && activeTab !== layerParam && !selectedId) {
             currentPage = 0;
         }
     });
 
     $effect(() => {
-        if (!highlightId || viewMode !== "table") return;
+        if (!selectedId || viewMode !== "table") return;
         // Scroll highlighted row into view after table paints.
         const t = setTimeout(() => {
             const el = tableContainer?.querySelector(".bg-accent");
@@ -383,6 +565,33 @@
                         <WaypointsIcon class="size-3.5" />
                     </button>
                 </div>
+                {#if viewMode === "map"}
+                    <div
+                        class="ml-2 flex items-center rounded-md border border-border overflow-hidden"
+                    >
+                        <button
+                            type="button"
+                            onclick={() => setMapDim("2d")}
+                            class="px-2.5 py-1 text-xs {mapDim === '2d'
+                                ? 'bg-secondary text-foreground font-medium'
+                                : 'text-muted-foreground hover:text-foreground'} transition-colors"
+                            title="2D map"
+                        >
+                            2D
+                        </button>
+                        <button
+                            type="button"
+                            onclick={() => setMapDim("3d")}
+                            class="px-2.5 py-1 text-xs border-l border-border {mapDim ===
+                            '3d'
+                                ? 'bg-secondary text-foreground font-medium'
+                                : 'text-muted-foreground hover:text-foreground'} transition-colors"
+                            title="3D models"
+                        >
+                            3D
+                        </button>
+                    </div>
+                {/if}
             </div>
         </div>
         <p class="mt-0.5 text-sm text-muted-foreground">
@@ -392,21 +601,70 @@
                 · {entityCount} entities{/if}
             {#if viewMode === "schema" && schemaEdges.length > 0}
                 · {schemaEdges.length} relations{/if}
+            {#if viewMode === "map" && mapDim === "3d" && tilesets.length > 0}
+                · {tilesets.filter((t) => t.ingest_status === "ready").length}
+                3D model{tilesets.filter((t) => t.ingest_status === "ready")
+                    .length === 1
+                    ? ""
+                    : "s"}{/if}
         </p>
     </div>
 
-    {#if tableNames.length > 0}
-        {#if viewMode === "map"}
-            <div class="flex-1 min-h-0">
+    {#if viewMode === "map"}
+        <div
+            bind:this={mapChrome}
+            class="flex-1 min-h-0 relative rounded-lg overflow-hidden border border-border bg-background {mapFullscreen
+                ? 'rounded-none border-0'
+                : ''}"
+        >
+            {#if mapDim === "3d"}
+                {#if browser && LayerSceneComp}
+                    <LayerSceneComp
+                        projectSlug={$page.params.project ?? ""}
+                        {accessToken}
+                        {tilesets}
+                        selectedHash={selectedTilesetHash}
+                        loading={tilesetsLoading}
+                        layers={mapLayers}
+                        {rows}
+                        highlightId={selectedId}
+                        highlightLayer={selectedLayer || activeTab}
+                        onSelectTileset={selectTileset}
+                        onSelectEntity={setEntityHighlight}
+                        onClearEntity={clearEntityHighlight}
+                    />
+                {:else}
+                    <div
+                        class="flex h-full items-center justify-center text-xs text-muted-foreground"
+                    >
+                        Starting 3D…
+                    </div>
+                {/if}
+            {:else}
                 <LayerMap
                     layers={mapLayers}
                     loading={mapLoading}
                     {rows}
-                    {highlightId}
-                    highlightLayer={resolvedLayer || activeTab}
+                    highlightId={selectedId}
+                    highlightLayer={selectedLayer || activeTab}
+                    onSelectEntity={setEntityHighlight}
                 />
-            </div>
-        {:else if viewMode === "table"}
+            {/if}
+            <button
+                type="button"
+                class="absolute bottom-3 left-3 z-[1000] rounded-md border border-border bg-background/95 p-1.5 text-muted-foreground shadow-sm hover:text-foreground backdrop-blur-sm"
+                title={mapFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                onclick={toggleMapFullscreen}
+            >
+                {#if mapFullscreen}
+                    <MinimizeIcon class="size-3.5" />
+                {:else}
+                    <MaximizeIcon class="size-3.5" />
+                {/if}
+            </button>
+        </div>
+    {:else if viewMode === "table"}
+        {#if tableNames.length > 0}
             <div class="flex-1 min-h-0">
                 <Tabs value={activeTab} onValueChange={handleTabChange} {tabs}>
                     {#snippet children(tabValue: string)}
@@ -419,6 +677,16 @@
                                     data={tableRows}
                                     {rowClassName}
                                     pageIndex={currentPage}
+                                    onRowClick={(row) => {
+                                        const id = String(
+                                            row.source_id ??
+                                                row.SOURCE_ID ??
+                                                "",
+                                        );
+                                        if (id) {
+                                            setEntityHighlight(tabValue, id);
+                                        }
+                                    }}
                                 />
                             </div>
                         {:else}
@@ -437,6 +705,22 @@
                 </Tabs>
             </div>
         {:else}
+            <div
+                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+            >
+                <LayersIcon class="size-10 text-muted-foreground/30 mb-3" />
+                <p class="text-sm text-muted-foreground">
+                    No GeoPackage data yet. Run
+                    <code
+                        class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
+                        >tinyowl push</code
+                    >
+                    to upload.
+                </p>
+            </div>
+        {/if}
+    {:else if viewMode === "schema"}
+        {#if tableNames.length > 0}
             <div class="flex-1 min-h-0 flex flex-col">
                 <SchemaGraph
                     tables={schemaTables}
@@ -444,20 +728,20 @@
                     loading={schemaLoading}
                 />
             </div>
+        {:else}
+            <div
+                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+            >
+                <LayersIcon class="size-10 text-muted-foreground/30 mb-3" />
+                <p class="text-sm text-muted-foreground">
+                    No GeoPackage data yet. Run
+                    <code
+                        class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
+                        >tinyowl push</code
+                    >
+                    to upload.
+                </p>
+            </div>
         {/if}
-    {:else}
-        <div
-            class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-        >
-            <LayersIcon class="size-10 text-muted-foreground/30 mb-3" />
-            <p class="text-sm text-muted-foreground">
-                No GeoPackage data yet. Run
-                <code
-                    class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
-                    >tinyowl push</code
-                >
-                to upload.
-            </p>
-        </div>
     {/if}
 </div>

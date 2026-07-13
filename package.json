@@ -39,6 +39,7 @@
 		"@supabase/supabase-js": "^2.110.0",
 		"@tanstack/table-core": "^8.21.3",
 		"@xyflow/svelte": "^1.6.2",
+		"cesium": "^1.138.0",
 		"leaflet": "^1.9.4",
 		"marked": "^18.0.5"
 	}
