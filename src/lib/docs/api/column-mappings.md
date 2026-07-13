@@ -1,25 +1,34 @@
-# Column Mappings API
+# Mappings API
 
-Endpoints for managing column-level annotations that link data columns to controlled vocabularies and CRM (CIDOC Conceptual Reference Model) properties.
+Value-level concept links and column-level vocabulary / CRM annotations. Prefer these paths; `/column-mappings` remains a **compat alias** for the value endpoints.
+
+Canonical model: workspace [mappings-model.md](../../../../docs/mappings-model.md) (if browsing the monorepo `docs/` tree).
 
 ## Overview
 
-Column mappings connect raw data columns in your GeoPackage tables to semantic concepts. Each mapping tracks:
+Two tables after migration `019` / `024`:
 
-- **Vocabulary columns** — Columns that contain values from a known vocabulary (e.g., PeriodO, Wikidata). Value-level concept URIs can be assigned via `PUT`.
-- **CRM columns** — Columns whose semantics are defined by a CRM property (e.g., `crm:P3_has_note`). These are populated automatically from table TOML annotations.
+| Table | Role |
+|-------|------|
+| `value_mappings` | Distinct cell values → optional `concept_uri` (project-canonical) |
+| `column_annotations` | Per-column `vocabulary`, `crm_property`, `crm_range` (mostly TOML-owned) |
 
-When data is pushed, the server automatically indexes column names and distinct values into the `column_mappings` table. TOML annotations in `[table]` definitions further refine these mappings.
+On push the server upserts annotations from TOML, scans distinct values into `value_mappings`, and never clears manual `concept_uri` on auto re-scan. TOML / auto upserts skip rows with `source = 'manual'`.
 
-## List Column Mappings
+---
+
+## List value mappings
 
 ```
-GET /api/v1/{org}/{project}/column-mappings
+GET /api/v1/{org}/{project}/value-mappings
+GET /api/v1/projects/{slug}/value-mappings
 ```
 
-List all column mappings for a project, ordered by entity type, column name, and local value.
+Compat: same handler on `/column-mappings`.
 
-**Authenticated** — requires Bearer token and project membership.
+Query params: `unmapped=true`, `needs_review=true`, `table=…`, `column=…`.
+
+**Authenticated** — Bearer + project membership.
 
 ### Response
 
@@ -36,67 +45,36 @@ List all column mappings for a project, ordered by entity type, column name, and
     "confidence": 1.0,
     "source": "manual",
     "entity_count": 23
-  },
-  {
-    "entity_type": "Site_Points",
-    "column_name": "period",
-    "local_value": "Medieval",
-    "concept_uri": null,
-    "vocabulary": "periodo",
-    "crm_property": null,
-    "crm_range": null,
-    "confidence": 1.0,
-    "source": "auto",
-    "entity_count": 15
-  },
-  {
-    "entity_type": "Site_Points",
-    "column_name": "note",
-    "local_value": "note",
-    "concept_uri": "crm:P3_has_note",
-    "vocabulary": "crm",
-    "crm_property": "crm:P3_has_note",
-    "crm_range": "crm:E62_String",
-    "confidence": 1.0,
-    "source": "toml",
-    "entity_count": 142
   }
 ]
 ```
 
+CRM fields are always null on value rows (they live on `column_annotations`).
+
 | Field | Type | Description |
 |---|---|---|
-| `entity_type` | string | Table name in the GeoPackage |
+| `entity_type` | string | Table name |
 | `column_name` | string | Column name |
-| `local_value` | string | For value-level mappings: the data value. For column-level: same as `column_name` |
-| `concept_uri` | string\|null | URI of the linked concept (from vocabulary if set, or CRM property URI) |
-| `vocabulary` | string\|null | Vocabulary namespace (e.g., `periodo`, `crm`) |
-| `crm_property` | string\|null | CRM property URI |
-| `crm_range` | string\|null | CRM range class |
-| `confidence` | number | Confidence score (0.0–1.0) |
-| `source` | string | Origin: `auto` (indexed), `toml` (from annotations), or `manual` (via API) |
-| `entity_count` | int | Number of entities with this column/value |
-
-### Example
+| `local_value` | string | Normalised cell value |
+| `concept_uri` | string\|null | Linked concept |
+| `vocabulary` | string\|null | e.g. `periodo`, `aat` |
+| `confidence` | number | 0.0–1.0 |
+| `source` | string | `auto` \| `toml` \| `manual` |
+| `entity_count` | int | Approximate entity count for this value |
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
-  http://localhost:8090/api/v1/my-org/my-project/column-mappings
+  http://localhost:8080/api/v1/projects/my-org_my-project/value-mappings
 ```
 
 ---
 
-## Create or Update Column Mapping
+## Upsert value mapping
 
 ```
-PUT /api/v1/{org}/{project}/column-mappings
+PUT /api/v1/{org}/{project}/value-mappings
+PUT /api/v1/projects/{slug}/value-mappings
 ```
-
-Set a concept URI for a specific value-level mapping. This is how you link a raw data value (e.g., `"Iron Age"`) to a controlled vocabulary concept (e.g., `periodo:p0v8k4r`).
-
-**Authenticated** — requires Bearer token and project membership.
-
-### Request Body
 
 ```json
 {
@@ -105,54 +83,70 @@ Set a concept URI for a specific value-level mapping. This is how you link a raw
   "local_value": "Iron Age",
   "concept_uri": "periodo:p0v8k4r",
   "vocabulary": "periodo",
-  "crm_property": null,
-  "crm_range": null,
   "confidence": 1.0
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `entity_type` | string | Yes | Table name |
-| `column_name` | string | Yes | Column name |
-| `local_value` | string | Yes | The data value to map |
-| `concept_uri` | string\|null | No | URI of the linked concept |
-| `vocabulary` | string\|null | No | Vocabulary namespace |
-| `crm_property` | string\|null | No | CRM property URI |
-| `crm_range` | string\|null | No | CRM range class |
-| `confidence` | number | No | Confidence score (default: `1.0`) |
-
-If a mapping already exists for `(project_slug, entity_type, column_name, local_value)`, it is updated. Otherwise a new row is inserted. The `source` is set to `manual`.
-
-### Response
-
-```json
-{
-  "status": "ok"
-}
-```
-
-### Example
-
-```bash
-curl -X PUT http://localhost:8090/api/v1/my-org/my-project/column-mappings \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entity_type": "Site_Points",
-    "column_name": "period",
-    "local_value": "Iron Age",
-    "concept_uri": "periodo:p0v8k4r",
-    "vocabulary": "periodo"
-  }'
-```
+Sets `source = 'manual'`. Unique key: `(project_slug, entity_type, column_name, local_value)`.
 
 ---
 
-## How Mappings Are Populated
+## Bulk value mapping
 
-1. **On push** — The server scans the canonical GeoPackage for column names and inserts them as column-level mappings (`source: "auto"`). For columns with vocabulary annotations in the table TOML, distinct data values are also indexed as value-level mappings.
+```
+POST /api/v1/projects/{slug}/value-mappings/bulk
+```
 
-2. **From TOML** — When the table TOML defines `vocabulary` or `property` on a column (see [TOML Config](/docs/config/tinyowl-toml/)), those annotations update the corresponding mappings (`source: "toml"`).
+```json
+{
+  "local_value": "Roman",
+  "column_name": "period",
+  "concept_uri": "periodo:roman",
+  "vocabulary": "PeriodO",
+  "confidence": 0.9,
+  "scope": "matching_value_and_column"
+}
+```
 
-3. **Manual** — You can set or override concept URIs via this API (`source: "manual"`).
+`scope`: `exact` (needs `entity_type`) or `matching_value_and_column`.
+
+---
+
+## Column annotations
+
+```
+GET /api/v1/projects/{slug}/column-annotations
+PUT /api/v1/projects/{slug}/column-annotations
+```
+
+```json
+{
+  "entity_type": "Site_Points",
+  "column_name": "note",
+  "vocabulary": "crm",
+  "crm_property": "crm:P3_has_note",
+  "crm_range": "crm:E62_String"
+}
+```
+
+PUT sets `source = 'manual'` and can override TOML until the next TOML push that is allowed to win (TOML upserts skip `source = 'manual'`).
+
+---
+
+## Export
+
+```
+GET /api/v1/projects/{slug}/mappings.toml
+```
+
+Confirmed value mappings (`concept_uri` set) as `mappings.toml`.
+
+CLI: `tinyowl mappings list|map|export` (uses `/value-mappings`).
+
+---
+
+## How rows are populated
+
+1. **Push / reindex** — TOML → `column_annotations`; scan vocab / `arch_date` / array columns → `value_mappings` (`source=auto`).
+2. **Optional `mappings.toml`** — seed with `source=toml` where not manual.
+3. **Settings UI / API** — manual concept links (`source=manual`).

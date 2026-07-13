@@ -171,7 +171,7 @@ type = "string"
 vocabulary = "periodo"
 ```
 
-During push, the server scans distinct values and creates `value_mappings` rows. Assign concept URIs via the [Column Mappings API](/docs/api/column-mappings/).
+During push, the server scans distinct values and creates `value_mappings` rows. Assign concept URIs via the [Mappings API](/docs/api/column-mappings/).
 
 #### CRM Property Columns
 
@@ -282,10 +282,10 @@ references = "Sites.source_id"
 
 When data is pushed with the `X-TinyOwl-Toml` header (a base64-encoded JSON representation of the table TOMLs), the server:
 
-1. Updates `column_mappings` rows with vocabulary and CRM property info (`source: "toml"`)
+1. Upserts `column_annotations` with vocabulary and CRM property info (`source: "toml"`, skips rows already `source: "manual"`)
 2. Generates `validation_warnings` for:
    - Vocabulary columns with no value-level concept mappings
-   - Columns with no vocabulary or CRM annotation at all
-3. Scans distinct values for vocabulary-annotated columns and creates value-level mapping rows
+   - (Related checks as implemented on the server)
+3. Scans distinct values for vocabulary-annotated columns and creates `value_mappings` rows (`source: "auto"`)
 
-The TOML annotations are **additive**: they don't replace manually set concept URIs — they only fill in missing vocabulary and property metadata.
+The TOML annotations are **additive** relative to manual value mappings: they don't replace manually set concept URIs.

@@ -8,9 +8,8 @@
     import XIcon from "@lucide/svelte/icons/x";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronRight from "@lucide/svelte/icons/chevron-right";
-    import ZoomInIcon from "@lucide/svelte/icons/zoom-in";
-    import ZoomOutIcon from "@lucide/svelte/icons/zoom-out";
-    import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
+    import Maximize2Icon from "@lucide/svelte/icons/maximize-2";
+    import MapPinIcon from "@lucide/svelte/icons/map-pin";
     import { onMount } from "svelte";
     import { entityLayersHref } from "$lib/project/entityLink";
 
@@ -26,6 +25,8 @@
         entities: Array<{ entity_type: string; entity_id: string }>;
     }
 
+    type TypeFilter = "all" | "image" | "video" | "audio" | "other";
+
     let items = $state<MediaItem[]>([]);
     let totalItems = $state(0);
     let typeCounts = $state<Record<string, number>>({});
@@ -36,8 +37,10 @@
     const LIMIT = 50;
 
     let sentinel = $state<HTMLDivElement>();
+    let typeFilter = $state<TypeFilter>("all");
+    let selectedHash = $state<string | null>(null);
+    let viewerOpen = $state(false);
 
-    // Track loaded/failed images
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
 
@@ -48,171 +51,72 @@
         failedImages = new Set([...failedImages, hash]);
     }
 
-    // Lightbox state
-    let lightboxIdx = $state(-1);
-    let zoom = $state(1);
-    let translateX = $state(0);
-    let translateY = $state(0);
-    let panning = $state(false);
-    let panStartX = $state(0);
-    let panStartY = $state(0);
-    let panOrigX = $state(0);
-    let panOrigY = $state(0);
-    // Touch pinch state
-    let pinchDist = $state(0);
-    let pinchZoom = $state(1);
+    function mediaUrl(item: MediaItem): string {
+        return (
+            item.url +
+            (accessToken ? `?token=${encodeURIComponent(accessToken)}` : "")
+        );
+    }
 
-    const imageItems = $derived(
-        items.filter((it) => it.media_type.startsWith("image/")),
+    function kindOf(item: MediaItem): TypeFilter {
+        const t = item.media_type.split("/")[0] || "other";
+        if (t === "image" || t === "video" || t === "audio") return t;
+        return "other";
+    }
+
+    const filtered = $derived(
+        typeFilter === "all"
+            ? items
+            : items.filter((it) => kindOf(it) === typeFilter),
     );
-    const lightboxItem = $derived(
-        lightboxIdx >= 0 && lightboxIdx < imageItems.length
-            ? imageItems[lightboxIdx]
+
+    const selected = $derived(
+        selectedHash
+            ? (items.find((it) => it.hash === selectedHash) ?? null)
             : null,
     );
 
-    function openLightbox(item: MediaItem) {
-        if (!item.media_type.startsWith("image/")) return;
-        const idx = imageItems.indexOf(item);
-        if (idx >= 0) {
-            lightboxIdx = idx;
-            zoom = 1;
-        }
+    const imageItems = $derived(
+        filtered.filter((it) => it.media_type.startsWith("image/")),
+    );
+
+    const viewerIdx = $derived(
+        selected && selected.media_type.startsWith("image/")
+            ? imageItems.findIndex((it) => it.hash === selected.hash)
+            : -1,
+    );
+
+    function selectItem(item: MediaItem) {
+        selectedHash = item.hash;
     }
 
-    function closeLightbox() {
-        lightboxIdx = -1;
-        zoom = 1;
-        translateX = 0;
-        translateY = 0;
+    function openViewer() {
+        if (!selected?.media_type.startsWith("image/")) return;
+        viewerOpen = true;
+    }
+
+    function closeViewer() {
+        viewerOpen = false;
     }
 
     function prevImage() {
-        if (lightboxIdx > 0) {
-            lightboxIdx--;
-            zoom = 1;
-            translateX = 0;
-            translateY = 0;
-        }
+        if (viewerIdx <= 0) return;
+        selectedHash = imageItems[viewerIdx - 1].hash;
     }
 
     function nextImage() {
-        if (lightboxIdx < imageItems.length - 1) {
-            lightboxIdx++;
-            zoom = 1;
-            translateX = 0;
-            translateY = 0;
-        }
-    }
-
-    function zoomIn() {
-        zoom = Math.min(zoom * 1.5, 8);
-    }
-
-    function zoomOut() {
-        const next = Math.max(zoom / 1.5, 1);
-        if (next <= 1) {
-            translateX = 0;
-            translateY = 0;
-        }
-        zoom = next;
-    }
-
-    function resetZoom() {
-        zoom = 1;
-        translateX = 0;
-        translateY = 0;
-    }
-
-    function onWheel(e: WheelEvent) {
-        e.preventDefault();
-        if (e.deltaY < 0) zoomIn();
-        else zoomOut();
-    }
-
-    function onPanStart(e: MouseEvent) {
-        if (zoom <= 1) return;
-        e.preventDefault();
-        panning = true;
-        panStartX = e.clientX;
-        panStartY = e.clientY;
-        panOrigX = translateX;
-        panOrigY = translateY;
-    }
-
-    function onPanMove(e: MouseEvent) {
-        if (!panning) return;
-        // Scale delta by zoom so cursor stays anchored to the image pixel
-        const dx = (e.clientX - panStartX) / zoom;
-        const dy = (e.clientY - panStartY) / zoom;
-        translateX = panOrigX + dx;
-        translateY = panOrigY + dy;
-    }
-
-    function onPanEnd() {
-        panning = false;
-    }
-
-    // Touch support
-    function onTouchStart(e: TouchEvent) {
-        if (e.touches.length === 1) {
-            // Single finger — pan (only when zoomed)
-            if (zoom <= 1) return;
-            e.preventDefault();
-            panning = true;
-            panStartX = e.touches[0].clientX;
-            panStartY = e.touches[0].clientY;
-            panOrigX = translateX;
-            panOrigY = translateY;
-        } else if (e.touches.length === 2) {
-            // Two fingers — pinch zoom
-            e.preventDefault();
-            panning = false;
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            pinchDist = Math.sqrt(dx * dx + dy * dy);
-            pinchZoom = zoom;
-        }
-    }
-
-    function onTouchMove(e: TouchEvent) {
-        if (panning && e.touches.length === 1) {
-            e.preventDefault();
-            const dx = (e.touches[0].clientX - panStartX) / zoom;
-            const dy = (e.touches[0].clientY - panStartY) / zoom;
-            translateX = panOrigX + dx;
-            translateY = panOrigY + dy;
-        } else if (e.touches.length === 2 && pinchDist > 0) {
-            e.preventDefault();
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const newZoom = Math.min(
-                8,
-                Math.max(1, pinchZoom * (dist / pinchDist)),
-            );
-            if (newZoom <= 1) {
-                translateX = 0;
-                translateY = 0;
-            }
-            zoom = newZoom;
-        }
-    }
-
-    function onTouchEnd(e: TouchEvent) {
-        if (e.touches.length === 0) {
-            panning = false;
-            pinchDist = 0;
-        }
+        if (viewerIdx < 0 || viewerIdx >= imageItems.length - 1) return;
+        selectedHash = imageItems[viewerIdx + 1].hash;
     }
 
     function onKeydown(e: KeyboardEvent) {
-        if (!lightboxItem) return;
-        if (e.key === "Escape") closeLightbox();
-        if (e.key === "ArrowLeft") prevImage();
-        if (e.key === "ArrowRight") nextImage();
-        if (e.key === "+" || e.key === "=") zoomIn();
-        if (e.key === "-") zoomOut();
+        if (viewerOpen) {
+            if (e.key === "Escape") closeViewer();
+            if (e.key === "ArrowLeft") prevImage();
+            if (e.key === "ArrowRight") nextImage();
+            return;
+        }
+        if (e.key === "Escape") selectedHash = null;
     }
 
     async function loadMore() {
@@ -272,7 +176,6 @@
         return entityLayersHref($page.params.project, {
             layer: entityType,
             highlight: entityId,
-            view: "table",
         });
     }
 
@@ -280,28 +183,17 @@
         return entityType.replace(/_/g, " ");
     }
 
-    // Group by media type
-    const byType = $derived.by(() => {
-        const groups: Record<string, MediaItem[]> = {};
-        for (const item of items) {
-            const type = item.media_type.split("/")[0] || "other";
-            if (!groups[type]) groups[type] = [];
-            groups[type].push(item);
-        }
-        return groups;
-    });
+    const filterTabs: { id: TypeFilter; label: string }[] = [
+        { id: "all", label: "All" },
+        { id: "image", label: "Images" },
+        { id: "video", label: "Videos" },
+        { id: "audio", label: "Audio" },
+    ];
 
-    function typeLabel(group: string): string {
-        switch (group) {
-            case "image":
-                return "Images";
-            case "video":
-                return "Videos";
-            case "audio":
-                return "Audio";
-            default:
-                return "Files";
-        }
+    function filterCount(id: TypeFilter): number | null {
+        if (id === "all") return totalItems || items.length || null;
+        const n = typeCounts[id];
+        return n != null ? n : null;
     }
 </script>
 
@@ -310,368 +202,466 @@
 </svelte:head>
 
 <svelte:window onkeydown={onKeydown} />
+
 <div class="flex flex-col h-full px-6 py-4">
-    <div class="shrink-0 mb-4">
-        <div class="flex items-center gap-2.5">
-            <ImageIcon class="size-5 text-muted-foreground" />
-            <h1 class="text-xl font-bold tracking-tight text-foreground">
-                Media
-            </h1>
+    <div class="shrink-0 mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+            <div class="flex items-center gap-2.5">
+                <ImageIcon class="size-5 text-muted-foreground" />
+                <h1 class="text-xl font-bold tracking-tight text-foreground">
+                    Media
+                </h1>
+            </div>
+            <p class="mt-0.5 text-sm text-muted-foreground">
+                Evidence linked to entities
+                {#if totalItems || items.length}
+                    · {totalItems || items.length} item{(totalItems ||
+                        items.length) !== 1
+                        ? "s"
+                        : ""}
+                {/if}
+            </p>
         </div>
-        <p class="mt-0.5 text-sm text-muted-foreground">
-            {totalItems || items.length} item{(totalItems || items.length) !== 1
-                ? "s"
-                : ""}
-        </p>
+
+        <div
+            class="flex items-center rounded-md border border-border overflow-hidden"
+        >
+            {#each filterTabs as tab}
+                {@const count = filterCount(tab.id)}
+                <button
+                    type="button"
+                    onclick={() => (typeFilter = tab.id)}
+                    class="px-2.5 py-1 text-xs border-l border-border first:border-l-0 transition-colors {typeFilter ===
+                    tab.id
+                        ? 'bg-secondary text-foreground font-medium'
+                        : 'text-muted-foreground hover:text-foreground'}"
+                >
+                    {tab.label}{#if count != null}<span
+                            class="text-muted-foreground/70"
+                        >
+                            {count}</span
+                        >{/if}
+                </button>
+            {/each}
+        </div>
     </div>
 
-    <div class="flex-1 min-h-0 overflow-y-auto">
-        {#if items.length === 0 && !loading}
-            <div class="flex items-center justify-center h-64">
-                <div class="text-center max-w-sm">
-                    <div
-                        class="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-secondary"
-                    >
-                        <ImageIcon class="size-6 text-muted-foreground" />
-                    </div>
-                    <h2 class="text-lg font-semibold text-foreground mb-2">
-                        No media yet
-                    </h2>
-                    <p class="text-sm text-muted-foreground">
-                        Push data with media attachments to see them here. Each
-                        media item will show which entities it's linked to.
-                    </p>
-                </div>
-            </div>
-        {:else}
-            {#each Object.entries(byType) as [group, groupItems]}
-                <div class="mb-8">
-                    <h2
-                        class="text-sm font-semibold tracking-wider uppercase text-muted-foreground mb-4"
-                    >
-                        {typeLabel(group)}
-                        <span
-                            class="ml-1.5 font-normal text-muted-foreground/60"
-                        >
-                            ({typeCounts[group] ?? groupItems.length})
-                        </span>
-                    </h2>
-
-                    <div
-                        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3"
-                    >
-                        {#each groupItems as item}
-                            {@const isImage =
-                                item.media_type.startsWith("image/")}
-                            {@const isVideo =
-                                item.media_type.startsWith("video/")}
-                            {@const isAudio =
-                                item.media_type.startsWith("audio/")}
-                            {@const imgLoaded = loadedImages.has(item.hash)}
-                            {@const imgFailed = failedImages.has(item.hash)}
-                            <div
-                                class="rounded-lg border bg-card overflow-hidden group cursor-pointer"
-                                role="button"
-                                tabindex="0"
-                                onclick={() => openLightbox(item)}
-                                onkeydown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") {
-                                        e.preventDefault();
-                                        openLightbox(item);
-                                    }
-                                }}
-                            >
-                                <!-- Preview area -->
-                                <div
-                                    class="aspect-square bg-secondary relative"
-                                >
-                                    {#if isImage}
-                                        <!-- Pulsing skeleton while loading -->
-                                        {#if !imgLoaded && !imgFailed}
-                                            <div
-                                                class="absolute inset-0 animate-pulse bg-secondary"
-                                            ></div>
-                                        {/if}
-                                        <!-- Failed placeholder -->
-                                        {#if imgFailed}
-                                            <div
-                                                class="absolute inset-0 flex flex-col items-center justify-center gap-1"
-                                            >
-                                                <ImageOffIcon
-                                                    class="size-8 text-muted-foreground/40"
-                                                />
-                                                <span
-                                                    class="text-[10px] text-muted-foreground/40"
-                                                    >Missing</span
-                                                >
-                                            </div>
-                                        {/if}
-                                        <img
-                                            src={item.url +
-                                                (accessToken
-                                                    ? `?token=${encodeURIComponent(accessToken)}`
-                                                    : "")}
-                                            alt="Media"
-                                            class="w-full h-full object-cover {imgLoaded
-                                                ? 'opacity-100'
-                                                : 'opacity-0'} transition-opacity duration-200"
-                                            loading="lazy"
-                                            onload={() =>
-                                                onImageLoad(item.hash)}
-                                            onerror={() =>
-                                                onImageError(item.hash)}
-                                        />
-                                    {:else if isVideo}
-                                        <div
-                                            class="w-full h-full flex flex-col items-center justify-center gap-1.5"
-                                        >
-                                            <VideoIcon
-                                                class="size-8 text-muted-foreground"
-                                            />
-                                            <span
-                                                class="text-[10px] text-muted-foreground/60"
-                                                >Video</span
-                                            >
-                                        </div>
-                                    {:else if isAudio}
-                                        <div
-                                            class="w-full h-full flex flex-col items-center justify-center gap-1.5"
-                                        >
-                                            <MusicIcon
-                                                class="size-8 text-muted-foreground"
-                                            />
-                                            <span
-                                                class="text-[10px] text-muted-foreground/60"
-                                                >Audio</span
-                                            >
-                                        </div>
-                                    {:else}
-                                        <div
-                                            class="w-full h-full flex flex-col items-center justify-center gap-1.5"
-                                        >
-                                            <FileWarningIcon
-                                                class="size-8 text-muted-foreground"
-                                            />
-                                            <span
-                                                class="text-[10px] text-muted-foreground/60 uppercase"
-                                            >
-                                                {item.media_type.split(
-                                                    "/",
-                                                )[1] ?? "file"}
-                                            </span>
-                                        </div>
-                                    {/if}
-                                </div>
-
-                                <div class="p-3">
-                                    <div
-                                        class="flex items-center justify-between gap-2 mb-2"
-                                    >
-                                        <span
-                                            class="text-[10px] font-mono text-muted-foreground select-all"
-                                        >
-                                            {item.hash.slice(0, 10)}
-                                        </span>
-                                        <span
-                                            class="text-[10px] text-muted-foreground"
-                                        >
-                                            {formatBytes(item.file_size)}
-                                        </span>
-                                    </div>
-
-                                    {#if item.entities.length > 0}
-                                        <div class="flex flex-col gap-1">
-                                            <span
-                                                class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider"
-                                            >
-                                                Linked entities
-                                            </span>
-                                            {#each item.entities as entity}
-                                                <a
-                                                    href={entityLink(
-                                                        entity.entity_type,
-                                                        entity.entity_id,
-                                                    )}
-                                                    class="flex items-center gap-1 text-xs text-primary hover:underline underline-offset-2 no-underline group/link"
-                                                >
-                                                    <span class="truncate">
-                                                        {entityLabel(
-                                                            entity.entity_type,
-                                                        )}
-                                                    </span>
-                                                    <span
-                                                        class="font-mono text-[10px] text-muted-foreground shrink-0"
-                                                    >
-                                                        {entity.entity_id}
-                                                    </span>
-                                                    <ExternalLinkIcon
-                                                        class="size-2.5 shrink-0 text-muted-foreground opacity-0 group-hover/link:opacity-100 transition-opacity"
-                                                    />
-                                                </a>
-                                            {/each}
-                                        </div>
-                                    {:else}
-                                        <p
-                                            class="text-[10px] italic text-muted-foreground"
-                                        >
-                                            No entities linked
-                                        </p>
-                                    {/if}
-                                </div>
-                            </div>
-                        {/each}
+    <div
+        class="flex-1 min-h-0 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)] lg:items-stretch"
+    >
+        <div class="min-h-0 overflow-y-auto">
+            {#if items.length === 0 && !loading}
+                <div class="flex items-center justify-center h-64">
+                    <div class="text-center max-w-sm">
+                        <ImageIcon
+                            class="mx-auto mb-3 size-8 text-muted-foreground/40"
+                        />
+                        <h2 class="text-base font-semibold text-foreground mb-1">
+                            No media yet
+                        </h2>
+                        <p class="text-sm text-muted-foreground">
+                            Push data with attachments to see them here, linked
+                            to the entities they document.
+                        </p>
                     </div>
                 </div>
-            {/each}
-
-            <!-- Sentinel for infinite scroll -->
-            {#if hasMore}
+            {:else if filtered.length === 0 && !loading}
+                <div class="py-16 text-center text-sm text-muted-foreground">
+                    No {typeFilter === "all" ? "" : typeFilter + " "}items
+                    loaded yet.
+                </div>
+            {:else}
                 <div
-                    bind:this={sentinel}
-                    class="py-8 flex items-center justify-center"
+                    class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-1.5"
                 >
-                    {#if loading}
-                        <div
-                            class="text-sm text-muted-foreground animate-pulse"
+                    {#each filtered as item}
+                        {@const isImage = item.media_type.startsWith("image/")}
+                        {@const isVideo = item.media_type.startsWith("video/")}
+                        {@const isAudio = item.media_type.startsWith("audio/")}
+                        {@const imgLoaded = loadedImages.has(item.hash)}
+                        {@const imgFailed = failedImages.has(item.hash)}
+                        {@const active = selectedHash === item.hash}
+                        <button
+                            type="button"
+                            onclick={() => selectItem(item)}
+                            ondblclick={() => {
+                                selectItem(item);
+                                if (isImage) openViewer();
+                            }}
+                            class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring {active
+                                ? 'ring-2 ring-primary ring-offset-1 ring-offset-background'
+                                : 'hover:ring-1 hover:ring-border'}"
+                            title={item.entities[0]
+                                ? `${entityLabel(item.entities[0].entity_type)} · ${item.entities[0].entity_id}`
+                                : item.media_type}
                         >
-                            Loading…
+                            {#if isImage}
+                                {#if !imgLoaded && !imgFailed}
+                                    <div
+                                        class="absolute inset-0 animate-pulse bg-secondary"
+                                    ></div>
+                                {/if}
+                                {#if imgFailed}
+                                    <div
+                                        class="absolute inset-0 flex items-center justify-center"
+                                    >
+                                        <ImageOffIcon
+                                            class="size-6 text-muted-foreground/40"
+                                        />
+                                    </div>
+                                {/if}
+                                <img
+                                    src={mediaUrl(item)}
+                                    alt=""
+                                    class="h-full w-full object-cover {imgLoaded
+                                        ? 'opacity-100'
+                                        : 'opacity-0'} transition-opacity duration-200"
+                                    loading="lazy"
+                                    onload={() => onImageLoad(item.hash)}
+                                    onerror={() => onImageError(item.hash)}
+                                />
+                            {:else}
+                                <div
+                                    class="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground"
+                                >
+                                    {#if isVideo}
+                                        <VideoIcon class="size-6 opacity-70" />
+                                    {:else if isAudio}
+                                        <MusicIcon class="size-6 opacity-70" />
+                                    {:else}
+                                        <FileWarningIcon
+                                            class="size-6 opacity-70"
+                                        />
+                                    {/if}
+                                </div>
+                            {/if}
+                            {#if item.entities.length > 0}
+                                <span
+                                    class="pointer-events-none absolute bottom-1 left-1 rounded bg-background/80 px-1 py-0.5 text-[10px] text-foreground/80 opacity-0 transition-opacity group-hover:opacity-100 {active
+                                        ? 'opacity-100'
+                                        : ''}"
+                                >
+                                    {entityLabel(item.entities[0].entity_type)}
+                                </span>
+                            {/if}
+                        </button>
+                    {/each}
+                </div>
+
+                {#if hasMore}
+                    <div
+                        bind:this={sentinel}
+                        class="py-8 flex items-center justify-center"
+                    >
+                        {#if loading}
+                            <p class="text-sm text-muted-foreground animate-pulse">
+                                Loading…
+                            </p>
+                        {/if}
+                    </div>
+                {:else if items.length > 0}
+                    <p class="py-6 text-center text-xs text-muted-foreground">
+                        {filtered.length} shown
+                    </p>
+                {/if}
+            {/if}
+
+            {#if error}
+                <p class="py-4 text-center text-sm text-destructive">{error}</p>
+            {/if}
+        </div>
+
+        <!-- Detail panel -->
+        <aside
+            class="hidden lg:flex min-h-0 flex-col rounded-lg border border-border bg-secondary/20 overflow-hidden"
+        >
+            {#if selected}
+                {@const isImage = selected.media_type.startsWith("image/")}
+                {@const isVideo = selected.media_type.startsWith("video/")}
+                {@const isAudio = selected.media_type.startsWith("audio/")}
+                <div class="relative aspect-[4/3] shrink-0 bg-secondary/40">
+                    {#if isImage}
+                        <img
+                            src={mediaUrl(selected)}
+                            alt=""
+                            class="h-full w-full object-contain"
+                        />
+                        <button
+                            type="button"
+                            onclick={openViewer}
+                            class="absolute top-2 right-2 inline-flex items-center gap-1 rounded-md border border-border glass-panel px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                            <Maximize2Icon class="size-3" />
+                            Expand
+                        </button>
+                    {:else if isVideo}
+                        <video
+                            src={mediaUrl(selected)}
+                            controls
+                            class="h-full w-full object-contain"
+                        ></video>
+                    {:else if isAudio}
+                        <div
+                            class="flex h-full flex-col items-center justify-center gap-3 px-4"
+                        >
+                            <MusicIcon
+                                class="size-8 text-muted-foreground/50"
+                            />
+                            <audio
+                                src={mediaUrl(selected)}
+                                controls
+                                class="w-full"
+                            ></audio>
+                        </div>
+                    {:else}
+                        <div
+                            class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"
+                        >
+                            <FileWarningIcon class="size-8 opacity-50" />
+                            <span class="text-xs">{selected.media_type}</span>
                         </div>
                     {/if}
                 </div>
-            {:else if items.length > 0}
-                <div class="py-8 flex items-center justify-center">
-                    <p class="text-xs text-muted-foreground">
-                        All {items.length} items loaded
+
+                <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-4">
+                    <div>
+                        <p
+                            class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1"
+                        >
+                            Linked entities
+                        </p>
+                        {#if selected.entities.length === 0}
+                            <p class="text-xs text-muted-foreground italic">
+                                Not linked to an entity
+                            </p>
+                        {:else}
+                            <ul class="space-y-1">
+                                {#each selected.entities as entity}
+                                    <li>
+                                        <a
+                                            href={entityLink(
+                                                entity.entity_type,
+                                                entity.entity_id,
+                                            )}
+                                            class="group flex items-center gap-2 rounded-md px-2 py-1.5 -mx-1 text-xs no-underline hover:bg-accent/60 transition-colors"
+                                        >
+                                            <MapPinIcon
+                                                class="size-3.5 shrink-0 text-muted-foreground"
+                                            />
+                                            <span
+                                                class="min-w-0 flex-1 truncate text-foreground"
+                                            >
+                                                {entityLabel(
+                                                    entity.entity_type,
+                                                )}
+                                            </span>
+                                            <span
+                                                class="font-mono text-[10px] text-muted-foreground truncate max-w-[40%]"
+                                            >
+                                                {entity.entity_id}
+                                            </span>
+                                            <span
+                                                class="shrink-0 text-[10px] text-primary opacity-0 group-hover:opacity-100"
+                                            >
+                                                Layers
+                                            </span>
+                                        </a>
+                                    </li>
+                                {/each}
+                            </ul>
+                        {/if}
+                    </div>
+
+                    <div
+                        class="border-t border-border pt-3 text-[11px] text-muted-foreground space-y-1"
+                    >
+                        <p>
+                            <span class="text-foreground/70"
+                                >{selected.media_type}</span
+                            >
+                            · {formatBytes(selected.file_size)}
+                        </p>
+                        <p class="font-mono break-all opacity-70">
+                            {selected.hash}
+                        </p>
+                    </div>
+                </div>
+            {:else}
+                <div
+                    class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center"
+                >
+                    <ImageIcon class="size-7 text-muted-foreground/35" />
+                    <p class="text-sm text-muted-foreground">
+                        Select an item to see linked entities
                     </p>
                 </div>
             {/if}
-        {/if}
+        </aside>
     </div>
 
-    {#if error}
-        <div class="py-4 text-center">
-            <p class="text-sm text-destructive">{error}</p>
+    <!-- Mobile detail sheet -->
+    {#if selected}
+        <div
+            class="lg:hidden fixed inset-x-0 bottom-0 z-50 border-t border-border glass-dock p-4 max-h-[45vh] overflow-y-auto"
+        >
+            <div class="flex items-start justify-between gap-3 mb-3">
+                <div class="min-w-0">
+                    <p class="text-sm font-medium text-foreground truncate">
+                        {selected.entities[0]
+                            ? entityLabel(selected.entities[0].entity_type)
+                            : selected.media_type}
+                    </p>
+                    <p class="text-[11px] text-muted-foreground">
+                        {formatBytes(selected.file_size)}
+                    </p>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                    {#if selected.media_type.startsWith("image/")}
+                        <button
+                            type="button"
+                            onclick={openViewer}
+                            class="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                        >
+                            Expand
+                        </button>
+                    {/if}
+                    <button
+                        type="button"
+                        onclick={() => (selectedHash = null)}
+                        class="rounded-md p-1 text-muted-foreground hover:text-foreground"
+                        aria-label="Close"
+                    >
+                        <XIcon class="size-4" />
+                    </button>
+                </div>
+            </div>
+            {#if selected.entities.length > 0}
+                <ul class="space-y-1">
+                    {#each selected.entities as entity}
+                        <li>
+                            <a
+                                href={entityLink(
+                                    entity.entity_type,
+                                    entity.entity_id,
+                                )}
+                                class="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs no-underline hover:bg-accent/60"
+                            >
+                                <MapPinIcon
+                                    class="size-3.5 text-muted-foreground"
+                                />
+                                <span class="truncate"
+                                    >{entityLabel(entity.entity_type)}</span
+                                >
+                                <span
+                                    class="ml-auto font-mono text-[10px] text-muted-foreground"
+                                    >{entity.entity_id}</span
+                                >
+                            </a>
+                        </li>
+                    {/each}
+                </ul>
+            {/if}
         </div>
     {/if}
 
-    <!-- Lightbox -->
-    {#if lightboxItem}
+    <!-- Quiet image viewer -->
+    {#if viewerOpen && selected?.media_type.startsWith("image/")}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
-            class="fixed inset-0 z-1100 bg-black/80 flex items-center justify-center p-12 touch-none"
-            onclick={closeLightbox}
-            onkeydown={onKeydown}
-            tabindex="-1"
+            class="fixed inset-0 z-1100 glass-overlay flex flex-col"
+            onclick={closeViewer}
             role="dialog"
+            tabindex="-1"
         >
-            <!-- Close -->
-            <button
-                class="absolute top-4 right-4 z-60 flex items-center justify-center size-10 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
-                onclick={(e) => {
-                    e.stopPropagation();
-                    closeLightbox();
-                }}
-            >
-                <XIcon class="size-5" />
-            </button>
-
-            <!-- Prev -->
-            {#if lightboxIdx > 0}
-                <button
-                    class="absolute left-4 top-1/2 -translate-y-1/2 z-60 flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
-                    onclick={(e) => {
-                        e.stopPropagation();
-                        prevImage();
-                    }}
-                >
-                    <ChevronLeft class="size-6" />
-                </button>
-            {/if}
-
-            <!-- Next -->
-            {#if lightboxIdx < imageItems.length - 1}
-                <button
-                    class="absolute right-4 top-1/2 -translate-y-1/2 z-60 flex items-center justify-center size-12 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
-                    onclick={(e) => {
-                        e.stopPropagation();
-                        nextImage();
-                    }}
-                >
-                    <ChevronRight class="size-6" />
-                </button>
-            {/if}
-
-            <!-- Zoom controls -->
             <div
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 z-60 flex items-center gap-1 rounded-full bg-white/20 px-2 py-1.5"
+                class="flex items-center justify-between gap-3 px-4 py-3 border-b border-border"
+                onclick={(e) => e.stopPropagation()}
             >
-                <button
-                    class="flex items-center justify-center size-8 rounded-full hover:bg-white/20 text-white disabled:opacity-30 transition-colors"
-                    onclick={(e) => {
-                        e.stopPropagation();
-                        zoomOut();
-                    }}
-                    disabled={zoom <= 1}
-                >
-                    <ZoomOutIcon class="size-4" />
-                </button>
-                <span
-                    class="text-xs text-white/80 tabular-nums w-10 text-center"
-                >
-                    {Math.round(zoom * 100)}%
-                </span>
-                <button
-                    class="flex items-center justify-center size-8 rounded-full hover:bg-white/20 text-white disabled:opacity-30 transition-colors"
-                    onclick={(e) => {
-                        e.stopPropagation();
-                        zoomIn();
-                    }}
-                    disabled={zoom >= 8}
-                >
-                    <ZoomInIcon class="size-4" />
-                </button>
+                <p class="text-sm text-muted-foreground tabular-nums">
+                    {#if viewerIdx >= 0}
+                        {viewerIdx + 1} / {imageItems.length}
+                    {/if}
+                </p>
+                <div class="flex items-center gap-1">
+                    {#if selected.entities[0]}
+                        <a
+                            href={entityLink(
+                                selected.entities[0].entity_type,
+                                selected.entities[0].entity_id,
+                            )}
+                            class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs no-underline text-foreground hover:bg-secondary transition-colors"
+                            onclick={(e) => e.stopPropagation()}
+                        >
+                            <MapPinIcon class="size-3.5" />
+                            Open in Layers
+                        </a>
+                    {/if}
+                    <button
+                        type="button"
+                        class="rounded-md p-1.5 text-muted-foreground hover:text-foreground"
+                        onclick={(e) => {
+                            e.stopPropagation();
+                            closeViewer();
+                        }}
+                        aria-label="Close"
+                    >
+                        <XIcon class="size-4" />
+                    </button>
+                </div>
             </div>
 
-            <!-- Counter -->
-            <div class="absolute top-4 left-4 z-60 text-sm text-white/60">
-                {lightboxIdx + 1} / {imageItems.length}
-            </div>
-
-            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
             <div
-                class={panning
-                    ? "cursor-grabbing"
-                    : zoom > 1
-                      ? "cursor-grab"
-                      : "transition-transform duration-150"}
-                style="transform: scale({zoom}) translate({translateX}px, {translateY}px)"
-                role="img"
-                aria-label="Media"
-                draggable="false"
-                onwheel={onWheel}
-                onmousedown={onPanStart}
-                onmousemove={onPanMove}
-                onmouseup={onPanEnd}
-                onmouseleave={onPanEnd}
-                ontouchstart={onTouchStart}
-                ontouchmove={onTouchMove}
-                ontouchend={onTouchEnd}
-                ondblclick={resetZoom}
-                ondragstart={(e) => e.preventDefault()}
-                onclick={(e) => {
-                    if (zoom > 1) e.stopPropagation();
-                }}
+                class="relative flex-1 flex items-center justify-center p-4 min-h-0"
+                onclick={(e) => e.stopPropagation()}
             >
+                {#if viewerIdx > 0}
+                    <button
+                        type="button"
+                        class="absolute left-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
+                        onclick={prevImage}
+                        aria-label="Previous"
+                    >
+                        <ChevronLeft class="size-5" />
+                    </button>
+                {/if}
                 <img
-                    src={lightboxItem.url +
-                        (accessToken
-                            ? `?token=${encodeURIComponent(accessToken)}`
-                            : "")}
-                    alt="Media"
-                    class="max-w-full max-h-full object-contain rounded-lg shadow-2xl select-none pointer-events-none"
-                    draggable="false"
+                    src={mediaUrl(selected)}
+                    alt=""
+                    class="max-h-full max-w-full object-contain"
                 />
+                {#if viewerIdx >= 0 && viewerIdx < imageItems.length - 1}
+                    <button
+                        type="button"
+                        class="absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
+                        onclick={nextImage}
+                        aria-label="Next"
+                    >
+                        <ChevronRight class="size-5" />
+                    </button>
+                {/if}
             </div>
+
+            {#if selected.entities.length > 0}
+                <div
+                    class="border-t border-border px-4 py-3 flex flex-wrap gap-2"
+                    onclick={(e) => e.stopPropagation()}
+                >
+                    {#each selected.entities as entity}
+                        <a
+                            href={entityLink(
+                                entity.entity_type,
+                                entity.entity_id,
+                            )}
+                            class="inline-flex items-center gap-1.5 rounded-md bg-secondary/80 px-2 py-1 text-[11px] no-underline text-foreground hover:bg-secondary"
+                        >
+                            {entityLabel(entity.entity_type)}
+                            <span class="font-mono text-muted-foreground"
+                                >{entity.entity_id}</span
+                            >
+                        </a>
+                    {/each}
+                </div>
+            {/if}
         </div>
     {/if}
 </div>

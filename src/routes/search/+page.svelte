@@ -273,7 +273,6 @@
         return entityLayersHref(slug, {
             layer: entity.entity_type,
             highlight: entity.entity_id,
-            view: "table",
         });
     }
 </script>

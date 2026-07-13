@@ -73,9 +73,10 @@ The Lamina monolith (SvelteKit + Supabase) has been replaced by the current arch
 ### Data Migration
 
 - Your existing Supabase database schema may differ from the current `tinyowl-server` schema
-- The current server uses `projects`, `project_members`, `diffs`, `column_mappings`, `entity_spatial`, `media_index`, `validation_warnings`, and `cli_tokens` tables
+- The current server uses `projects`, `project_members`, `diffs`, `column_annotations`, `value_mappings`, `entity_spatial`, `media_index`, `validation_warnings`, `cli_tokens`, and related metadata tables (see migrations through `024`)
 - Entity data is now stored in GeoPackage files (SQLite), not as rows in Postgres
 - Spatial indexing is via the `entity_spatial` PostGIS table, populated during push
+- Legacy `column_mappings` was split in `019` and dropped in `024`
 
 ## API Route Mapping
 
@@ -83,7 +84,7 @@ The current API is documented in the [API Reference](/docs/api/). Key difference
 
 - `/api/entities`, `/api/relations`, `/api/classifications`, `/api/dates` — No longer exist. Entities are in GeoPackage tables, accessed via `/tables` and `/rows`
 - `/api/collections` — Replaced by the project-based `/projects` endpoints
-- `/api/vocabularies` — Replaced by `/column-mappings`
+- `/api/vocabularies` — Replaced by `/value-mappings` + `/column-annotations` (compat: `/column-mappings`)
 - `/api/import/upload`, `/api/import/staging` — Replaced by CLI-based import with TOML config
 - `/api/czml` — Replaced by `/layers/{table}/geojson`
 - `/api/ogc` — Replaced by the flat GeoJSON endpoint

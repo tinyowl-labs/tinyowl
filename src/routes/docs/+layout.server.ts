@@ -26,7 +26,7 @@ export const load = () => ({
         { href: "/docs/api/projects", label: "Projects" },
         { href: "/docs/api/tables", label: "Tables & Rows" },
         { href: "/docs/api/members", label: "Members" },
-        { href: "/docs/api/column-mappings", label: "Column Mappings" },
+        { href: "/docs/api/column-mappings", label: "Mappings" },
         { href: "/docs/api/search", label: "Search" },
         { href: "/docs/api/readme", label: "Readme" },
         { href: "/docs/api/media", label: "Media" },

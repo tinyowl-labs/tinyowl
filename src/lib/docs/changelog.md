@@ -5,18 +5,35 @@ description: Breaking changes and significant updates to the TinyOwl server API 
 
 This page tracks API changes that affect client compatibility.
 
-## v0.3.0 (Current) — Production harden
+## v0.4.0 — Mappings split cutover
+
+### Schema
+
+- **`column_annotations` + `value_mappings`** are the sole mapping tables (migration `019`).
+- **`column_mappings` dropped** (migration `024`). Dual-write / legacy fallbacks removed from the server.
+- Stub public downloads gate on `column_annotations` (vocabulary or `crm_property`).
+
+### API
+
+- Prefer `/value-mappings` and `/column-annotations`. `/column-mappings` remains a compat alias for value endpoints.
+- CLI and web Settings use `/value-mappings`.
+
+### Docs
+
+- Workspace roadmap: `docs/tinyowl_next.md`. Agent entry: `docs/HANDOFF.md`.
+
+## v0.3.0 — Production harden
 
 ### Auth
 
 - **JWT verification required.** Supabase access tokens are verified with HS256 using `SUPABASE_JWT_SECRET` (or `JWT_SECRET`). Unsigned / forged JWTs are rejected. Set the secret in production.
-- Static `TINYOWL_AUTH_TOKEN` and CLI PATs (`tol_…` / `cli_tokens`) unchanged.
+- Static `TINYOWL_AUTH_TOKEN` and CLI PATs (`tol_…` / `cli_tokens`) unchanged. Device-code login mints a PAT (CLI never stores short-lived JWT).
 
 ### Indexing
 
-- Removed junk `column_mappings` rows where `local_value = column_name`.
-- Column-level TOML annotations upsert with `local_value = ''`.
-- Value-level rows still come from scanning vocab-annotated columns.
+- Column-level TOML annotations live in `column_annotations`.
+- Value-level rows come from scanning vocab / `arch_date` / array columns into `value_mappings`.
+- Junk `local_value = column_name` stubs are gone with the legacy table.
 
 ### Removed
 

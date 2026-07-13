@@ -20,7 +20,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     viewRaw === "map" || viewRaw === "table" || viewRaw === "schema"
       ? viewRaw
       : highlight
-        ? "table"
+        ? "map"
         : "";
 
   const accessToken = await locals.getAccessToken();
@@ -82,9 +82,15 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   // Find which page the highlighted row is on (25 rows per page)
   let highlightPage = 0;
   if (highlight && layer) {
-    const tableRows = allRows[layer] ?? [];
+    const tableNames = Object.keys(allRows);
+    const resolved =
+      allRows[layer] != null
+        ? layer
+        : (tableNames.find((t) => t.toLowerCase() === layer.toLowerCase()) ??
+          layer);
+    const tableRows = allRows[resolved] ?? [];
     const idx = tableRows.findIndex(
-      (r) => (r.source_id ?? r.SOURCE_ID ?? "") === highlight,
+      (r) => String(r.source_id ?? r.SOURCE_ID ?? "") === highlight,
     );
     if (idx >= 0) highlightPage = Math.floor(idx / 25);
   }

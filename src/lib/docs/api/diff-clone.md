@@ -56,7 +56,7 @@ Download a minimal SQLite stub file containing only specific non-system columns 
 ### Security
 
 - Only projects with `visibility = "public"` can serve stubs
-- Only columns with a vocabulary or CRM property annotation in `column_mappings` are exposed
+- Only columns with a vocabulary or CRM property annotation in `column_annotations` are exposed
 - System columns (prefixed with `_`) and geometry columns are excluded
 
 ### Response

@@ -1,11 +1,11 @@
 # TinyOwl Design Document
 
-**What's built, what's next. Authoritative reference for remaining work.**
+**What's built (tactical). Horizon roadmap and agent context live in the workspace `docs/` tree.**
 
-> Source of truth for this document lives in the workspace `docs/design_doc.md`.
-> This copy is served by the embedded docs site.
+> Source of truth: `docs/design_doc.md`, `docs/tinyowl_next.md`, `docs/HANDOFF.md`.
+> This copy is served by the embedded docs site — keep it aligned when those change.
 
-Last updated: 2026-07-11 (QField polish + mappings export + arch_date UI).
+Last updated: 2026-07-13 (mappings cutover + handoff).
 
 ---
 
@@ -29,7 +29,7 @@ TinyOwl is a collaborative archaeological data platform. Field teams work offlin
 | Column semantics | `tables/*.toml` | `column_annotations` |
 | Value → concept | DB + optional `mappings.toml` | `value_mappings` |
 
-**Rule:** Pushing TOML never deletes manual `value_mappings`. TOML/auto upserts skip `source=manual`.
+**Rule:** Pushing TOML never deletes manual `value_mappings`. TOML/auto upserts skip `source=manual`. Legacy `column_mappings` table is **dropped** (migration `024`).
 
 ---
 
@@ -42,10 +42,10 @@ TinyOwl is a collaborative archaeological data platform. Field teams work offlin
 | Temporal search (`date_from` / `date_to`) | ✅ |
 | Layers + search UI for `arch_date` | ✅ |
 | Array / enum TOML types | ✅ |
-| Auth (HS256 + ES256 JWKS + PAT) | ✅ |
-| Mappings split + UI tabs | ✅ |
+| Auth (HS256 + ES256 JWKS + PAT via `tinyowl login`) | ✅ |
+| Mappings split + UI tabs + legacy drop | ✅ |
 | `mappings.toml` export (CLI + web) | ✅ |
-| `/value-mappings` alias | ✅ |
+| `/value-mappings` (+ `/column-mappings` compat) | ✅ |
 | Similar projects | ✅ |
 | QGIS ValueRelation FK preservation | ✅ |
 | QFieldCloud bridge (link/unlink, `gpkg_name`) | ✅ |
@@ -56,6 +56,8 @@ TinyOwl is a collaborative archaeological data platform. Field teams work offlin
 
 ## Remaining priorities
 
+**See workspace `docs/tinyowl_next.md` (P0–P8).** Next up: import wizard (P0), then artefacts ∥ embeddings (P1∥P2).
+
 Skip: diff rewrite. Keep: `cli_tokens` (PATs).
 
 ---
@@ -64,5 +66,6 @@ Skip: diff rewrite. Keep: `cli_tokens` (PATs).
 
 - [TOML config](/docs/config/tinyowl-toml)
 - [Search API](/docs/api/search)
-- [Column mappings API](/docs/api/column-mappings)
+- [Mappings API](/docs/api/column-mappings)
 - [Concepts](/docs/concepts)
+- [Changelog](/docs/changelog)

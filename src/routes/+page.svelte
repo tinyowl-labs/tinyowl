@@ -18,6 +18,17 @@
     let { data }: { data: PageData } = $props();
     const hasSession = $derived(Boolean(data?.user));
     const centroids = $derived(data?.centroids ?? []);
+
+    /** Stable list — teaches query shapes without crowding the page */
+    const searchExamples = [
+        "neolithic pottery",
+        "bronze age anatolia",
+        "roman villa",
+        "zooarchaeology",
+        "rock art arnhem land",
+        "çatalhöyük",
+    ];
+
     onMount(() => {
         isMounted = true;
     });
@@ -45,6 +56,7 @@
             <div class="w-full max-w-2xl px-4">
                 <SearchInput
                     bind:value={query}
+                    examples={searchExamples}
                     class="border-2 border-border bg-card text-foreground placeholder:text-muted-foreground hover:shadow-md transition-all"
                 />
             </div>

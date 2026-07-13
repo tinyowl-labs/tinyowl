@@ -75,7 +75,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   let mappings: any[] = [];
   try {
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/${slug}/column-mappings`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/value-mappings`,
       { headers },
     );
     if (res.ok) mappings = await res.json();

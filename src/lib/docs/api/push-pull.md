@@ -168,13 +168,13 @@ curl -X POST http://localhost:8090/api/v1/my-org/my-project/push \
 
 After applying the diff, the server asynchronously:
 
-1. **Indexes column mappings** — Scans the canonical for tables and columns, creating `column_mappings` rows
-2. **Applies TOML annotations** — Updates mappings with vocabulary/property info from `X-TinyOwl-Toml`
-3. **Generates warnings** — Flags unmapped columns and vocab columns without value mappings
-4. **Indexes values** — Scans distinct data values for vocabulary-annotated columns
+1. **Indexes mappings** — Upserts `column_annotations` from TOML; scans distinct values into `value_mappings`
+2. **Applies TOML annotations** — Vocabulary / CRM property / range on columns (`source: "toml"`, skips manual annotations)
+3. **Generates warnings** — Flags unmapped vocab columns without value-level concept URIs
+4. **Indexes values** — Distinct data values for vocabulary / `arch_date` / array columns
 5. **Indexes media** — Reads `_media` table from canonical into `media_index`
 6. **Indexes spatial entities** — Extracts geometries into PostGIS `entity_spatial`
-7. **Updates project metadata** — Bounding box, entity/table counts, URIs
+7. **Updates project metadata** — Bounding box, entity/table counts, tags, dates, URIs
 
 ---
 

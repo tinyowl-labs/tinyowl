@@ -90,8 +90,12 @@ Authenticated per-project endpoints for syncing canonical GeoPackage data:
 | `POST` | `/api/v1/{org}/{project}/media` | Upload media files for a project |
 | `GET` | `/api/v1/{org}/{project}/stub/{table}/{columns}` | Download a SQLite stub for cross-reference |
 | `GET` | `/api/v1/{org}/{project}/layers/{table}/geojson` | Get table features as GeoJSON |
-| `GET` | `/api/v1/{org}/{project}/column-mappings` | List column mappings |
-| `PUT` | `/api/v1/{org}/{project}/column-mappings` | Create/update a column mapping |
+| `GET` | `/api/v1/{org}/{project}/value-mappings` | List value→concept mappings |
+| `PUT` | `/api/v1/{org}/{project}/value-mappings` | Create/update a value mapping |
+| `GET` | `/api/v1/{org}/{project}/column-annotations` | List column vocabulary / CRM annotations |
+| `PUT` | `/api/v1/{org}/{project}/column-annotations` | Upsert column annotation |
+
+Compat aliases: `/column-mappings` (+ `/bulk`) → same handlers as `/value-mappings`.
 
 ## CLI Auth Endpoints
 
@@ -113,7 +117,7 @@ Device-code flow for CLI authentication:
 | [Projects](/docs/api/projects/) | Create, read, update projects |
 | [Tables & Rows](/docs/api/tables/) | List tables and query rows |
 | [Members](/docs/api/members/) | Manage project membership and roles |
-| [Column Mappings](/docs/api/column-mappings/) | Link columns to vocabularies and CRM properties |
+| [Mappings](/docs/api/column-mappings/) | Value mappings + column annotations (vocab / CRM) |
 | [Search](/docs/api/search/) | Spatial search across projects |
 | [Readme](/docs/api/readme/) | Project README (Markdown) |
 | [Media](/docs/api/media/) | List and serve project media files |

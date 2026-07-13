@@ -43,6 +43,14 @@
     const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
 
+    /** Resolve ?layer= to an actual table name (case-insensitive). */
+    const resolvedLayer = $derived.by(() => {
+        if (!layerParam) return "";
+        if (tableNames.includes(layerParam)) return layerParam;
+        const lower = layerParam.toLowerCase();
+        return tableNames.find((t) => t.toLowerCase() === lower) ?? layerParam;
+    });
+
     const columnHelper = createColumnHelper<Record<string, unknown>>();
 
     /** Format arch_date JSON (or leave plain strings) for table display. */
@@ -151,21 +159,21 @@
 
     // Keep tab in sync with ?layer= from media/search deep links.
     $effect(() => {
-        if (layerParam && tableNames.includes(layerParam)) {
-            activeTab = layerParam;
+        if (resolvedLayer && tableNames.includes(resolvedLayer)) {
+            activeTab = resolvedLayer;
         } else if (!activeTab && tableNames.length > 0) {
             activeTab = tableNames[0];
         }
     });
 
     function handleTabChange(value: string) {
-        if (value === activeTab && value === layerParam) return;
+        if (value === activeTab && value === resolvedLayer) return;
         activeTab = value;
         const params = new URLSearchParams();
         params.set("layer", value);
         params.set("view", viewMode === "schema" ? "table" : viewMode);
         // Keep highlight only while staying on the highlighted layer.
-        if (highlightId && value === layerParam) {
+        if (highlightId && value === resolvedLayer) {
             params.set("highlight", highlightId);
         }
         goto(`/${$page.params.project}/layers?${params.toString()}`, {
@@ -192,7 +200,7 @@
             ) {
                 return viewParam;
             }
-            return highlightId ? "table" : "schema";
+            return "map";
         }),
     );
 
@@ -204,8 +212,6 @@
             viewParam === "schema"
         ) {
             viewMode = viewParam;
-        } else if (highlightId) {
-            viewMode = "table";
         }
     });
 
@@ -260,13 +266,10 @@
 
         mapLayers = results;
         // Ensure the highlighted layer is visible for deep links.
-        if (highlightId) {
-            const target = layerParam || activeTab;
-            if (target) {
-                mapLayers = mapLayers.map((l) =>
-                    l.name === target ? { ...l, visible: true } : l,
-                );
-            }
+        if (highlightId && resolvedLayer) {
+            mapLayers = mapLayers.map((l) =>
+                l.name === resolvedLayer ? { ...l, visible: true } : l,
+            );
         }
         mapLoading = false;
     }
@@ -351,13 +354,13 @@
                     class="ml-2 flex items-center rounded-md border border-border overflow-hidden"
                 >
                     <button
-                        onclick={() => setViewMode("schema")}
-                        class="px-2.5 py-1 text-xs {viewMode === 'schema'
+                        onclick={() => setViewMode("map")}
+                        class="px-2.5 py-1 text-xs {viewMode === 'map'
                             ? 'bg-secondary text-foreground font-medium'
                             : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                        title="Schema graph"
+                        title="Map view"
                     >
-                        <WaypointsIcon class="size-3.5" />
+                        <MapIcon class="size-3.5" />
                     </button>
                     <button
                         onclick={() => setViewMode("table")}
@@ -370,14 +373,14 @@
                         <TableIcon class="size-3.5" />
                     </button>
                     <button
-                        onclick={() => setViewMode("map")}
+                        onclick={() => setViewMode("schema")}
                         class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
-                        'map'
+                        'schema'
                             ? 'bg-secondary text-foreground font-medium'
                             : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                        title="Map view"
+                        title="Schema graph"
                     >
-                        <MapIcon class="size-3.5" />
+                        <WaypointsIcon class="size-3.5" />
                     </button>
                 </div>
             </div>
@@ -393,25 +396,17 @@
     </div>
 
     {#if tableNames.length > 0}
-        {#if viewMode === "schema"}
-            <div class="flex-1 min-h-0 flex flex-col">
-                <SchemaGraph
-                    tables={schemaTables}
-                    edges={schemaEdges}
-                    loading={schemaLoading}
-                />
-            </div>
-        {:else if viewMode === "map"}
+        {#if viewMode === "map"}
             <div class="flex-1 min-h-0">
                 <LayerMap
                     layers={mapLayers}
                     loading={mapLoading}
                     {rows}
                     {highlightId}
-                    highlightLayer={layerParam || activeTab}
+                    highlightLayer={resolvedLayer || activeTab}
                 />
             </div>
-        {:else}
+        {:else if viewMode === "table"}
             <div class="flex-1 min-h-0">
                 <Tabs value={activeTab} onValueChange={handleTabChange} {tabs}>
                     {#snippet children(tabValue: string)}
@@ -440,6 +435,14 @@
                         {/if}
                     {/snippet}
                 </Tabs>
+            </div>
+        {:else}
+            <div class="flex-1 min-h-0 flex flex-col">
+                <SchemaGraph
+                    tables={schemaTables}
+                    edges={schemaEdges}
+                    loading={schemaLoading}
+                />
             </div>
         {/if}
     {:else}
