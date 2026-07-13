@@ -13,6 +13,7 @@ export type SearchMatchHit = {
 };
 
 export type SearchProject = {
+  result_kind?: string;
   slug: string;
   title: string;
   description: string | null;
@@ -44,6 +45,8 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
       bbox: null,
       dateFrom: null,
       dateTo: null,
+      tags: [] as string[],
+      vocabularies: [] as string[],
       projects: [] as SearchProject[],
       accessToken: null as string | null,
     };
@@ -64,6 +67,8 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
   }
   if (parsed.dateFrom != null) params.set("date_from", String(parsed.dateFrom));
   if (parsed.dateTo != null) params.set("date_to", String(parsed.dateTo));
+  for (const t of parsed.tags) params.append("tag", t);
+  for (const v of parsed.vocabularies) params.append("vocab", v);
 
   let projects: SearchProject[] = [];
   try {
@@ -82,6 +87,8 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
     bbox: parsed.bbox,
     dateFrom: parsed.dateFrom,
     dateTo: parsed.dateTo,
+    tags: parsed.tags,
+    vocabularies: parsed.vocabularies,
     projects,
     accessToken,
   };

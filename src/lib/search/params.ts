@@ -1,4 +1,4 @@
-/** Shared URL vocabulary for `/search` discovery. */
+/** Shared URL vocabulary for `/search` discovery (QueryIR codec). */
 
 export type SearchBBox = {
   west: number;
@@ -15,6 +15,12 @@ export type SearchParams = {
   bbox: SearchBBox | null;
   dateFrom: number | null;
   dateTo: number | null;
+  /** AND facet filters (`?tag=` repeated) */
+  tags: string[];
+  /** Projects using these column_annotations.vocabulary values (`?vocab=`) */
+  vocabularies: string[];
+  /** Result kinds — scaffold; always project until mixed search ships */
+  types: string[];
 };
 
 export const DEFAULT_SEARCH_RADIUS = 5000;
@@ -32,6 +38,20 @@ export function parseBBox(raw: string | null | undefined): SearchBBox | null {
   if (south > north) [south, north] = [north, south];
   if (west < -180 || east > 180 || south < -90 || north > 90) return null;
   return { west, south, east, north };
+}
+
+function parseListParam(sp: URLSearchParams, key: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of sp.getAll(key)) {
+    const v = raw.trim();
+    if (!v) continue;
+    const k = v.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
+  return out;
 }
 
 export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
@@ -60,6 +80,9 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     bbox: parseBBox(sp.get("bbox")),
     dateFrom: dateFrom != null && !Number.isNaN(dateFrom) ? dateFrom : null,
     dateTo: dateTo != null && !Number.isNaN(dateTo) ? dateTo : null,
+    tags: parseListParam(sp, "tag"),
+    vocabularies: parseListParam(sp, "vocab"),
+    types: parseListParam(sp, "type"),
   };
 }
 
@@ -71,6 +94,9 @@ export function buildSearchParams(input: {
   bbox?: SearchBBox | null;
   dateFrom?: number | string | null;
   dateTo?: number | string | null;
+  tags?: string[] | null;
+  vocabularies?: string[] | null;
+  types?: string[] | null;
 }): URLSearchParams {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
@@ -107,6 +133,34 @@ export function buildSearchParams(input: {
     params.set("date_to", String(dt));
   }
 
+  const seenTag = new Set<string>();
+  for (const t of input.tags ?? []) {
+    const v = t.trim();
+    if (!v) continue;
+    const k = v.toLowerCase();
+    if (seenTag.has(k)) continue;
+    seenTag.add(k);
+    params.append("tag", v);
+  }
+  const seenVocab = new Set<string>();
+  for (const v of input.vocabularies ?? []) {
+    const s = v.trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seenVocab.has(k)) continue;
+    seenVocab.add(k);
+    params.append("vocab", s);
+  }
+  const seenType = new Set<string>();
+  for (const t of input.types ?? []) {
+    const s = t.trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seenType.has(k)) continue;
+    seenType.add(k);
+    params.append("type", s);
+  }
+
   return params;
 }
 
@@ -122,7 +176,10 @@ export function hasActiveSearch(p: SearchParams): boolean {
     p.bbox != null ||
     (p.lat != null && p.lng != null) ||
     p.dateFrom != null ||
-    p.dateTo != null
+    p.dateTo != null ||
+    p.tags.length > 0 ||
+    p.vocabularies.length > 0 ||
+    p.types.length > 0
   );
 }
 

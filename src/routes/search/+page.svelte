@@ -2,7 +2,7 @@
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
     import Header from "$lib/components/ui/header.svelte";
-    import SearchInput from "$lib/components/SearchInput.svelte";
+    import SearchComposer from "$lib/components/SearchComposer.svelte";
     import SpatialMap from "$lib/components/SpatialMap.svelte";
     import TemporalRangeFilter from "$lib/components/TemporalRangeFilter.svelte";
     import LayersIcon from "@lucide/svelte/icons/layers";
@@ -50,6 +50,8 @@
         bbox: SearchBBox | null;
         dateFrom: number | null;
         dateTo: number | null;
+        tags: string[];
+        vocabularies: string[];
         projects: SearchProject[];
     };
 
@@ -63,6 +65,8 @@
     let searchBBox = $state<SearchBBox | null>(untrack(() => data.bbox));
     let dateFrom = $state(untrack(() => data.dateFrom?.toString() ?? ""));
     let dateTo = $state(untrack(() => data.dateTo?.toString() ?? ""));
+    let tags = $state<string[]>(untrack(() => data.tags ?? []));
+    let vocabularies = $state<string[]>(untrack(() => data.vocabularies ?? []));
 
     $effect(() => {
         query = data.query || "";
@@ -72,6 +76,8 @@
         searchBBox = data.bbox;
         dateFrom = data.dateFrom?.toString() ?? "";
         dateTo = data.dateTo?.toString() ?? "";
+        tags = data.tags ?? [];
+        vocabularies = data.vocabularies ?? [];
     });
 
     const activeQuery = $derived(
@@ -83,6 +89,9 @@
             bbox: data.bbox,
             dateFrom: data.dateFrom,
             dateTo: data.dateTo,
+            tags: data.tags ?? [],
+            vocabularies: data.vocabularies ?? [],
+            types: [],
         } satisfies SearchParams),
     );
 
@@ -123,6 +132,8 @@
             bbox: SearchBBox | null;
             dateFrom: string | number | null;
             dateTo: string | number | null;
+            tags: string[];
+            vocabularies: string[];
         }> = {},
     ) {
         const nextBBox =
@@ -149,6 +160,11 @@
                         : dateFrom,
                 dateTo:
                     overrides.dateTo !== undefined ? overrides.dateTo : dateTo,
+                tags: overrides.tags !== undefined ? overrides.tags : tags,
+                vocabularies:
+                    overrides.vocabularies !== undefined
+                        ? overrides.vocabularies
+                        : vocabularies,
             }),
         );
     }
@@ -286,8 +302,10 @@
 
     <main class="flex-1 w-full mx-auto px-4 py-4 max-w-6xl">
         <div class="mb-4">
-            <SearchInput
+            <SearchComposer
                 bind:value={query}
+                {tags}
+                {vocabularies}
                 lat={centerLat}
                 lng={centerLng}
                 {radius}

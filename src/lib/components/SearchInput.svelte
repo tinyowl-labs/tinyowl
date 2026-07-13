@@ -97,6 +97,8 @@
                 bbox,
                 dateFrom,
                 dateTo,
+                tags: [],
+                vocabularies: [],
             }),
         );
     }

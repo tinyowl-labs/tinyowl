@@ -3,7 +3,7 @@
     import Header from "$lib/components/ui/header.svelte";
     import OwlLogo from "$lib/components/ui/owl-logo.svelte";
     import ProjectMap from "$lib/components/ProjectMap.svelte";
-    import SearchInput from "$lib/components/SearchInput.svelte";
+    import SearchComposer from "$lib/components/SearchComposer.svelte";
     import type { Centroid } from "./+page.server";
 
     type PageData = {
@@ -53,8 +53,8 @@
                 >
             </div>
 
-            <div class="w-full max-w-2xl px-4">
-                <SearchInput
+            <div class="relative z-30 w-full max-w-2xl px-4">
+                <SearchComposer
                     bind:value={query}
                     examples={searchExamples}
                     class="border-2 border-border bg-card text-foreground placeholder:text-muted-foreground hover:shadow-md transition-all"
@@ -63,7 +63,7 @@
         {/if}
 
         {#if centroids.length > 0}
-            <div class="search-vt-home-map w-full max-w-6xl px-4 mt-10 mb-8">
+            <div class="search-vt-home-map relative z-0 w-full max-w-6xl px-4 mt-10 mb-8">
                 <ProjectMap {centroids} class="h-[50vh]" />
             </div>
         {/if}
