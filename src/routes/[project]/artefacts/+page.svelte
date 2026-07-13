@@ -7,6 +7,7 @@
     import MusicIcon from "@lucide/svelte/icons/music";
     import FileTextIcon from "@lucide/svelte/icons/file-text";
     import FileWarningIcon from "@lucide/svelte/icons/file-warning";
+    import AlertTriangleIcon from "@lucide/svelte/icons/alert-triangle";
     import XIcon from "@lucide/svelte/icons/x";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -14,10 +15,16 @@
     import MapPinIcon from "@lucide/svelte/icons/map-pin";
     import { onMount } from "svelte";
     import { entityLayersHref } from "$lib/project/entityLink";
+    import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
 
     let { data } = $props();
 
     const accessToken = $derived(data?.accessToken ?? "");
+    const canUpload = $derived(
+        ["owner", "admin", "collaborator"].includes(
+            String((data as any)?.role ?? "viewer"),
+        ),
+    );
 
     interface MediaItem {
         hash: string;
@@ -45,12 +52,43 @@
 
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
+    let missingCount = $state(0);
+    let integrityChecked = $state(false);
 
     function onImageLoad(hash: string) {
         loadedImages = new Set([...loadedImages, hash]);
     }
     function onImageError(hash: string) {
         failedImages = new Set([...failedImages, hash]);
+    }
+
+    async function reloadShelf() {
+        items = [];
+        offset = 0;
+        hasMore = true;
+        totalItems = 0;
+        await loadMore();
+        await checkIntegrity();
+    }
+
+    async function checkIntegrity() {
+        try {
+            const slug = $page.params.project;
+            const res = await fetch(
+                `/api/v1/projects/${slug}/media/integrity`,
+                accessToken
+                    ? { headers: { Authorization: `Bearer ${accessToken}` } }
+                    : {},
+            );
+            if (!res.ok) return;
+            const body = await res.json();
+            missingCount = Array.isArray(body.missing_blobs)
+                ? body.missing_blobs.length
+                : 0;
+            integrityChecked = true;
+        } catch {
+            /* advisory */
+        }
     }
 
     function mediaUrl(item: MediaItem): string {
@@ -159,6 +197,7 @@
 
     onMount(() => {
         loadMore();
+        checkIntegrity();
     });
 
     $effect(() => {
@@ -202,13 +241,13 @@
     function filterCount(id: TypeFilter): number | null {
         if (id === "all") return totalItems || items.length || null;
         if (id === "pdf") {
-            // Server counts by MIME top-level ("application"); refine client-side once loaded
-            const n = items.filter((it) => isPdf(it)).length;
-            return n || null;
+            return typeCounts.pdf != null ? typeCounts.pdf : null;
         }
         if (id === "other") {
-            const n = items.filter((it) => kindOf(it) === "other").length;
-            return n || null;
+            const app = typeCounts.application ?? 0;
+            const pdf = typeCounts.pdf ?? 0;
+            const n = app - pdf;
+            return n > 0 ? n : null;
         }
         const n = typeCounts[id];
         return n != null ? n : null;
@@ -263,6 +302,28 @@
             {/each}
         </div>
     </div>
+
+    {#if integrityChecked && missingCount > 0}
+        <div
+            class="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+        >
+            <AlertTriangleIcon class="size-4 shrink-0 text-amber-600 mt-0.5" />
+            <p>
+                <span class="font-medium">{missingCount} media file{missingCount === 1 ? "" : "s"}</span>
+                indexed but missing on disk. Re-push media or restore blobs.
+            </p>
+        </div>
+    {/if}
+
+    {#if canUpload}
+        <div class="mb-4">
+            <MediaUpload
+                projectSlug={$page.params.project}
+                {accessToken}
+                onUploaded={reloadShelf}
+            />
+        </div>
+    {/if}
 
     <div
         class="flex-1 min-h-0 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)] lg:items-stretch"
