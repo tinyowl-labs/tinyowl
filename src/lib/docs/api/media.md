@@ -64,6 +64,9 @@ Upload-only index rows **survive** subsequent GPKG push reindexes (only GPKG `_m
 GET /api/v1/projects/{slug}/media/integrity
 ```
 
+Reports `media_index` rows whose content-addressed blobs are missing from **both**
+local disk and Supabase Storage. `orphan_blobs` are local files not present in the index.
+
 ```json
 {
   "ok": false,

@@ -35,6 +35,7 @@
             String((data as any)?.role ?? "viewer"),
         ),
     );
+    const isMember = $derived(Boolean((data as any)?.isMember));
     const projectMeta = $derived(
         ($page.data?.project ?? null) as {
             date_start?: number | null;
@@ -95,7 +96,6 @@
     >([]);
     let similarStatus = $state("");
     let similarLoading = $state(false);
-    let similarRefineOpen = $state(false);
     let similarSamePeriod = $state(false);
     let similarSameRegion = $state(false);
     let similarTag = $state("");
@@ -106,6 +106,7 @@
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
     let missingCount = $state(0);
+    let storageChecked = $state(false);
     let integrityChecked = $state(false);
 
     function onImageLoad(hash: string) {
@@ -139,6 +140,14 @@
     }
 
     async function checkIntegrity() {
+        // Viewers / non-members won't have a local checkout — don't scare them
+        // with blob-cache diagnostics meant for collaborators.
+        if (!isMember && !canUpload) {
+            missingCount = 0;
+            storageChecked = false;
+            integrityChecked = true;
+            return;
+        }
         try {
             const slug = $page.params.project;
             const res = await fetch(
@@ -152,6 +161,7 @@
             missingCount = Array.isArray(body.missing_blobs)
                 ? body.missing_blobs.length
                 : 0;
+            storageChecked = Boolean(body.storage_checked);
             integrityChecked = true;
         } catch {
             /* advisory */
@@ -221,7 +231,6 @@
         similarItems = [];
         similarStatus = "";
         similarFetched = false;
-        similarRefineOpen = false;
     }
 
     function similarQueryParams(): URLSearchParams {
@@ -332,19 +341,6 @@
             }
         }, 200);
     }
-
-    const similarFilterChips = $derived.by(() => {
-        const chips: string[] = [];
-        if (similarSamePeriod && projectPeriod) {
-            chips.push(
-                formatDateSpan(projectPeriod.dateFrom, projectPeriod.dateTo) ??
-                    "period",
-            );
-        }
-        if (similarSameRegion && projectRegion) chips.push("region");
-        if (similarTag.trim()) chips.push(`tag:${similarTag.trim()}`);
-        return chips;
-    });
 
     function openViewer() {
         if (!selected) return;
@@ -554,18 +550,31 @@
         </div>
     </div>
 
-    {#if integrityChecked && missingCount > 0}
+    {#if integrityChecked && missingCount > 0 && (isMember || canUpload)}
         <div
-            class="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+            class="mb-3 flex items-start gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground"
         >
-            <AlertTriangleIcon class="size-4 shrink-0 text-amber-600 mt-0.5" />
+            <AlertTriangleIcon class="size-4 shrink-0 text-muted-foreground mt-0.5" />
             <p>
-                <span class="font-medium"
-                    >{missingCount} media file{missingCount === 1
-                        ? ""
-                        : "s"}</span
-                >
-                indexed but missing on disk. Re-push media or restore blobs.
+                {#if storageChecked}
+                    <span class="text-foreground"
+                        >{missingCount} indexed file{missingCount === 1
+                            ? ""
+                            : "s"}</span
+                    >
+                    could not be found on this server or in cloud storage. If
+                    previews fail, re-push media from a machine that has the
+                    blobs.
+                {:else}
+                    <span class="text-foreground"
+                        >{missingCount} indexed file{missingCount === 1
+                            ? ""
+                            : "s"}</span
+                    >
+                    are not in this server’s local cache. Cloud storage is not
+                    configured here — files may still load once storage is
+                    connected, or after a collaborator re-pushes media.
+                {/if}
             </p>
         </div>
     {/if}
@@ -621,9 +630,9 @@
                                 selectItem(item);
                                 if (isImage) openViewer();
                             }}
-                            class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring {active
-                                ? 'ring-2 ring-primary ring-offset-1 ring-offset-background'
-                                : 'hover:ring-1 hover:ring-border'}"
+                            class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 outline-none transition-[box-shadow] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {active
+                                ? ''
+                                : 'hover:shadow-[inset_0_0_0_1px_var(--color-border)]'}"
                             title={item.entities[0]
                                 ? `${entityLabel(item.entities[0].entity_type)} · ${item.entities[0].entity_id}`
                                 : item.media_type}
@@ -671,9 +680,15 @@
                                     {/if}
                                 </div>
                             {/if}
+                            {#if active}
+                                <span
+                                    class="pointer-events-none absolute inset-0 z-10 rounded-md border-2 border-primary"
+                                    aria-hidden="true"
+                                ></span>
+                            {/if}
                             {#if item.entities.length > 0}
                                 <span
-                                    class="pointer-events-none absolute bottom-1 left-1 rounded bg-background/80 px-1 py-0.5 text-[10px] text-foreground/80 opacity-0 transition-opacity group-hover:opacity-100 {active
+                                    class="pointer-events-none absolute bottom-1 left-1 z-20 rounded bg-background/80 px-1 py-0.5 text-[10px] text-foreground/80 opacity-0 transition-opacity group-hover:opacity-100 {active
                                         ? 'opacity-100'
                                         : ''}"
                                 >
@@ -737,223 +752,221 @@
                             {formatBytes(selected.file_size)}
                         </p>
                     </div>
-                    <div class="flex items-center gap-1 shrink-0">
-                        {#if pdf}
-                            <a
-                                href={mediaUrl(selected)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors"
-                                title="Open in new tab"
-                            >
-                                <ExternalLinkIcon class="size-3" />
-                                Open
-                            </a>
-                        {/if}
-                        {#if isImage}
-                            <button
-                                type="button"
-                                onclick={findSimilar}
-                                disabled={similarLoading}
-                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                            >
-                                <SparklesIcon class="size-3" />
-                                {similarLoading ? "…" : "Similar"}
-                            </button>
-                            <button
-                                type="button"
-                                onclick={() =>
-                                    (similarRefineOpen = !similarRefineOpen)}
-                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                                title="Refine similar search"
-                            >
-                                Refine
-                            </button>
-                        {/if}
-                        {#if isImage || pdf}
-                            <button
-                                type="button"
-                                onclick={openViewer}
-                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                                <Maximize2Icon class="size-3" />
-                                Expand
-                            </button>
-                        {/if}
-                    </div>
+                    {#if pdf}
+                        <a
+                            href={mediaUrl(selected)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors shrink-0"
+                            title="Open in new tab"
+                        >
+                            <ExternalLinkIcon class="size-3" />
+                            Open
+                        </a>
+                    {/if}
                 </div>
 
-                <div
-                    class="relative min-h-0 {pdf
-                        ? 'flex-1'
-                        : 'aspect-[4/3] shrink-0'} bg-neutral-900/90"
-                >
-                    {#if isImage}
-                        <img
-                            src={mediaUrl(selected)}
-                            alt=""
-                            class="h-full w-full object-contain"
-                        />
-                    {:else if isVideo}
-                        <video
-                            src={mediaUrl(selected)}
-                            controls
-                            class="h-full w-full object-contain"
-                        ></video>
-                    {:else if isAudio}
-                        <div
-                            class="flex h-full flex-col items-center justify-center gap-3 px-4 bg-secondary/40"
-                        >
-                            <MusicIcon
-                                class="size-8 text-muted-foreground/50"
+                <!-- Preview: click / hover expands images & PDFs -->
+                {#if isImage || pdf}
+                    <button
+                        type="button"
+                        onclick={openViewer}
+                        class="group/preview relative min-h-0 {pdf
+                            ? 'flex-1'
+                            : 'aspect-[4/3] shrink-0'} bg-neutral-900/90 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        title="Expand"
+                    >
+                        {#if isImage}
+                            <img
+                                src={mediaUrl(selected)}
+                                alt=""
+                                class="h-full w-full object-contain"
                             />
-                            <audio
+                        {:else}
+                            <iframe
+                                title="PDF preview"
+                                src={mediaUrl(selected, { pdfFit: true })}
+                                class="pointer-events-none absolute inset-0 h-full w-full border-0"
+                            ></iframe>
+                        {/if}
+                        <span
+                            class="pointer-events-none absolute inset-0 bg-black/0 transition-colors group-hover/preview:bg-black/25"
+                        ></span>
+                        <span
+                            class="pointer-events-none absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-background/90 px-2 py-1 text-[11px] text-foreground opacity-0 shadow-sm transition-opacity group-hover/preview:opacity-100 group-focus-visible/preview:opacity-100"
+                        >
+                            <Maximize2Icon class="size-3" />
+                            Expand
+                        </span>
+                    </button>
+                {:else}
+                    <div
+                        class="relative aspect-[4/3] shrink-0 bg-neutral-900/90"
+                    >
+                        {#if isVideo}
+                            <video
                                 src={mediaUrl(selected)}
                                 controls
-                                class="w-full"
-                            ></audio>
-                        </div>
-                    {:else if pdf}
-                        <iframe
-                            title="PDF preview"
-                            src={mediaUrl(selected, { pdfFit: true })}
-                            class="absolute inset-0 h-full w-full border-0"
-                        ></iframe>
-                    {:else}
-                        <div
-                            class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground bg-secondary/40"
-                        >
-                            <FileWarningIcon class="size-8 opacity-50" />
-                            <span class="text-xs">{selected.media_type}</span>
-                        </div>
-                    {/if}
-                </div>
+                                class="h-full w-full object-contain"
+                            ></video>
+                        {:else if isAudio}
+                            <div
+                                class="flex h-full flex-col items-center justify-center gap-3 px-4 bg-secondary/40"
+                            >
+                                <MusicIcon
+                                    class="size-8 text-muted-foreground/50"
+                                />
+                                <audio
+                                    src={mediaUrl(selected)}
+                                    controls
+                                    class="w-full"
+                                ></audio>
+                            </div>
+                        {:else}
+                            <div
+                                class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground bg-secondary/40"
+                            >
+                                <FileWarningIcon class="size-8 opacity-50" />
+                                <span class="text-xs">{selected.media_type}</span>
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
 
-                <div class="shrink-0 border-t border-border p-3 space-y-3">
-                    {#if isImage && similarRefineOpen}
-                        <div class="space-y-2 rounded-md border border-border bg-secondary/30 p-2">
-                            <p
-                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                <div
+                    class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto border-t border-border p-3"
+                >
+                    {#if isImage}
+                        <section class="flex min-h-0 flex-1 flex-col gap-2">
+                            <div
+                                class="flex items-center justify-between gap-2 shrink-0"
                             >
-                                Refine similar
-                            </p>
-                            <label
-                                class="flex items-center gap-2 text-xs {!projectPeriod
-                                    ? 'opacity-40'
-                                    : ''}"
+                                <p
+                                    class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                                >
+                                    Similar
+                                </p>
+                                <button
+                                    type="button"
+                                    onclick={findSimilar}
+                                    disabled={similarLoading}
+                                    class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                                >
+                                    <SparklesIcon class="size-3" />
+                                    {similarLoading
+                                        ? "Searching…"
+                                        : similarFetched
+                                          ? "Refresh"
+                                          : "Find similar"}
+                                </button>
+                            </div>
+
+                            <div
+                                class="flex flex-wrap items-center gap-1.5 shrink-0"
                             >
-                                <input
-                                    type="checkbox"
-                                    checked={similarSamePeriod}
+                                <button
+                                    type="button"
                                     disabled={!projectPeriod}
-                                    onchange={(e) =>
-                                        setSamePeriod(e.currentTarget.checked)}
-                                />
-                                Same period as this project
-                                {#if projectPeriod}
-                                    <span class="text-muted-foreground">
-                                        ({formatDateSpan(
-                                            projectPeriod.dateFrom,
-                                            projectPeriod.dateTo,
-                                        )})
-                                    </span>
-                                {/if}
-                            </label>
-                            <label
-                                class="flex items-center gap-2 text-xs {!projectRegion
-                                    ? 'opacity-40'
-                                    : ''}"
-                            >
-                                <input
-                                    type="checkbox"
-                                    checked={similarSameRegion}
+                                    onclick={() =>
+                                        setSamePeriod(!similarSamePeriod)}
+                                    class="rounded-md border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-40 {similarSamePeriod
+                                        ? 'border-primary/50 bg-primary/10 text-foreground'
+                                        : 'border-border bg-background text-muted-foreground hover:text-foreground'}"
+                                    title={projectPeriod
+                                        ? (formatDateSpan(
+                                              projectPeriod.dateFrom,
+                                              projectPeriod.dateTo,
+                                          ) ?? "Same period")
+                                        : "No project period set"}
+                                >
+                                    Period
+                                </button>
+                                <button
+                                    type="button"
                                     disabled={!projectRegion}
-                                    onchange={(e) =>
-                                        setSameRegion(e.currentTarget.checked)}
-                                />
-                                Same region as this project
-                            </label>
-                            <div class="space-y-1">
+                                    onclick={() =>
+                                        setSameRegion(!similarSameRegion)}
+                                    class="rounded-md border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-40 {similarSameRegion
+                                        ? 'border-primary/50 bg-primary/10 text-foreground'
+                                        : 'border-border bg-background text-muted-foreground hover:text-foreground'}"
+                                    title={projectRegion
+                                        ? "Same region as this project"
+                                        : "No project region set"}
+                                >
+                                    Region
+                                </button>
                                 {#if similarTag}
-                                    <div class="flex items-center gap-1">
-                                        <span
-                                            class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px]"
+                                    <span
+                                        class="inline-flex items-center gap-1 rounded-md border border-primary/50 bg-primary/10 px-2 py-0.5 text-[11px] text-foreground"
+                                    >
+                                        {similarTag}
+                                        <button
+                                            type="button"
+                                            class="text-muted-foreground hover:text-foreground"
+                                            onclick={clearSimilarTag}
+                                            aria-label="Clear tag"
                                         >
-                                            {similarTag}
-                                            <button
-                                                type="button"
-                                                class="text-muted-foreground hover:text-foreground"
-                                                onclick={clearSimilarTag}
-                                                aria-label="Clear tag"
-                                            >
-                                                ×
-                                            </button>
-                                        </span>
-                                    </div>
+                                            ×
+                                        </button>
+                                    </span>
                                 {:else}
-                                    <input
-                                        type="text"
-                                        bind:value={similarTagInput}
-                                        oninput={onSimilarTagInput}
-                                        onkeydown={(e) => {
-                                            if (e.key === "Enter") {
-                                                e.preventDefault();
-                                                if (similarTagInput.trim()) {
-                                                    applySimilarTag(
-                                                        similarTagInput,
-                                                    );
+                                    <div class="relative min-w-[7rem] flex-1">
+                                        <input
+                                            type="text"
+                                            bind:value={similarTagInput}
+                                            oninput={onSimilarTagInput}
+                                            onkeydown={(e) => {
+                                                if (e.key === "Enter") {
+                                                    e.preventDefault();
+                                                    if (similarTagInput.trim()) {
+                                                        applySimilarTag(
+                                                            similarTagInput,
+                                                        );
+                                                    }
                                                 }
-                                            }
-                                        }}
-                                        placeholder="Filter by one tag…"
-                                        class="w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-                                    />
-                                    {#if similarTagSuggestions.length > 0}
-                                        <ul
-                                            class="max-h-24 overflow-auto rounded-md border border-border bg-background text-xs"
-                                        >
-                                            {#each similarTagSuggestions as sug}
-                                                <li>
-                                                    <button
-                                                        type="button"
-                                                        class="w-full px-2 py-1 text-left hover:bg-secondary/60"
-                                                        onclick={() =>
-                                                            applySimilarTag(sug)}
-                                                    >
-                                                        {sug}
-                                                    </button>
-                                                </li>
-                                            {/each}
-                                        </ul>
-                                    {/if}
+                                            }}
+                                            placeholder="Tag…"
+                                            class="w-full rounded-md border border-border bg-background px-2 py-0.5 text-[11px] text-foreground placeholder:text-muted-foreground"
+                                        />
+                                        {#if similarTagSuggestions.length > 0}
+                                            <ul
+                                                class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-28 overflow-auto rounded-md border border-border bg-background text-[11px] shadow-sm"
+                                            >
+                                                {#each similarTagSuggestions as sug}
+                                                    <li>
+                                                        <button
+                                                            type="button"
+                                                            class="w-full px-2 py-1 text-left hover:bg-secondary/60"
+                                                            onclick={() =>
+                                                                applySimilarTag(
+                                                                    sug,
+                                                                )}
+                                                        >
+                                                            {sug}
+                                                        </button>
+                                                    </li>
+                                                {/each}
+                                            </ul>
+                                        {/if}
+                                    </div>
                                 {/if}
                             </div>
-                            {#if similarFilterChips.length > 0}
-                                <p class="text-[10px] text-muted-foreground">
-                                    Active: {similarFilterChips.join(" · ")}
-                                </p>
-                            {/if}
-                        </div>
-                    {/if}
 
-                    {#if similarItems.length > 0 || similarStatus}
-                        <div>
-                            <p
-                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1.5"
-                            >
-                                Similar photos
-                            </p>
                             {#if similarStatus && similarItems.length === 0}
                                 <p class="text-xs text-muted-foreground">
                                     {similarStatus}
                                 </p>
-                            {:else}
-                                <div class="grid grid-cols-3 gap-1">
+                            {:else if similarItems.length > 0}
+                                <div
+                                    class="grid min-h-0 flex-1 content-start grid-cols-3 gap-1.5"
+                                >
                                     {#each similarItems as sim}
                                         <button
                                             type="button"
                                             class="aspect-square overflow-hidden rounded-md bg-secondary/60"
-                                            title="{sim.project_title} · {sim.distance.toFixed(3)}"
+                                            title="{sim.project_title} · {sim.distance.toFixed(
+                                                3,
+                                            )}"
                                             onclick={() => {
                                                 if (
                                                     sim.project_slug ===
@@ -986,69 +999,76 @@
                                         </button>
                                     {/each}
                                 </div>
+                            {:else if !similarFetched}
+                                <p class="text-xs text-muted-foreground">
+                                    Find visually similar photos across projects.
+                                    Optionally narrow by period, region, or tag.
+                                </p>
                             {/if}
-                        </div>
+                        </section>
                     {/if}
 
-                    <div>
-                        <p
-                            class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1.5"
-                        >
-                            Linked entities
-                        </p>
-                        {#if links.length === 0}
-                            <p class="text-xs text-muted-foreground">
-                                Not linked to an entity
+                    <div class="shrink-0 space-y-3">
+                        <div>
+                            <p
+                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1.5"
+                            >
+                                Linked entities
                             </p>
-                        {:else}
-                            <ul class="space-y-0.5">
-                                {#each links as entity}
-                                    <li>
-                                        <a
-                                            href={entityLink(
-                                                entity.entity_type,
-                                                entity.entity_id,
-                                            )}
-                                            class="group flex items-center gap-2 rounded-md px-2 py-1.5 -mx-1 text-xs no-underline hover:bg-accent/60 transition-colors"
-                                        >
-                                            <MapPinIcon
-                                                class="size-3.5 shrink-0 text-muted-foreground"
-                                            />
-                                            <span
-                                                class="min-w-0 flex-1 truncate text-foreground"
-                                            >
-                                                {entityLabel(
-                                                    entity.entity_type,
-                                                )}
-                                            </span>
-                                            <span
-                                                class="font-mono text-[10px] text-muted-foreground truncate max-w-[40%]"
-                                            >
-                                                {entity.entity_id}
-                                            </span>
-                                        </a>
-                                    </li>
-                                {/each}
-                            </ul>
-                        {/if}
-                    </div>
-
-                    <div
-                        class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
-                    >
-                        <button
-                            type="button"
-                            class="inline-flex items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 font-mono hover:border-border hover:bg-background hover:text-foreground transition-colors"
-                            title={selected.hash}
-                            onclick={() => copyHash(selected.hash)}
-                        >
-                            {#if hashCopied}
-                                <CheckIcon class="size-3 text-foreground" />
+                            {#if links.length === 0}
+                                <p class="text-xs text-muted-foreground">
+                                    Not linked to an entity
+                                </p>
                             {:else}
-                                <CopyIcon class="size-3" />
+                                <ul class="space-y-0.5">
+                                    {#each links as entity}
+                                        <li>
+                                            <a
+                                                href={entityLink(
+                                                    entity.entity_type,
+                                                    entity.entity_id,
+                                                )}
+                                                class="group flex items-center gap-2 rounded-md px-2 py-1.5 -mx-1 text-xs no-underline hover:bg-accent/60 transition-colors"
+                                            >
+                                                <MapPinIcon
+                                                    class="size-3.5 shrink-0 text-muted-foreground"
+                                                />
+                                                <span
+                                                    class="min-w-0 flex-1 truncate text-foreground"
+                                                >
+                                                    {entityLabel(
+                                                        entity.entity_type,
+                                                    )}
+                                                </span>
+                                                <span
+                                                    class="font-mono text-[10px] text-muted-foreground truncate max-w-[40%]"
+                                                >
+                                                    {entity.entity_id}
+                                                </span>
+                                            </a>
+                                        </li>
+                                    {/each}
+                                </ul>
                             {/if}
-                            {shortHash(selected.hash)}
-                        </button>
+                        </div>
+
+                        <div
+                            class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                        >
+                            <button
+                                type="button"
+                                class="inline-flex items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 font-mono hover:border-border hover:bg-background hover:text-foreground transition-colors"
+                                title={selected.hash}
+                                onclick={() => copyHash(selected.hash)}
+                            >
+                                {#if hashCopied}
+                                    <CheckIcon class="size-3 text-foreground" />
+                                {:else}
+                                    <CopyIcon class="size-3" />
+                                {/if}
+                                {shortHash(selected.hash)}
+                            </button>
+                        </div>
                     </div>
                 </div>
             {:else}
@@ -1094,15 +1114,6 @@
                         >
                             Open
                         </a>
-                    {/if}
-                    {#if selected.media_type.startsWith("image/") || pdf}
-                        <button
-                            type="button"
-                            onclick={openViewer}
-                            class="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
-                        >
-                            Expand
-                        </button>
                     {/if}
                     <button
                         type="button"
