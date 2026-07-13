@@ -13,6 +13,9 @@
     import ChevronRight from "@lucide/svelte/icons/chevron-right";
     import Maximize2Icon from "@lucide/svelte/icons/maximize-2";
     import MapPinIcon from "@lucide/svelte/icons/map-pin";
+    import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
+    import CopyIcon from "@lucide/svelte/icons/copy";
+    import CheckIcon from "@lucide/svelte/icons/check";
     import { onMount } from "svelte";
     import { entityLayersHref } from "$lib/project/entityLink";
     import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
@@ -49,6 +52,7 @@
     let typeFilter = $state<TypeFilter>("all");
     let selectedHash = $state<string | null>(null);
     let viewerOpen = $state(false);
+    let hashCopied = $state(false);
 
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
@@ -62,13 +66,27 @@
         failedImages = new Set([...failedImages, hash]);
     }
 
-    async function reloadShelf() {
+    let loadGen = 0;
+
+    async function reloadShelf(opts?: { preferType?: TypeFilter }) {
+        if (opts?.preferType) typeFilter = opts.preferType;
+        await resetAndLoad();
+        await checkIntegrity();
+    }
+
+    async function resetAndLoad() {
+        const gen = ++loadGen;
         items = [];
         offset = 0;
         hasMore = true;
-        totalItems = 0;
-        await loadMore();
-        await checkIntegrity();
+        loading = false;
+        await loadMore(gen);
+    }
+
+    function setTypeFilter(id: TypeFilter) {
+        if (typeFilter === id) return;
+        typeFilter = id;
+        resetAndLoad();
     }
 
     async function checkIntegrity() {
@@ -91,29 +109,46 @@
         }
     }
 
-    function mediaUrl(item: MediaItem): string {
-        return (
+    function mediaUrl(item: MediaItem, opts?: { pdfFit?: boolean }): string {
+        const base =
             item.url +
-            (accessToken ? `?token=${encodeURIComponent(accessToken)}` : "")
-        );
-    }
-
-    function kindOf(item: MediaItem): TypeFilter {
-        if (item.media_type === "application/pdf") return "pdf";
-        const t = item.media_type.split("/")[0] || "other";
-        if (t === "image" || t === "video" || t === "audio") return t;
-        return "other";
+            (accessToken ? `?token=${encodeURIComponent(accessToken)}` : "");
+        if (opts?.pdfFit && item.media_type === "application/pdf") {
+            // Fit page width in the embedded viewer; hide chrome where supported.
+            return `${base}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`;
+        }
+        return base;
     }
 
     function isPdf(item: MediaItem): boolean {
         return item.media_type === "application/pdf";
     }
 
-    const filtered = $derived(
-        typeFilter === "all"
-            ? items
-            : items.filter((it) => kindOf(it) === typeFilter),
-    );
+    function linkedEntities(item: MediaItem) {
+        return item.entities.filter(
+            (e) =>
+                e.entity_id.trim() !== "" &&
+                e.entity_type.trim() !== "" &&
+                e.entity_type !== "unknown",
+        );
+    }
+
+    function shortHash(hash: string): string {
+        return hash.length > 16 ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : hash;
+    }
+
+    async function copyHash(hash: string) {
+        try {
+            await navigator.clipboard.writeText(hash);
+            hashCopied = true;
+            setTimeout(() => (hashCopied = false), 1500);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    // Server already filters by type; keep a local alias for the grid.
+    const filtered = $derived(items);
 
     const selected = $derived(
         selectedHash
@@ -133,10 +168,16 @@
 
     function selectItem(item: MediaItem) {
         selectedHash = item.hash;
+        hashCopied = false;
     }
 
     function openViewer() {
-        if (!selected?.media_type.startsWith("image/")) return;
+        if (!selected) return;
+        if (
+            !selected.media_type.startsWith("image/") &&
+            !isPdf(selected)
+        )
+            return;
         viewerOpen = true;
     }
 
@@ -164,34 +205,51 @@
         if (e.key === "Escape") selectedHash = null;
     }
 
-    async function loadMore() {
-        if (loading || !hasMore) return;
+    async function loadMore(gen = loadGen) {
+        if (loading || !hasMore || gen !== loadGen) return;
         loading = true;
         error = "";
+        const filter = typeFilter;
+        const at = offset;
         try {
             const slug = $page.params.project;
+            const typeParam =
+                filter !== "all" ? `&type=${encodeURIComponent(filter)}` : "";
             const res = await fetch(
-                `/api/v1/projects/${slug}/media?offset=${offset}&limit=${LIMIT}`,
+                `/api/v1/projects/${slug}/media?offset=${at}&limit=${LIMIT}${typeParam}`,
                 accessToken
                     ? { headers: { Authorization: `Bearer ${accessToken}` } }
                     : {},
             );
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (gen !== loadGen) return;
             const contentRange = res.headers.get("Content-Range");
             if (contentRange) {
                 const total = contentRange.split("/")[1];
-                if (total && total !== "*") totalItems = parseInt(total, 10);
+                if (total && total !== "*") {
+                    // All-tab total stays global via counts when filtered.
+                    if (filter === "all") {
+                        totalItems = parseInt(total, 10);
+                    }
+                }
             }
             const body = await res.json();
             const batch: MediaItem[] = body.items ?? body;
-            if (body.counts) typeCounts = body.counts;
+            if (body.counts) {
+                typeCounts = body.counts;
+                const image = body.counts.image ?? 0;
+                const video = body.counts.video ?? 0;
+                const audio = body.counts.audio ?? 0;
+                const application = body.counts.application ?? 0;
+                totalItems = image + video + audio + application;
+            }
             items = [...items, ...batch];
-            offset += batch.length;
+            offset = at + batch.length;
             if (batch.length < LIMIT) hasMore = false;
         } catch (e: any) {
-            error = e?.message ?? "Failed to load";
+            if (gen === loadGen) error = e?.message ?? "Failed to load";
         } finally {
-            loading = false;
+            if (gen === loadGen) loading = false;
         }
     }
 
@@ -281,7 +339,19 @@
                 <MediaUpload
                     projectSlug={$page.params.project}
                     {accessToken}
-                    onUploaded={reloadShelf}
+                    onUploaded={(info) => {
+                        let prefer: TypeFilter | undefined;
+                        if (info?.mediaType === "application/pdf") prefer = "pdf";
+                        else if (info?.mediaType?.startsWith("image/"))
+                            prefer = "image";
+                        else if (info?.mediaType?.startsWith("video/"))
+                            prefer = "video";
+                        else if (info?.mediaType?.startsWith("audio/"))
+                            prefer = "audio";
+                        reloadShelf(
+                            prefer ? { preferType: prefer } : undefined,
+                        );
+                    }}
                 />
             {/if}
             <div
@@ -291,7 +361,7 @@
                     {@const count = filterCount(tab.id)}
                     <button
                         type="button"
-                        onclick={() => (typeFilter = tab.id)}
+                        onclick={() => setTypeFilter(tab.id)}
                         class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs border-l border-border first:border-l-0 transition-colors {typeFilter ===
                         tab.id
                             ? 'bg-secondary text-foreground font-medium'
@@ -326,28 +396,36 @@
     {/if}
 
     <div
-        class="flex-1 min-h-0 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)] lg:items-stretch"
+        class="flex-1 min-h-0 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:items-stretch"
     >
         <div class="min-h-0 overflow-y-auto">
-            {#if items.length === 0 && !loading}
+            {#if loading && items.length === 0}
+                <div
+                    class="flex items-center justify-center h-64 text-sm text-muted-foreground"
+                >
+                    Loading…
+                </div>
+            {:else if items.length === 0}
                 <div class="flex items-center justify-center h-64">
                     <div class="text-center max-w-sm">
                         <ArchiveIcon
                             class="mx-auto mb-3 size-8 text-muted-foreground/40"
                         />
                         <h2 class="text-base font-semibold text-foreground mb-1">
-                            No artefacts yet
+                            {typeFilter === "all"
+                                ? "No artefacts yet"
+                                : typeFilter === "pdf"
+                                  ? "No reports yet"
+                                  : typeFilter === "image"
+                                    ? "No photos yet"
+                                    : `No ${typeFilter} yet`}
                         </h2>
                         <p class="text-sm text-muted-foreground">
-                            Push data with photos or grey literature PDFs to see
-                            them here, linked to the entities they document.
+                            {typeFilter === "all"
+                                ? "Push data with photos or grey literature PDFs to see them here, linked to the entities they document."
+                                : "Try another filter, or upload files that match this type."}
                         </p>
                     </div>
-                </div>
-            {:else if filtered.length === 0 && !loading}
-                <div class="py-16 text-center text-sm text-muted-foreground">
-                    No {typeFilter === "all" ? "" : typeFilter + " "}items
-                    loaded yet.
                 </div>
             {:else}
                 <div
@@ -456,28 +534,71 @@
 
         <!-- Detail panel -->
         <aside
-            class="hidden lg:flex min-h-0 flex-col rounded-lg border border-border bg-secondary/20 overflow-hidden"
+            class="hidden lg:flex min-h-0 flex-col rounded-lg border border-border bg-secondary/15 overflow-hidden"
         >
             {#if selected}
                 {@const isImage = selected.media_type.startsWith("image/")}
                 {@const isVideo = selected.media_type.startsWith("video/")}
                 {@const isAudio = selected.media_type.startsWith("audio/")}
                 {@const pdf = isPdf(selected)}
-                <div class="relative aspect-[4/3] shrink-0 bg-secondary/40">
+                {@const links = linkedEntities(selected)}
+
+                <div
+                    class="shrink-0 flex items-center justify-between gap-2 border-b border-border px-3 py-2"
+                >
+                    <div class="min-w-0">
+                        <p class="text-xs font-medium text-foreground truncate">
+                            {pdf
+                                ? "Report"
+                                : isImage
+                                  ? "Photo"
+                                  : isVideo
+                                    ? "Video"
+                                    : isAudio
+                                      ? "Audio"
+                                      : "File"}
+                        </p>
+                        <p class="text-[11px] text-muted-foreground truncate">
+                            {formatBytes(selected.file_size)}
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                        {#if pdf}
+                            <a
+                                href={mediaUrl(selected)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors"
+                                title="Open in new tab"
+                            >
+                                <ExternalLinkIcon class="size-3" />
+                                Open
+                            </a>
+                        {/if}
+                        {#if isImage || pdf}
+                            <button
+                                type="button"
+                                onclick={openViewer}
+                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                                <Maximize2Icon class="size-3" />
+                                Expand
+                            </button>
+                        {/if}
+                    </div>
+                </div>
+
+                <div
+                    class="relative min-h-0 {pdf
+                        ? 'flex-1'
+                        : 'aspect-[4/3] shrink-0'} bg-neutral-900/90"
+                >
                     {#if isImage}
                         <img
                             src={mediaUrl(selected)}
                             alt=""
                             class="h-full w-full object-contain"
                         />
-                        <button
-                            type="button"
-                            onclick={openViewer}
-                            class="absolute top-2 right-2 inline-flex items-center gap-1 rounded-md border border-border glass-panel px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                            <Maximize2Icon class="size-3" />
-                            Expand
-                        </button>
                     {:else if isVideo}
                         <video
                             src={mediaUrl(selected)}
@@ -486,7 +607,7 @@
                         ></video>
                     {:else if isAudio}
                         <div
-                            class="flex h-full flex-col items-center justify-center gap-3 px-4"
+                            class="flex h-full flex-col items-center justify-center gap-3 px-4 bg-secondary/40"
                         >
                             <MusicIcon
                                 class="size-8 text-muted-foreground/50"
@@ -500,12 +621,12 @@
                     {:else if pdf}
                         <iframe
                             title="PDF preview"
-                            src={mediaUrl(selected)}
-                            class="h-full w-full border-0 bg-background"
+                            src={mediaUrl(selected, { pdfFit: true })}
+                            class="absolute inset-0 h-full w-full border-0"
                         ></iframe>
                     {:else}
                         <div
-                            class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"
+                            class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground bg-secondary/40"
                         >
                             <FileWarningIcon class="size-8 opacity-50" />
                             <span class="text-xs">{selected.media_type}</span>
@@ -513,20 +634,20 @@
                     {/if}
                 </div>
 
-                <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-4">
+                <div class="shrink-0 border-t border-border p-3 space-y-3">
                     <div>
                         <p
-                            class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1"
+                            class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1.5"
                         >
                             Linked entities
                         </p>
-                        {#if selected.entities.length === 0}
-                            <p class="text-xs text-muted-foreground italic">
+                        {#if links.length === 0}
+                            <p class="text-xs text-muted-foreground">
                                 Not linked to an entity
                             </p>
                         {:else}
-                            <ul class="space-y-1">
-                                {#each selected.entities as entity}
+                            <ul class="space-y-0.5">
+                                {#each links as entity}
                                     <li>
                                         <a
                                             href={entityLink(
@@ -550,11 +671,6 @@
                                             >
                                                 {entity.entity_id}
                                             </span>
-                                            <span
-                                                class="shrink-0 text-[10px] text-primary opacity-0 group-hover:opacity-100"
-                                            >
-                                                Layers
-                                            </span>
                                         </a>
                                     </li>
                                 {/each}
@@ -563,29 +679,21 @@
                     </div>
 
                     <div
-                        class="border-t border-border pt-3 text-[11px] text-muted-foreground space-y-1"
+                        class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
                     >
-                        <p>
-                            <span class="text-foreground/70"
-                                >{selected.media_type}</span
-                            >
-                            · {formatBytes(selected.file_size)}
-                        </p>
-                        {#if isPdf(selected)}
-                            <p>
-                                <a
-                                    href={mediaUrl(selected)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    class="text-primary hover:underline"
-                                >
-                                    Open PDF in new tab
-                                </a>
-                            </p>
-                        {/if}
-                        <p class="font-mono break-all opacity-70">
-                            {selected.hash}
-                        </p>
+                        <button
+                            type="button"
+                            class="inline-flex items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 font-mono hover:border-border hover:bg-background hover:text-foreground transition-colors"
+                            title={selected.hash}
+                            onclick={() => copyHash(selected.hash)}
+                        >
+                            {#if hashCopied}
+                                <CheckIcon class="size-3 text-foreground" />
+                            {:else}
+                                <CopyIcon class="size-3" />
+                            {/if}
+                            {shortHash(selected.hash)}
+                        </button>
                     </div>
                 </div>
             {:else}
@@ -594,7 +702,7 @@
                 >
                     <ArchiveIcon class="size-7 text-muted-foreground/35" />
                     <p class="text-sm text-muted-foreground">
-                        Select an item to see linked entities
+                        Select an item to preview
                     </p>
                 </div>
             {/if}
@@ -603,22 +711,36 @@
 
     <!-- Mobile detail sheet -->
     {#if selected}
+        {@const links = linkedEntities(selected)}
+        {@const pdf = isPdf(selected)}
         <div
-            class="lg:hidden fixed inset-x-0 bottom-0 z-50 border-t border-border glass-dock p-4 max-h-[45vh] overflow-y-auto"
+            class="lg:hidden fixed inset-x-0 bottom-0 z-50 border-t border-border glass-dock p-4 max-h-[50vh] overflow-y-auto"
         >
             <div class="flex items-start justify-between gap-3 mb-3">
                 <div class="min-w-0">
                     <p class="text-sm font-medium text-foreground truncate">
-                        {selected.entities[0]
-                            ? entityLabel(selected.entities[0].entity_type)
-                            : selected.media_type}
+                        {pdf
+                            ? "Report"
+                            : links[0]
+                              ? entityLabel(links[0].entity_type)
+                              : selected.media_type}
                     </p>
                     <p class="text-[11px] text-muted-foreground">
                         {formatBytes(selected.file_size)}
                     </p>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                    {#if selected.media_type.startsWith("image/")}
+                    {#if pdf}
+                        <a
+                            href={mediaUrl(selected)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground"
+                        >
+                            Open
+                        </a>
+                    {/if}
+                    {#if selected.media_type.startsWith("image/") || pdf}
                         <button
                             type="button"
                             onclick={openViewer}
@@ -637,9 +759,9 @@
                     </button>
                 </div>
             </div>
-            {#if selected.entities.length > 0}
+            {#if links.length > 0}
                 <ul class="space-y-1">
-                    {#each selected.entities as entity}
+                    {#each links as entity}
                         <li>
                             <a
                                 href={entityLink(
@@ -662,12 +784,18 @@
                         </li>
                     {/each}
                 </ul>
+            {:else}
+                <p class="text-xs text-muted-foreground">
+                    Not linked to an entity
+                </p>
             {/if}
         </div>
     {/if}
 
-    <!-- Quiet image viewer -->
-    {#if viewerOpen && selected?.media_type.startsWith("image/")}
+    <!-- Quiet media viewer -->
+    {#if viewerOpen && selected && (selected.media_type.startsWith("image/") || isPdf(selected))}
+        {@const pdf = isPdf(selected)}
+        {@const links = linkedEntities(selected)}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
             class="fixed inset-0 z-1100 glass-overlay flex flex-col"
@@ -680,16 +808,30 @@
                 onclick={(e) => e.stopPropagation()}
             >
                 <p class="text-sm text-muted-foreground tabular-nums">
-                    {#if viewerIdx >= 0}
+                    {#if pdf}
+                        Report · {formatBytes(selected.file_size)}
+                    {:else if viewerIdx >= 0}
                         {viewerIdx + 1} / {imageItems.length}
                     {/if}
                 </p>
                 <div class="flex items-center gap-1">
-                    {#if selected.entities[0]}
+                    {#if pdf}
+                        <a
+                            href={mediaUrl(selected)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs no-underline text-foreground hover:bg-secondary transition-colors"
+                            onclick={(e) => e.stopPropagation()}
+                        >
+                            <ExternalLinkIcon class="size-3.5" />
+                            Open
+                        </a>
+                    {/if}
+                    {#if links[0]}
                         <a
                             href={entityLink(
-                                selected.entities[0].entity_type,
-                                selected.entities[0].entity_id,
+                                links[0].entity_type,
+                                links[0].entity_id,
                             )}
                             class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs no-underline text-foreground hover:bg-secondary transition-colors"
                             onclick={(e) => e.stopPropagation()}
@@ -713,42 +855,52 @@
             </div>
 
             <div
-                class="relative flex-1 flex items-center justify-center p-4 min-h-0"
+                class="relative flex-1 flex items-center justify-center min-h-0 {pdf
+                    ? 'p-0'
+                    : 'p-4'}"
                 onclick={(e) => e.stopPropagation()}
             >
-                {#if viewerIdx > 0}
-                    <button
-                        type="button"
-                        class="absolute left-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
-                        onclick={prevImage}
-                        aria-label="Previous"
-                    >
-                        <ChevronLeft class="size-5" />
-                    </button>
-                {/if}
-                <img
-                    src={mediaUrl(selected)}
-                    alt=""
-                    class="max-h-full max-w-full object-contain"
-                />
-                {#if viewerIdx >= 0 && viewerIdx < imageItems.length - 1}
-                    <button
-                        type="button"
-                        class="absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
-                        onclick={nextImage}
-                        aria-label="Next"
-                    >
-                        <ChevronRight class="size-5" />
-                    </button>
+                {#if pdf}
+                    <iframe
+                        title="PDF viewer"
+                        src={mediaUrl(selected, { pdfFit: true })}
+                        class="h-full w-full border-0 bg-neutral-900"
+                    ></iframe>
+                {:else}
+                    {#if viewerIdx > 0}
+                        <button
+                            type="button"
+                            class="absolute left-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
+                            onclick={prevImage}
+                            aria-label="Previous"
+                        >
+                            <ChevronLeft class="size-5" />
+                        </button>
+                    {/if}
+                    <img
+                        src={mediaUrl(selected)}
+                        alt=""
+                        class="max-h-full max-w-full object-contain"
+                    />
+                    {#if viewerIdx >= 0 && viewerIdx < imageItems.length - 1}
+                        <button
+                            type="button"
+                            class="absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
+                            onclick={nextImage}
+                            aria-label="Next"
+                        >
+                            <ChevronRight class="size-5" />
+                        </button>
+                    {/if}
                 {/if}
             </div>
 
-            {#if selected.entities.length > 0}
+            {#if links.length > 0 && !pdf}
                 <div
                     class="border-t border-border px-4 py-3 flex flex-wrap gap-2"
                     onclick={(e) => e.stopPropagation()}
                 >
-                    {#each selected.entities as entity}
+                    {#each links as entity}
                         <a
                             href={entityLink(
                                 entity.entity_type,

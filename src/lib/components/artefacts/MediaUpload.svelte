@@ -7,7 +7,7 @@
     type Props = {
         projectSlug: string;
         accessToken: string;
-        onUploaded: () => void;
+        onUploaded: (info?: { mediaType: string }) => void;
     };
 
     let { projectSlug, accessToken, onUploaded }: Props = $props();
@@ -109,7 +109,7 @@
                 throw new Error(body.error ?? `HTTP ${res.status}`);
             }
             status = `Stored ${file.name}`;
-            onUploaded();
+            onUploaded({ mediaType: file.type || "application/octet-stream" });
         } catch (e: any) {
             error = e?.message ?? "Upload failed";
             status = "";
