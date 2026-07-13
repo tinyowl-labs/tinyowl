@@ -16,9 +16,11 @@
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import CopyIcon from "@lucide/svelte/icons/copy";
     import CheckIcon from "@lucide/svelte/icons/check";
+    import SparklesIcon from "@lucide/svelte/icons/sparkles";
     import { onMount } from "svelte";
     import { entityLayersHref } from "$lib/project/entityLink";
     import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
+    import { goto } from "$app/navigation";
 
     let { data } = $props();
 
@@ -53,6 +55,20 @@
     let selectedHash = $state<string | null>(null);
     let viewerOpen = $state(false);
     let hashCopied = $state(false);
+    let similarItems = $state<
+        Array<{
+            hash: string;
+            media_type: string;
+            url: string;
+            project_slug: string;
+            project_title: string;
+            entity_type?: string;
+            entity_id?: string;
+            distance: number;
+        }>
+    >([]);
+    let similarStatus = $state("");
+    let similarLoading = $state(false);
 
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
@@ -169,6 +185,35 @@
     function selectItem(item: MediaItem) {
         selectedHash = item.hash;
         hashCopied = false;
+        similarItems = [];
+        similarStatus = "";
+    }
+
+    async function findSimilar() {
+        if (!selected) return;
+        similarLoading = true;
+        similarStatus = "";
+        similarItems = [];
+        try {
+            const res = await fetch(
+                `/api/v1/media/${selected.hash}/similar?limit=12`,
+                accessToken
+                    ? { headers: { Authorization: `Bearer ${accessToken}` } }
+                    : {},
+            );
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const body = await res.json();
+            similarItems = body.items ?? [];
+            if (body.status === "pending_embedding") {
+                similarStatus = "Embedding still pending — try again shortly";
+            } else if (similarItems.length === 0) {
+                similarStatus = "No similar photos yet";
+            }
+        } catch (e: any) {
+            similarStatus = e?.message ?? "Similar search failed";
+        } finally {
+            similarLoading = false;
+        }
     }
 
     function openViewer() {
@@ -575,6 +620,17 @@
                                 Open
                             </a>
                         {/if}
+                        {#if isImage}
+                            <button
+                                type="button"
+                                onclick={findSimilar}
+                                disabled={similarLoading}
+                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                            >
+                                <SparklesIcon class="size-3" />
+                                {similarLoading ? "…" : "Similar"}
+                            </button>
+                        {/if}
                         {#if isImage || pdf}
                             <button
                                 type="button"
@@ -635,6 +691,60 @@
                 </div>
 
                 <div class="shrink-0 border-t border-border p-3 space-y-3">
+                    {#if similarItems.length > 0 || similarStatus}
+                        <div>
+                            <p
+                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1.5"
+                            >
+                                Similar photos
+                            </p>
+                            {#if similarStatus && similarItems.length === 0}
+                                <p class="text-xs text-muted-foreground">
+                                    {similarStatus}
+                                </p>
+                            {:else}
+                                <div class="grid grid-cols-3 gap-1">
+                                    {#each similarItems as sim}
+                                        <button
+                                            type="button"
+                                            class="aspect-square overflow-hidden rounded-md bg-secondary/60"
+                                            title="{sim.project_title} · {sim.distance.toFixed(3)}"
+                                            onclick={() => {
+                                                if (
+                                                    sim.project_slug ===
+                                                    $page.params.project
+                                                ) {
+                                                    selectedHash = sim.hash;
+                                                } else {
+                                                    goto(
+                                                        `/${sim.project_slug}/artefacts`,
+                                                    );
+                                                }
+                                            }}
+                                        >
+                                            {#if sim.media_type.startsWith("image/")}
+                                                <img
+                                                    src={sim.url +
+                                                        (accessToken
+                                                            ? `?token=${encodeURIComponent(accessToken)}`
+                                                            : "")}
+                                                    alt=""
+                                                    class="h-full w-full object-cover"
+                                                />
+                                            {:else}
+                                                <div
+                                                    class="flex h-full items-center justify-center text-[10px] text-muted-foreground"
+                                                >
+                                                    {sim.project_title}
+                                                </div>
+                                            {/if}
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
+                        </div>
+                    {/if}
+
                     <div>
                         <p
                             class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1.5"
