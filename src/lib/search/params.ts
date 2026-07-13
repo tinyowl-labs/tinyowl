@@ -21,6 +21,8 @@ export type SearchParams = {
   vocabularies: string[];
   /** Result kinds — scaffold; always project until mixed search ships */
   types: string[];
+  /** OpenCLIP text boost (`?semantic=1`) when q is set */
+  semantic: boolean;
 };
 
 export const DEFAULT_SEARCH_RADIUS = 5000;
@@ -72,6 +74,10 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
   const dateTo =
     dateToRaw != null && dateToRaw !== "" ? Number(dateToRaw) : null;
 
+  const semanticRaw = (sp.get("semantic") ?? "").trim().toLowerCase();
+  const semantic =
+    semanticRaw === "1" || semanticRaw === "true" || semanticRaw === "yes";
+
   return {
     q,
     lat: lat != null && !Number.isNaN(lat) ? lat : null,
@@ -83,6 +89,7 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     tags: parseListParam(sp, "tag"),
     vocabularies: parseListParam(sp, "vocab"),
     types: parseListParam(sp, "type"),
+    semantic,
   };
 }
 
@@ -97,10 +104,12 @@ export function buildSearchParams(input: {
   tags?: string[] | null;
   vocabularies?: string[] | null;
   types?: string[] | null;
+  semantic?: boolean | null;
 }): URLSearchParams {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
   if (q) params.set("q", q);
+  if (input.semantic) params.set("semantic", "1");
 
   // Prefer explicit map-view bbox over point+radius when both present.
   if (input.bbox) {
@@ -181,6 +190,48 @@ export function hasActiveSearch(p: SearchParams): boolean {
     p.vocabularies.length > 0 ||
     p.types.length > 0
   );
+}
+
+/** Envelope from project GeoJSON Polygon / MultiPolygon / GeometryCollection. */
+export function bboxFromGeoJSON(raw: string | null | undefined): SearchBBox | null {
+  if (!raw?.trim()) return null;
+  try {
+    const g = JSON.parse(raw) as {
+      type?: string;
+      coordinates?: unknown;
+      geometries?: Array<{ type?: string; coordinates?: unknown }>;
+    };
+    const coords: number[][] = [];
+    const walk = (c: unknown) => {
+      if (!Array.isArray(c) || c.length === 0) return;
+      if (typeof c[0] === "number") {
+        coords.push(c as number[]);
+        return;
+      }
+      for (const x of c) walk(x);
+    };
+    if (g.type === "GeometryCollection" && Array.isArray(g.geometries)) {
+      for (const part of g.geometries) walk(part.coordinates);
+    } else {
+      walk(g.coordinates);
+    }
+    if (coords.length === 0) return null;
+    let west = Infinity;
+    let south = Infinity;
+    let east = -Infinity;
+    let north = -Infinity;
+    for (const [x, y] of coords) {
+      if (typeof x !== "number" || typeof y !== "number") continue;
+      if (x < west) west = x;
+      if (x > east) east = x;
+      if (y < south) south = y;
+      if (y > north) north = y;
+    }
+    if (!Number.isFinite(west)) return null;
+    return parseBBox(`${west},${south},${east},${north}`);
+  } catch {
+    return null;
+  }
 }
 
 export function formatYear(y: number): string {

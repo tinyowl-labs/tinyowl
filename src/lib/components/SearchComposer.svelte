@@ -27,6 +27,7 @@
         bbox?: SearchBBox | null;
         dateFrom?: number | string | null;
         dateTo?: number | string | null;
+        semantic?: boolean;
         autofocus?: boolean;
         placeholder?: string;
         examples?: string[];
@@ -43,6 +44,7 @@
         bbox = null,
         dateFrom = null,
         dateTo = null,
+        semantic = false,
         autofocus = false,
         placeholder = "Search projects…  Type @ for filters",
         examples = [],
@@ -200,6 +202,7 @@
                 bbox,
                 dateFrom,
                 dateTo,
+                semantic,
             }),
         );
     }

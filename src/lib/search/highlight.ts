@@ -54,21 +54,35 @@ export function textMatchesQuery(text: string, query: string): boolean {
 
 /** Human-readable label for API match_detail. */
 export function formatMatchDetail(detail: string): string {
-	const d = (detail ?? '').trim();
-	if (!d) return '';
-	if (d === 'title') return 'Title';
-	if (d === 'description') return 'Description';
-	if (d === 'slug') return 'Slug';
-	if (d === 'readme') return 'README';
-	if (d === 'tags') return 'Tags';
-	const vocab = d.match(/^(\d+)\s+vocabulary terms?$/i);
-	if (vocab) {
-		const n = Number(vocab[1]);
-		return n === 1 ? 'Vocabulary' : `${n} vocabulary terms`;
+	const raw = (detail ?? '').trim();
+	if (!raw) return '';
+	const hasSemantic =
+		raw === 'semantic' || /\s*·\s*semantic$/i.test(raw);
+	const d =
+		raw === 'semantic'
+			? ''
+			: raw.replace(/\s*·\s*semantic$/i, '').trim();
+
+	let labeled = '';
+	if (d === 'title') labeled = 'Title';
+	else if (d === 'description') labeled = 'Description';
+	else if (d === 'slug') labeled = 'Slug';
+	else if (d === 'readme') labeled = 'README';
+	else if (d === 'tags') labeled = 'Tags';
+	else if (d) {
+		const vocab = d.match(/^(\d+)\s+vocabulary terms?$/i);
+		if (vocab) {
+			const n = Number(vocab[1]);
+			labeled = n === 1 ? 'Vocabulary' : `${n} vocabulary terms`;
+		} else if (/vocabulary/i.test(d) || /tag/i.test(d)) {
+			labeled = d;
+		} else {
+			labeled = d.charAt(0).toUpperCase() + d.slice(1);
+		}
 	}
-	if (/vocabulary/i.test(d)) return d;
-	if (/tag/i.test(d)) return d;
-	return d.charAt(0).toUpperCase() + d.slice(1);
+
+	if (hasSemantic) return labeled ? `${labeled} · semantic` : 'Semantic';
+	return labeled;
 }
 
 /** True when match_detail is a vocabulary hit. */

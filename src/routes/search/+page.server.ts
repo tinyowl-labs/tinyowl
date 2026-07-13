@@ -47,6 +47,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
       dateTo: null,
       tags: [] as string[],
       vocabularies: [] as string[],
+      semantic: parsed.semantic,
       projects: [] as SearchProject[],
       accessToken: null as string | null,
     };
@@ -58,6 +59,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
 
   const params = new URLSearchParams();
   if (parsed.q) params.set("q", parsed.q);
+  if (parsed.semantic && parsed.q) params.set("semantic", "1");
   if (parsed.bbox) {
     params.set("bbox", formatBBox(parsed.bbox));
   } else if (parsed.lat != null && parsed.lng != null) {
@@ -89,6 +91,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
     dateTo: parsed.dateTo,
     tags: parsed.tags,
     vocabularies: parsed.vocabularies,
+    semantic: parsed.semantic,
     projects,
     accessToken,
   };

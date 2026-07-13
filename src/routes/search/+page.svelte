@@ -52,6 +52,7 @@
         dateTo: number | null;
         tags: string[];
         vocabularies: string[];
+        semantic: boolean;
         projects: SearchProject[];
     };
 
@@ -67,6 +68,7 @@
     let dateTo = $state(untrack(() => data.dateTo?.toString() ?? ""));
     let tags = $state<string[]>(untrack(() => data.tags ?? []));
     let vocabularies = $state<string[]>(untrack(() => data.vocabularies ?? []));
+    let semantic = $state(untrack(() => Boolean(data.semantic)));
 
     $effect(() => {
         query = data.query || "";
@@ -78,6 +80,7 @@
         dateTo = data.dateTo?.toString() ?? "";
         tags = data.tags ?? [];
         vocabularies = data.vocabularies ?? [];
+        semantic = Boolean(data.semantic);
     });
 
     const activeQuery = $derived(
@@ -92,6 +95,7 @@
             tags: data.tags ?? [],
             vocabularies: data.vocabularies ?? [],
             types: [],
+            semantic: Boolean(data.semantic),
         } satisfies SearchParams),
     );
 
@@ -134,6 +138,7 @@
             dateTo: string | number | null;
             tags: string[];
             vocabularies: string[];
+            semantic: boolean;
         }> = {},
     ) {
         const nextBBox =
@@ -165,6 +170,10 @@
                     overrides.vocabularies !== undefined
                         ? overrides.vocabularies
                         : vocabularies,
+                semantic:
+                    overrides.semantic !== undefined
+                        ? overrides.semantic
+                        : semantic,
             }),
         );
     }
@@ -312,6 +321,7 @@
                 bbox={searchBBox}
                 {dateFrom}
                 {dateTo}
+                {semantic}
                 autofocus={!activeQuery}
             />
         </div>
@@ -320,6 +330,38 @@
             class="search-vt-panel grid gap-8 lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] lg:items-start"
         >
             <aside class="lg:sticky lg:top-4 space-y-7 text-sm">
+                <section>
+                    <h2
+                        class="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-3"
+                    >
+                        <SearchIcon class="size-3.5" />
+                        Ranking
+                    </h2>
+                    <label
+                        class="flex items-start gap-2 cursor-pointer select-none {!query.trim()
+                            ? 'opacity-50'
+                            : ''}"
+                    >
+                        <input
+                            type="checkbox"
+                            class="mt-0.5"
+                            checked={semantic}
+                            disabled={!query.trim()}
+                            onchange={(e) => {
+                                const next = e.currentTarget.checked;
+                                semantic = next;
+                                navigateWith({ semantic: next });
+                            }}
+                        />
+                        <span>
+                            <span class="text-foreground">Semantic boost</span>
+                            <span class="block text-[11px] text-muted-foreground mt-0.5">
+                                OpenCLIP text similarity when embeddings exist
+                            </span>
+                        </span>
+                    </label>
+                </section>
+
                 <section>
                     <h2
                         class="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-3"
@@ -399,6 +441,9 @@
                             · {formatYear(data.dateFrom ?? -12000)}–{formatYear(
                                 data.dateTo ?? 2100,
                             )}
+                        {/if}
+                        {#if data.semantic && data.query}
+                            · semantic boost
                         {/if}
                     </p>
 

@@ -21,6 +21,11 @@
     import { entityLayersHref } from "$lib/project/entityLink";
     import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
     import { goto } from "$app/navigation";
+    import {
+        bboxFromGeoJSON,
+        formatBBox,
+        formatDateSpan,
+    } from "$lib/search/params";
 
     let { data } = $props();
 
@@ -29,6 +34,27 @@
         ["owner", "admin", "collaborator"].includes(
             String((data as any)?.role ?? "viewer"),
         ),
+    );
+    const projectMeta = $derived(
+        ($page.data?.project ?? null) as {
+            date_start?: number | null;
+            date_end?: number | null;
+            bbox?: string | null;
+            tags_manual?: string[];
+            tags_auto?: string[];
+        } | null,
+    );
+    const projectPeriod = $derived.by(() => {
+        const p = projectMeta;
+        if (!p) return null;
+        if (p.date_start == null && p.date_end == null) return null;
+        return {
+            dateFrom: p.date_start ?? null,
+            dateTo: p.date_end ?? null,
+        };
+    });
+    const projectRegion = $derived(
+        bboxFromGeoJSON(projectMeta?.bbox ?? null),
     );
 
     interface MediaItem {
@@ -69,6 +95,13 @@
     >([]);
     let similarStatus = $state("");
     let similarLoading = $state(false);
+    let similarRefineOpen = $state(false);
+    let similarSamePeriod = $state(false);
+    let similarSameRegion = $state(false);
+    let similarTag = $state("");
+    let similarTagInput = $state("");
+    let similarTagSuggestions = $state<string[]>([]);
+    let similarFetched = $state(false);
 
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
@@ -187,6 +220,26 @@
         hashCopied = false;
         similarItems = [];
         similarStatus = "";
+        similarFetched = false;
+        similarRefineOpen = false;
+    }
+
+    function similarQueryParams(): URLSearchParams {
+        const p = new URLSearchParams({ limit: "12" });
+        if (similarSamePeriod && projectPeriod) {
+            if (projectPeriod.dateFrom != null) {
+                p.set("date_from", String(projectPeriod.dateFrom));
+            }
+            if (projectPeriod.dateTo != null) {
+                p.set("date_to", String(projectPeriod.dateTo));
+            }
+        }
+        if (similarSameRegion && projectRegion) {
+            p.set("bbox", formatBBox(projectRegion));
+        }
+        const tag = similarTag.trim();
+        if (tag) p.set("tag", tag);
+        return p;
     }
 
     async function findSimilar() {
@@ -195,8 +248,9 @@
         similarStatus = "";
         similarItems = [];
         try {
+            const qs = similarQueryParams().toString();
             const res = await fetch(
-                `/api/v1/media/${selected.hash}/similar?limit=12`,
+                `/api/v1/media/${selected.hash}/similar?${qs}`,
                 accessToken
                     ? { headers: { Authorization: `Bearer ${accessToken}` } }
                     : {},
@@ -204,6 +258,7 @@
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const body = await res.json();
             similarItems = body.items ?? [];
+            similarFetched = true;
             if (body.status === "pending_embedding") {
                 similarStatus = "Embedding still pending — try again shortly";
             } else if (similarItems.length === 0) {
@@ -211,10 +266,85 @@
             }
         } catch (e: any) {
             similarStatus = e?.message ?? "Similar search failed";
+            similarFetched = true;
         } finally {
             similarLoading = false;
         }
     }
+
+    function refetchSimilarIfShown() {
+        if (similarFetched || similarItems.length > 0 || similarStatus) {
+            findSimilar();
+        }
+    }
+
+    function setSamePeriod(on: boolean) {
+        similarSamePeriod = on;
+        refetchSimilarIfShown();
+    }
+
+    function setSameRegion(on: boolean) {
+        similarSameRegion = on;
+        refetchSimilarIfShown();
+    }
+
+    function applySimilarTag(tag: string) {
+        similarTag = tag.trim();
+        similarTagInput = "";
+        similarTagSuggestions = [];
+        refetchSimilarIfShown();
+    }
+
+    function clearSimilarTag() {
+        similarTag = "";
+        similarTagInput = "";
+        similarTagSuggestions = [];
+        refetchSimilarIfShown();
+    }
+
+    let similarTagDebounce: ReturnType<typeof setTimeout> | undefined;
+    async function onSimilarTagInput() {
+        clearTimeout(similarTagDebounce);
+        const q = similarTagInput.trim();
+        if (q.length < 1) {
+            similarTagSuggestions = [];
+            return;
+        }
+        similarTagDebounce = setTimeout(async () => {
+            try {
+                const res = await fetch(
+                    `/api/v1/search/lexicon/tags?prefix=${encodeURIComponent(q)}&limit=8`,
+                    accessToken
+                        ? {
+                              headers: {
+                                  Authorization: `Bearer ${accessToken}`,
+                              },
+                          }
+                        : {},
+                );
+                if (!res.ok) return;
+                const body = await res.json();
+                similarTagSuggestions = Array.isArray(body?.tags)
+                    ? body.tags
+                    : [];
+            } catch {
+                /* ignore */
+            }
+        }, 200);
+    }
+
+    const similarFilterChips = $derived.by(() => {
+        const chips: string[] = [];
+        if (similarSamePeriod && projectPeriod) {
+            chips.push(
+                formatDateSpan(projectPeriod.dateFrom, projectPeriod.dateTo) ??
+                    "period",
+            );
+        }
+        if (similarSameRegion && projectRegion) chips.push("region");
+        if (similarTag.trim()) chips.push(`tag:${similarTag.trim()}`);
+        return chips;
+    });
 
     function openViewer() {
         if (!selected) return;
@@ -630,6 +760,15 @@
                                 <SparklesIcon class="size-3" />
                                 {similarLoading ? "…" : "Similar"}
                             </button>
+                            <button
+                                type="button"
+                                onclick={() =>
+                                    (similarRefineOpen = !similarRefineOpen)}
+                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                                title="Refine similar search"
+                            >
+                                Refine
+                            </button>
                         {/if}
                         {#if isImage || pdf}
                             <button
@@ -691,6 +830,112 @@
                 </div>
 
                 <div class="shrink-0 border-t border-border p-3 space-y-3">
+                    {#if isImage && similarRefineOpen}
+                        <div class="space-y-2 rounded-md border border-border bg-secondary/30 p-2">
+                            <p
+                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                            >
+                                Refine similar
+                            </p>
+                            <label
+                                class="flex items-center gap-2 text-xs {!projectPeriod
+                                    ? 'opacity-40'
+                                    : ''}"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={similarSamePeriod}
+                                    disabled={!projectPeriod}
+                                    onchange={(e) =>
+                                        setSamePeriod(e.currentTarget.checked)}
+                                />
+                                Same period as this project
+                                {#if projectPeriod}
+                                    <span class="text-muted-foreground">
+                                        ({formatDateSpan(
+                                            projectPeriod.dateFrom,
+                                            projectPeriod.dateTo,
+                                        )})
+                                    </span>
+                                {/if}
+                            </label>
+                            <label
+                                class="flex items-center gap-2 text-xs {!projectRegion
+                                    ? 'opacity-40'
+                                    : ''}"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={similarSameRegion}
+                                    disabled={!projectRegion}
+                                    onchange={(e) =>
+                                        setSameRegion(e.currentTarget.checked)}
+                                />
+                                Same region as this project
+                            </label>
+                            <div class="space-y-1">
+                                {#if similarTag}
+                                    <div class="flex items-center gap-1">
+                                        <span
+                                            class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px]"
+                                        >
+                                            {similarTag}
+                                            <button
+                                                type="button"
+                                                class="text-muted-foreground hover:text-foreground"
+                                                onclick={clearSimilarTag}
+                                                aria-label="Clear tag"
+                                            >
+                                                ×
+                                            </button>
+                                        </span>
+                                    </div>
+                                {:else}
+                                    <input
+                                        type="text"
+                                        bind:value={similarTagInput}
+                                        oninput={onSimilarTagInput}
+                                        onkeydown={(e) => {
+                                            if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                if (similarTagInput.trim()) {
+                                                    applySimilarTag(
+                                                        similarTagInput,
+                                                    );
+                                                }
+                                            }
+                                        }}
+                                        placeholder="Filter by one tag…"
+                                        class="w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+                                    />
+                                    {#if similarTagSuggestions.length > 0}
+                                        <ul
+                                            class="max-h-24 overflow-auto rounded-md border border-border bg-background text-xs"
+                                        >
+                                            {#each similarTagSuggestions as sug}
+                                                <li>
+                                                    <button
+                                                        type="button"
+                                                        class="w-full px-2 py-1 text-left hover:bg-secondary/60"
+                                                        onclick={() =>
+                                                            applySimilarTag(sug)}
+                                                    >
+                                                        {sug}
+                                                    </button>
+                                                </li>
+                                            {/each}
+                                        </ul>
+                                    {/if}
+                                {/if}
+                            </div>
+                            {#if similarFilterChips.length > 0}
+                                <p class="text-[10px] text-muted-foreground">
+                                    Active: {similarFilterChips.join(" · ")}
+                                </p>
+                            {/if}
+                        </div>
+                    {/if}
+
                     {#if similarItems.length > 0 || similarStatus}
                         <div>
                             <p

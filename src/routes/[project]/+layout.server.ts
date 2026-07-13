@@ -21,6 +21,7 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
     machine?: string | null;
     tags_manual?: string[];
     tags_auto?: string[];
+    bbox?: string | null;
     date_start?: number | null;
     date_end?: number | null;
     date_start_label?: string | null;
