@@ -32,14 +32,14 @@ List all projects the authenticated user is a member of.
 | Field | Type | Description |
 |---|---|---|
 | `slug` | string | Project slug (may include `org/` prefix) |
-| `role` | string | User's role: `owner`, `admin`, or `viewer` |
+| `role` | string | User's role: `owner`, `admin`, `collaborator`, or `viewer` |
 | `title` | string | Human-readable project title |
 
 ### Example
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
-  http://localhost:8090/api/v1/projects
+  http://localhost:8080/api/v1/projects
 ```
 
 ---
@@ -89,7 +89,7 @@ If `org` is provided, the full slug becomes `org/slug`.
 ### Example
 
 ```bash
-curl -X POST http://localhost:8090/api/v1/projects \
+curl -X POST http://localhost:8080/api/v1/projects \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"slug": "new-project", "title": "New Excavation"}'
@@ -103,7 +103,7 @@ curl -X POST http://localhost:8090/api/v1/projects \
 GET /api/v1/projects/{slug}
 ```
 
-Retrieve project details including metadata, counts, and bounding box.
+Retrieve project details including metadata, counts, bounding box, and temporal extent.
 
 **Public** — no authentication required.
 
@@ -114,12 +114,23 @@ Retrieve project details including metadata, counts, and bounding box.
   "slug": "my-excavation",
   "title": "My Excavation Project",
   "description": "Summer 2026 field season",
+  "visibility": "public",
+  "licence": "CC-BY-4.0",
+  "embargo_until": null,
+  "embargo_note": null,
+  "location_precision": null,
   "gpkg_uri": "s3://tinyowl-projects/projects/my-excavation/canonical.gpkg",
   "media_uri": "s3://tinyowl-projects/projects/my-excavation/media/",
   "entity_count": 142,
   "table_count": 5,
   "updated_at": "2026-07-01T12:00:00Z",
-  "bbox": "{\"type\":\"Polygon\",\"coordinates\":[[[133.0,-12.5],[133.2,-12.5],[133.2,-12.3],[133.0,-12.3],[133.0,-12.5]]]}"
+  "bbox": "{\"type\":\"Polygon\",\"coordinates\":[[[133.0,-12.5],[133.2,-12.5],[133.2,-12.3],[133.0,-12.3],[133.0,-12.5]]]}",
+  "date_start": -800,
+  "date_end": 400,
+  "date_start_label": "Iron Age",
+  "date_end_label": "Roman",
+  "tags_manual": ["rock-art", "survey"],
+  "tags_auto": ["excavation"]
 }
 ```
 
@@ -128,17 +139,26 @@ Retrieve project details including metadata, counts, and bounding box.
 | `slug` | string | Project slug |
 | `title` | string | Display title |
 | `description` | string\|null | Project description |
+| `visibility` | string | `"public"` or `"private"` |
+| `licence` | string\|null | Licence identifier (e.g. `"CC-BY-4.0"`, `"ALL_RIGHTS"`) |
+| `embargo_until` | string\|null | Embargo expiry (ISO 8601) |
+| `embargo_note` | string\|null | Reason for embargo |
+| `location_precision` | int\|null | Coordinate rounding precision |
 | `gpkg_uri` | string\|null | S3 URI of the canonical GeoPackage |
 | `media_uri` | string\|null | S3 URI of the media directory |
 | `entity_count` | int\|null | Number of spatial entities |
 | `table_count` | int\|null | Number of entity type tables |
 | `updated_at` | string\|null | Last update timestamp (ISO 8601) |
 | `bbox` | string\|null | GeoJSON bounding box polygon |
+| `date_start` / `date_end` | int\|null | Temporal extent (astronomical years, negative = BCE) |
+| `date_start_label` / `date_end_label` | string\|null | Human-readable period labels |
+| `tags_manual` | string[] | Curator-defined tags |
+| `tags_auto` | string[] | Server-derived tags |
 
 ### Example
 
 ```bash
-curl http://localhost:8090/api/v1/projects/my-excavation
+curl http://localhost:8080/api/v1/projects/my-excavation
 ```
 
 ---
@@ -149,7 +169,7 @@ curl http://localhost:8090/api/v1/projects/my-excavation
 PATCH /api/v1/projects/{slug}
 ```
 
-Update a project's title and/or description.
+Update project metadata.
 
 **Authenticated** — requires Bearer token. Only `owner` or `admin` role can update.
 
@@ -158,7 +178,12 @@ Update a project's title and/or description.
 ```json
 {
   "title": "Updated Project Title",
-  "description": "Updated description"
+  "description": "Updated description",
+  "visibility": "public",
+  "licence": "CC-BY-4.0",
+  "embargo_until": null,
+  "embargo_note": null,
+  "location_precision": 3
 }
 ```
 
@@ -166,6 +191,13 @@ Update a project's title and/or description.
 |---|---|---|---|
 | `title` | string | No | New display title |
 | `description` | string | No | New description |
+| `visibility` | string | No | `"public"` or `"private"` |
+| `licence` | string | No | Licence identifier (e.g. `"CC-BY-4.0"`, `"ALL_RIGHTS"`) |
+| `embargo_until` | string\|null | No | ISO 8601 date when embargo lifts (`null` to clear) |
+| `embargo_note` | string\|null | No | Reason for embargo |
+| `location_precision` | int\|null | No | Decimal places to round coordinates for display |
+
+`table_visibility` can also be passed to set per-table visibility overrides.
 
 ### Response
 
@@ -179,7 +211,7 @@ Update a project's title and/or description.
 ### Example
 
 ```bash
-curl -X PATCH http://localhost:8090/api/v1/projects/my-excavation \
+curl -X PATCH http://localhost:8080/api/v1/projects/my-excavation \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"title": "Updated Project Title"}'

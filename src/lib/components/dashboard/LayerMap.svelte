@@ -44,6 +44,8 @@
     /** Leaflet layer currently selected via highlight deep-link or map click. */
     let selectedLeafletLayer: LType.Layer | null = null;
     let selectedLabel = $state<string | null>(null);
+    /** Frame to layer bounds only once — never again on selection / rebuild. */
+    let hasFramed = false;
 
     const palette = $derived(mapLayerPalette(8));
 
@@ -114,13 +116,15 @@
                 center: [20, 0],
                 zoom: 2,
                 zoomControl: true,
+                maxZoom: 22,
             });
 
             mapContainer.classList.toggle("leaflet-dark", isDark());
 
             L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
                 attribution: "&copy; OpenStreetMap contributors",
-                maxZoom: 19,
+                maxZoom: 22,
+                maxNativeZoom: 19,
             }).addTo(map);
 
             requestAnimationFrame(() => map?.invalidateSize());
@@ -210,9 +214,10 @@
 
         map.invalidateSize();
 
-        // Default framing: all layer bounds (never zoom to selection).
-        if (allBounds.isValid()) {
-            map.fitBounds(allBounds, { padding: [40, 40], maxZoom: 16 });
+        // Default framing once only — selection must not move the camera.
+        if (!hasFramed && allBounds.isValid()) {
+            map.fitBounds(allBounds, { padding: [40, 40], maxZoom: 20 });
+            hasFramed = true;
         }
 
         if (pendingSelect) {

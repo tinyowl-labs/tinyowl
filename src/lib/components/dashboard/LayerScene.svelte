@@ -81,6 +81,8 @@
     let layerLoadGen = 0;
     let modelLoadGen = 0;
     let started = false;
+    /** Frame the project/tileset extent once on boot (like LayerMap.hasFramed). */
+    let hasFramed = false;
     let appliedHighlight = "";
     let scratchSphere: any;
 
@@ -145,6 +147,167 @@
             } catch {
                 /* ignore */
             }
+        }
+    }
+
+    /** Shift tileset along ellipsoid normal to match entity ellipsoidal heights. */
+    function applyTilesetHeightOffset(
+        prim: any,
+        offsetM: number | null | undefined,
+    ) {
+        if (!prim || !Cesium || offsetM == null || !Number.isFinite(offsetM)) {
+            return;
+        }
+        const apply = () => {
+            // Reset first so re-apply is idempotent (boundingSphere includes modelMatrix).
+            prim.modelMatrix = Cesium.Matrix4.clone(
+                Cesium.Matrix4.IDENTITY,
+                new Cesium.Matrix4(),
+            );
+            const center = prim.boundingSphere?.center;
+            if (!center) return false;
+            if (offsetM === 0) return true;
+            const normal = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(center);
+            const translation = Cesium.Cartesian3.multiplyByScalar(
+                normal,
+                offsetM,
+                new Cesium.Cartesian3(),
+            );
+            prim.modelMatrix = Cesium.Matrix4.fromTranslation(translation);
+            return true;
+        };
+        if (apply()) return;
+        void Promise.resolve(prim.readyPromise)
+            .then(() => {
+                if (!apply()) {
+                    const remove = prim.initialTilesLoaded?.addEventListener(
+                        () => {
+                            apply();
+                            remove?.();
+                        },
+                    );
+                }
+            })
+            .catch(() => {
+                /* ignore */
+            });
+    }
+
+    function sphereFromBboxWgs84(
+        bbox: number[],
+        heightM: number,
+    ): any | null {
+        if (
+            bbox.length !== 4 ||
+            !bbox.every((n) => Number.isFinite(n)) ||
+            !Cesium
+        ) {
+            return null;
+        }
+        const [west, south, east, north] = bbox;
+        if (!(west < east && south < north)) return null;
+        const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
+        const sphere = Cesium.BoundingSphere.fromRectangle3D(
+            rect,
+            Cesium.Ellipsoid.WGS84,
+            heightM,
+        );
+        // Site-scale meshes need a floor so the camera doesn't bury the trench.
+        sphere.radius = Math.max(sphere.radius * 1.5, 30);
+        return sphere;
+    }
+
+    function frameHeightM(prim: any | undefined): number {
+        const c = prim?.boundingSphere?.center;
+        if (c && Cesium) {
+            const h = Cesium.Cartographic.fromCartesian(c).height;
+            if (Number.isFinite(h)) return h;
+        }
+        return 100;
+    }
+
+    async function flyToSphere(sphere: any) {
+        await viewer.camera.flyToBoundingSphere(sphere, {
+            duration: 1.2,
+            offset: new Cesium.HeadingPitchRange(
+                0,
+                -0.45,
+                Math.max(sphere.radius * 2.5, 40),
+            ),
+        });
+        hasFramed = true;
+    }
+
+    /**
+     * Initial camera once: prefer ingest bbox_wgs84, else tileset + layer spheres.
+     * Selection must not re-frame (mirrors LayerMap).
+     */
+    async function frameScene(attempt = 0) {
+        if (!viewer || !Cesium || hasFramed) return;
+        const m = selected ?? models[0] ?? null;
+        const prim = m ? tilesetPrims.get(m.hash) : undefined;
+        if (prim) {
+            try {
+                await prim.readyPromise;
+            } catch {
+                /* continue */
+            }
+            applyTilesetHeightOffset(prim, m?.height_offset_m);
+        }
+
+        const bbox = m?.bbox_wgs84;
+        if (Array.isArray(bbox)) {
+            const sphere = sphereFromBboxWgs84(bbox, frameHeightM(prim));
+            if (sphere) {
+                await flyToSphere(sphere);
+                return;
+            }
+        }
+
+        const spheres: any[] = [];
+        if (prim?.boundingSphere?.radius > 0) {
+            spheres.push(Cesium.BoundingSphere.clone(prim.boundingSphere));
+        }
+        try {
+            for (const ds of viewer.dataSources) {
+                if (!ds?.show) continue;
+                for (const entity of ds.entities.values) {
+                    const s = entityBoundingSphere(entity);
+                    if (s?.center && s.radius >= 0) {
+                        spheres.push(
+                            new Cesium.BoundingSphere(
+                                s.center,
+                                Math.max(s.radius, 2),
+                            ),
+                        );
+                    }
+                }
+            }
+        } catch {
+            /* visualizer may not be ready */
+        }
+
+        if (spheres.length > 0) {
+            const combined =
+                spheres.length === 1
+                    ? spheres[0]
+                    : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
+            await flyToSphere(combined);
+            return;
+        }
+
+        if (prim) {
+            await viewer.flyTo(prim, { duration: 1.2 });
+            hasFramed = true;
+            return;
+        }
+
+        // Layers may not expose spheres until a render pass.
+        if (attempt < 8) {
+            await new Promise<void>((r) =>
+                requestAnimationFrame(() => r()),
+            );
+            await frameScene(attempt + 1);
         }
     }
 
@@ -244,16 +407,21 @@
     function hasNonZeroHeight(coords: GeoJSON.Position[]): boolean {
         for (const c of coords) {
             const z = c.length > 2 && typeof c[2] === "number" ? c[2] : 0;
-            if (z !== 0) return true;
+            // Ignore tiny Z noise — treat as ground-clamped 2D.
+            if (Math.abs(z) > 0.5) return true;
         }
         return false;
     }
 
     function posDegrees(c: GeoJSON.Position) {
+        const useZ =
+            c.length > 2 &&
+            typeof c[2] === "number" &&
+            Math.abs(c[2] as number) > 0.5;
         return Cesium.Cartesian3.fromDegrees(
             c[0],
             c[1],
-            c.length > 2 && typeof c[2] === "number" ? c[2] : 0,
+            useZ ? (c[2] as number) : 0,
         );
     }
 
@@ -355,19 +523,36 @@
                 polygon: {
                     hierarchy,
                     material: fill,
-                    outline: true,
+                    outline: useHeights,
                     outlineColor: stroke,
                     outlineWidth: 2,
-                    // Drape on terrain + 3D tiles so polygons are pickable on the mesh
                     ...(useHeights
                         ? { perPositionHeight: true }
                         : {
+                              // Drape on terrain + photogrammetry mesh
                               classificationType:
                                   Cesium.ClassificationType.BOTH,
                           }),
                 },
             });
             trackEntity(entity, layerName, entityId, "polygon", stroke);
+            // Classification polygons often hide outlines — add a ground clamp edge.
+            if (!useHeights) {
+                const ring = [...exterior.map(posDegrees)];
+                const first = exterior[0]!;
+                const last = exterior[exterior.length - 1]!;
+                if (first[0] !== last[0] || first[1] !== last[1]) {
+                    ring.push(posDegrees(first));
+                }
+                ds.entities.add({
+                    polyline: {
+                        positions: ring,
+                        width: 2,
+                        material: stroke,
+                        clampToGround: true,
+                    },
+                });
+            }
         };
 
         switch (g.type) {
@@ -463,6 +648,10 @@
                 : {}),
         });
         viewer.scene.globe.depthTestAgainstTerrain = false;
+        // Allow getting close to photogrammetry / context polygons.
+        viewer.scene.screenSpaceCameraController.minimumZoomDistance = 0.5;
+        viewer.scene.screenSpaceCameraController.maximumZoomDistance =
+            40_000_000;
 
         clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         clickHandler.setInputAction((click: { position: unknown }) => {
@@ -481,9 +670,10 @@
         });
 
         ready = true;
-        await syncModels(true);
+        await syncModels(false);
         await syncLayers();
         started = true;
+        await frameScene();
         tryHighlight();
     }
 
@@ -523,6 +713,7 @@
             const existing = tilesetPrims.get(m.hash);
             if (existing) {
                 existing.show = want;
+                applyTilesetHeightOffset(existing, m.height_offset_m);
                 continue;
             }
             if (!want || !m.root_url) continue;
@@ -536,6 +727,8 @@
                 });
                 const prim = await Cesium.Cesium3DTileset.fromUrl(resource, {
                     enableCollision: true,
+                    // Sharper mesh when zoomed in on trench-scale models.
+                    maximumScreenSpaceError: 4,
                 });
                 if (gen !== modelLoadGen || !readyHashes.has(m.hash)) {
                     if (!prim.isDestroyed?.()) prim.destroy();
@@ -544,6 +737,11 @@
                 prim.show = isModelVisible(m.hash);
                 viewer.scene.primitives.add(prim);
                 tilesetPrims.set(m.hash, prim);
+                applyTilesetHeightOffset(prim, m.height_offset_m);
+                prim.initialTilesLoaded.addEventListener(() => {
+                    applyTilesetHeightOffset(prim, m.height_offset_m);
+                    viewer.scene.requestRender?.();
+                });
             } catch (e) {
                 if (gen === modelLoadGen) {
                     error =
@@ -556,13 +754,7 @@
 
         if (gen !== modelLoadGen) return;
 
-        // Default camera: selected tileset overview (not entity zoom).
-        const focus = selected?.hash
-            ? tilesetPrims.get(selected.hash)
-            : undefined;
-        if (fly && focus) {
-            await viewer.flyTo(focus, { duration: 1.2 });
-        }
+        if (fly) await frameScene();
     }
 
     function toggleModel(hash: string) {

@@ -1,4 +1,6 @@
-export const load = () => ({
+import type { LayoutServerLoad } from "./$types";
+
+export const load: LayoutServerLoad = () => ({
   nav: [
     {
       section: "Getting Started",
@@ -52,6 +54,13 @@ export const load = () => ({
       items: [
         { href: "/docs/deployment/docker", label: "Docker" },
         { href: "/docs/deployment/cloud-run", label: "Cloud Run" },
+      ],
+    },
+    {
+      section: "More",
+      items: [
+        { href: "/docs/design-doc", label: "Design Document" },
+        { href: "/docs/changelog", label: "Changelog" },
       ],
     },
   ],

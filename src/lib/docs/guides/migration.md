@@ -95,14 +95,25 @@ The current API is documented in the [API Reference](/docs/api/). Key difference
 The CLI is the primary way to import data:
 
 ```bash
-tinyowl import data.csv --org my-org --project my-project --table MyTable.toml
+tinyowl import data.csv --as-new MyTable
+tinyowl import data.csv --into ExistingTable --map "Name=name,Period=period"
+tinyowl import survey.gpkg --project ./my-survey --name "My Survey"
 ```
 
 The server supports a push/pull protocol that the CLI uses for syncing. The CLI also supports:
 
 - `tinyowl pull` — Download canonical and catch up on diffs
-- `tinyowl validate` — Validate CSV/GeoJSON against TOML table definitions
-- `tinyowl serve` — Run a local server with the embedded API
+- `tinyowl push` — Push local changes (includes validation)
+- `tinyowl clone` — Clone a remote project
+- `tinyowl status` / `log` / `commit` — View sync state and commit history
+- `tinyowl media push` / `add` / `import-dir` — Manage media files
+- `tinyowl mappings list` / `map` / `export` — Column-to-concept mappings
+- `tinyowl qgis extract` / `sync` / `apply` — QGIS ValueRelation bridge
+- `tinyowl delete` / `restore` / `purge` — Entity lifecycle management
+- `tinyowl gc` — Clean up orphaned media files
+- `tinyowl login` / `logout` — CLI authentication via device-code OAuth
+- `tinyowl project create` / `list` — Remote project management
+- `tinyowl template list` — List available project templates
 
 ## Need Help?
 

@@ -13,19 +13,19 @@ TinyOwl serves table data as GeoJSON via the layers API, allowing direct connect
 The GeoJSON endpoint follows this pattern:
 
 ```
-http://localhost:8090/api/v1/projects/{slug}/layers/{table}/geojson
+http://localhost:8080/api/v1/projects/{slug}/layers/{table}/geojson
 ```
 
 Or with an org namespace:
 
 ```
-http://localhost:8090/api/v1/{org}/{project}/layers/{table}/geojson
+http://localhost:8080/api/v1/{org}/{project}/layers/{table}/geojson
 ```
 
 For example:
 
 ```
-http://localhost:8090/api/v1/projects/my-excavation/layers/Site_Points/geojson
+http://localhost:8080/api/v1/projects/my-excavation/layers/Site_Points/geojson
 ```
 
 For public projects, no authentication is needed. For private projects, pass your Supabase JWT as a Bearer token (see below).
@@ -50,7 +50,7 @@ For public projects, no authentication is needed. For private projects, pass you
    | Field | Value |
    |---|---|
    | Name | `TinyOwl - My Project` |
-   | URL | `http://localhost:8090/api/v1/projects/my-excavation/` |
+   | URL | `http://localhost:8080/api/v1/projects/my-excavation/` |
 
 4. Click **OK** to save the connection
 5. Click **Connect** to fetch layers
@@ -67,7 +67,7 @@ For private projects, you need to pass your Supabase JWT token:
 Or append the token as a query parameter if your QGIS version doesn't support headers:
 
 ```
-http://localhost:8090/api/v1/projects/my-excavation/layers/Site_Points/geojson?token=<token>
+http://localhost:8080/api/v1/projects/my-excavation/layers/Site_Points/geojson?token=<token>
 ```
 
 ## What You Can Do
@@ -102,9 +102,9 @@ Once connected, you can:
 You can connect to multiple tables in the same project by adding separate layers:
 
 ```
-http://localhost:8090/api/v1/projects/my-excavation/layers/Site_Points/geojson
-http://localhost:8090/api/v1/projects/my-excavation/layers/Artefacts/geojson
-http://localhost:8090/api/v1/projects/my-excavation/layers/Contexts/geojson
+http://localhost:8080/api/v1/projects/my-excavation/layers/Site_Points/geojson
+http://localhost:8080/api/v1/projects/my-excavation/layers/Artefacts/geojson
+http://localhost:8080/api/v1/projects/my-excavation/layers/Contexts/geojson
 ```
 
 ## Next Steps

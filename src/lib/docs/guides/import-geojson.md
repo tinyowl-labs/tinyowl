@@ -132,10 +132,8 @@ Expected output:
 
 ```bash
 tinyowl import features.geojson \
-  --org my-org \
-  --project my-excavation \
-  --table Contexts.toml \
-  --project-toml project.toml
+  --as-new Contexts \
+  --yes
 ```
 
 Expected output:
@@ -174,10 +172,15 @@ The GeoJSON layer endpoint decodes WKB back to GeoJSON on read.
 
 ## Importing Shapefiles
 
-Shapefiles are not directly supported, but you can convert them to GeoJSON first:
+Shapefiles can be imported directly:
 
 ```bash
-# Using ogr2ogr (from GDAL)
+tinyowl import boundary.shp --as-new Boundaries --yes
+```
+
+Or convert to GeoJSON first using GDAL:
+
+```bash
 ogr2ogr -f GeoJSON features.geojson input.shp
 ```
 
@@ -187,11 +190,9 @@ Then import the resulting GeoJSON file as above.
 
 If using the TinyOwl frontend:
 
-1. Navigate to your project dashboard
-2. Click **Import**
-3. Upload your `.geojson` file and `.toml` table definition
-4. Review the preview
-5. Click **Push**
+1. Navigate to your project
+2. Go to **Layers** or **Dashboard**
+3. Use the CLI import command above — the web UI is for browsing, not data import
 
 ## Next Steps
 

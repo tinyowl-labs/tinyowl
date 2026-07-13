@@ -1,23 +1,23 @@
 import { error } from "@sveltejs/kit";
 import { marked } from "marked";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import type { PageServerLoad } from "./$types";
 
-export const load = async ({ params }) => {
+const docs = import.meta.glob<string>(
+  "../../../lib/docs/**/*.md",
+  { eager: true, query: "?raw", import: "default" },
+);
+
+export const load: PageServerLoad = async ({ params }) => {
   const slug = params.path || "index";
-  let filePath = resolve("src/lib/docs", `${slug}.md`);
 
-  let raw: string;
-  try {
-    raw = readFileSync(filePath, "utf-8");
-  } catch {
-    // Try index.md in directory
-    try {
-      filePath = resolve("src/lib/docs", slug, "index.md");
-      raw = readFileSync(filePath, "utf-8");
-    } catch {
-      throw error(404, "Page not found");
-    }
+  // Try exact file match first, then directory index
+  const exact = `../../../lib/docs/${slug}.md`;
+  const dirIndex = `../../../lib/docs/${slug}/index.md`;
+  const key = docs[exact] !== undefined ? exact : dirIndex;
+  const raw = docs[key];
+
+  if (raw === undefined) {
+    throw error(404, "Page not found");
   }
 
   const html = marked.parse(raw) as string;

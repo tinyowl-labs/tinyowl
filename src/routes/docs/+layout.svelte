@@ -27,6 +27,9 @@
             [section]: !collapsedSections[section],
         };
     }
+    function isSectionCollapsed(section: string) {
+        return collapsedSections[section] === true;
+    }
 
     let collapsed = $state(!browser || (browser && window.innerWidth < 1024));
     let mobileOpen = $state(false);
@@ -84,14 +87,14 @@
                             >
                                 <span>{group.section}</span>
                                 <ChevronDownIcon
-                                    class="size-3.5 shrink-0 transition-transform {collapsedSections[
-                                        group.section
-                                    ]
-                                        ? 'rotate-0'
-                                        : '-rotate-90'}"
+                                    class="size-3.5 shrink-0 transition-transform {isSectionCollapsed(
+                                        group.section,
+                                    )
+                                        ? '-rotate-90'
+                                        : 'rotate-0'}"
                                 />
                             </button>
-                            {#if !collapsedSections[group.section]}
+                            {#if !isSectionCollapsed(group.section)}
                                 <div class="flex flex-col gap-0.5 mt-0.5 ml-2">
                                     {#each group.items as item}
                                         <a
@@ -136,14 +139,14 @@
                             >
                                 <span>{group.section}</span>
                                 <ChevronDownIcon
-                                    class="size-3.5 shrink-0 transition-transform {collapsedSections[
-                                        group.section
-                                    ]
-                                        ? 'rotate-0'
-                                        : '-rotate-90'}"
+                                    class="size-3.5 shrink-0 transition-transform {isSectionCollapsed(
+                                        group.section,
+                                    )
+                                        ? '-rotate-90'
+                                        : 'rotate-0'}"
                                 />
                             </button>
-                            {#if !collapsedSections[group.section]}
+                            {#if !isSectionCollapsed(group.section)}
                                 <div class="flex flex-col gap-0.5 mt-0.5 ml-2">
                                     {#each group.items as item}
                                         <a

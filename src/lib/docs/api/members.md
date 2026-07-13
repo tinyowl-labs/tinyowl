@@ -24,7 +24,7 @@ List all members of a project with their roles.
   {
     "user_id": "660e8400-e29b-41d4-a716-446655440001",
     "email": "bob@example.com",
-    "role": "viewer"
+    "role": "collaborator"
   }
 ]
 ```
@@ -33,7 +33,7 @@ List all members of a project with their roles.
 |---|---|---|
 | `user_id` | UUID | Supabase user ID |
 | `email` | string | User email address |
-| `role` | string | `owner`, `admin`, or `viewer` |
+| `role` | string | `owner`, `admin`, `collaborator`, or `viewer` |
 
 Members are ordered by role then email.
 
@@ -41,7 +41,7 @@ Members are ordered by role then email.
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
-  http://localhost:8090/api/v1/projects/my-excavation/members
+  http://localhost:8080/api/v1/projects/my-excavation/members
 ```
 
 ---
@@ -61,14 +61,14 @@ Add a user to a project by email address.
 ```json
 {
   "email": "charlie@example.com",
-  "role": "viewer"
+  "role": "collaborator"
 }
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `email` | string | Yes | Email address of the user to add |
-| `role` | string | No | `owner`, `admin`, or `viewer` (default: `viewer`) |
+| `role` | string | No | `owner`, `admin`, `collaborator`, or `viewer` (default: `viewer`) |
 
 ### Response
 
@@ -81,10 +81,10 @@ Add a user to a project by email address.
 ### Example
 
 ```bash
-curl -X POST http://localhost:8090/api/v1/projects/my-excavation/members \
+curl -X POST http://localhost:8080/api/v1/projects/my-excavation/members \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"email": "charlie@example.com", "role": "viewer"}'
+  -d '{"email": "charlie@example.com", "role": "collaborator"}'
 ```
 
 ---
@@ -109,7 +109,7 @@ Change a member's role.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `role` | string | Yes | `owner`, `admin`, or `viewer` |
+| `role` | string | Yes | `owner`, `admin`, `collaborator`, or `viewer` |
 
 ### Response
 
@@ -122,7 +122,7 @@ Change a member's role.
 ### Example
 
 ```bash
-curl -X PATCH http://localhost:8090/api/v1/projects/my-excavation/members/550e8400-e29b-41d4-a716-446655440000 \
+curl -X PATCH http://localhost:8080/api/v1/projects/my-excavation/members/550e8400-e29b-41d4-a716-446655440000 \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"role": "admin"}'
@@ -151,7 +151,7 @@ Remove a member from a project.
 ### Example
 
 ```bash
-curl -X DELETE http://localhost:8090/api/v1/projects/my-excavation/members/550e8400-e29b-41d4-a716-446655440000 \
+curl -X DELETE http://localhost:8080/api/v1/projects/my-excavation/members/550e8400-e29b-41d4-a716-446655440000 \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -161,6 +161,7 @@ curl -X DELETE http://localhost:8090/api/v1/projects/my-excavation/members/550e8
 
 | Role | Permissions |
 |---|---|
-| `owner` | Full control: update project, manage members, push data, edit readme |
-| `admin` | Update project, add members, push data, edit readme |
+| `owner` | Full control: update project, manage members, push data, link QFieldCloud, edit readme |
+| `admin` | Update project, manage members, push data, edit readme |
+| `collaborator` | Push data, upload media, manage column mappings |
 | `viewer` | Read-only access to data and media |
