@@ -3,9 +3,8 @@
     import { browser } from "$app/environment";
     import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
     import GaugeIcon from "@lucide/svelte/icons/gauge";
+    import ArchiveIcon from "@lucide/svelte/icons/archive";
     import LayersIcon from "@lucide/svelte/icons/layers";
-    import ImageIcon from "@lucide/svelte/icons/image";
-
     import Settings from "@lucide/svelte/icons/settings";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
@@ -33,9 +32,9 @@
             icon: LayersIcon,
         },
         {
-            label: "Media",
-            href: `/${data?.slug}/media`,
-            icon: ImageIcon,
+            label: "Artefacts",
+            href: `/${data?.slug}/artefacts`,
+            icon: ArchiveIcon,
         },
         // Separator before member-specific routes
         ...(isMember

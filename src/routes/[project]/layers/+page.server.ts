@@ -4,11 +4,13 @@ import { TINYOWL_CORE_URL } from "$env/static/private";
 type TableRow = Record<string, unknown>;
 type MediaItem = {
   hash: string;
-  entity_type: string;
-  entity_id: string;
   media_type: string;
   file_size: number;
   url: string;
+  entities?: Array<{ entity_type: string; entity_id: string }>;
+  // legacy flat fields (if any)
+  entity_type?: string;
+  entity_id?: string;
 };
 
 export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
@@ -67,14 +69,25 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
       { headers },
     );
     if (res.ok) {
-      const mediaList: MediaItem[] = await res.json();
+      const body = await res.json();
+      const mediaList: MediaItem[] = Array.isArray(body)
+        ? body
+        : (body.items ?? []);
       for (const m of mediaList) {
-        const key = `${m.entity_type}:${m.entity_id}`;
-        if (!mediaByEntity[key]) mediaByEntity[key] = [];
-        mediaByEntity[key].push({
-          url: `${TINYOWL_CORE_URL}${m.url}`,
-          media_type: m.media_type,
-        });
+        const links =
+          m.entities && m.entities.length > 0
+            ? m.entities
+            : m.entity_type && m.entity_id
+              ? [{ entity_type: m.entity_type, entity_id: m.entity_id }]
+              : [];
+        for (const link of links) {
+          const key = `${link.entity_type}:${link.entity_id}`;
+          if (!mediaByEntity[key]) mediaByEntity[key] = [];
+          mediaByEntity[key].push({
+            url: `${TINYOWL_CORE_URL}${m.url}`,
+            media_type: m.media_type,
+          });
+        }
       }
     }
   } catch (_) {}
