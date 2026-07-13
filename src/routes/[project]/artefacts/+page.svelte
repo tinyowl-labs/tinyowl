@@ -26,6 +26,7 @@
         bboxFromGeoJSON,
         formatBBox,
         formatDateSpan,
+        searchHref,
     } from "$lib/search/params";
 
     let { data } = $props();
@@ -1039,6 +1040,28 @@
                                           ? "Refresh"
                                           : "Find similar"}
                                 </button>
+                                {#if selected}
+                                    <a
+                                        href={searchHref({
+                                            mediaHash: selected.hash,
+                                            dateFrom: similarSamePeriod
+                                                ? projectPeriod?.dateFrom
+                                                : null,
+                                            dateTo: similarSamePeriod
+                                                ? projectPeriod?.dateTo
+                                                : null,
+                                            bbox: similarSameRegion
+                                                ? projectRegion
+                                                : null,
+                                            tags: similarTag.trim()
+                                                ? [similarTag.trim()]
+                                                : [],
+                                        })}
+                                        class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors"
+                                    >
+                                        Search with this
+                                    </a>
+                                {/if}
                             </div>
 
                             <div

@@ -12,6 +12,7 @@
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import SearchIcon from "@lucide/svelte/icons/search";
+    import ImageOffIcon from "@lucide/svelte/icons/image-off";
     import { untrack } from "svelte";
     import {
         DEFAULT_SEARCH_RADIUS,
@@ -30,7 +31,14 @@
         textMatchesQuery,
     } from "$lib/search/highlight";
     import { entityLayersHref } from "$lib/project/entityLink";
-    import type { SearchProject } from "./+page.server";
+    import type { SearchProject, SimilarMediaItem } from "./+page.server";
+    import {
+        clearImageQuery,
+        loadImageQuery,
+        type ImageQueryHit,
+        type ImageQueryProject,
+        type ImageQuerySession,
+    } from "$lib/search/imageQuery";
 
     type EntityResult = {
         entity_type: string;
@@ -53,6 +61,10 @@
         tags: string[];
         vocabularies: string[];
         semantic: boolean;
+        mediaHash: string | null;
+        imageQuery: boolean;
+        similarItems: SimilarMediaItem[];
+        similarStatus: string;
         projects: SearchProject[];
     };
 
@@ -68,6 +80,11 @@
     let dateTo = $state(untrack(() => data.dateTo?.toString() ?? ""));
     let tags = $state<string[]>(untrack(() => data.tags ?? []));
     let vocabularies = $state<string[]>(untrack(() => data.vocabularies ?? []));
+    let mediaHash = $state<string | null>(untrack(() => data.mediaHash));
+    let imageQuery = $state(untrack(() => data.imageQuery));
+    let imageSession = $state<ImageQuerySession | null>(
+        untrack(() => (data.imageQuery ? loadImageQuery() : null)),
+    );
 
     $effect(() => {
         query = data.query || "";
@@ -79,6 +96,9 @@
         dateTo = data.dateTo?.toString() ?? "";
         tags = data.tags ?? [];
         vocabularies = data.vocabularies ?? [];
+        mediaHash = data.mediaHash;
+        imageQuery = data.imageQuery;
+        imageSession = data.imageQuery ? loadImageQuery() : null;
     });
 
     const activeQuery = $derived(
@@ -94,11 +114,64 @@
             vocabularies: data.vocabularies ?? [],
             types: [],
             semantic: data.semantic,
+            mediaHash: data.mediaHash,
+            imageQuery: data.imageQuery,
         } satisfies SearchParams),
     );
 
+    const imageHits = $derived.by((): Array<SimilarMediaItem | ImageQueryHit> => {
+        if (imageSession?.items?.length) return imageSession.items;
+        return data.similarItems ?? [];
+    });
+    const imageStatus = $derived(
+        imageSession?.status || data.similarStatus || "",
+    );
+    /** Image grid: reverse-image modes, or text→CLIP media hits. */
+    const showImageResults = $derived(
+        Boolean(data.mediaHash) ||
+            Boolean(data.imageQuery) ||
+            imageHits.length > 0,
+    );
+    const isReverseImage = $derived(
+        Boolean(data.mediaHash) || Boolean(data.imageQuery),
+    );
+
+    function projectFromImageHit(p: ImageQueryProject): SearchProject {
+        return {
+            result_kind: "project",
+            slug: p.slug,
+            title: p.title,
+            description: p.description ?? null,
+            entity_count: p.entity_count ?? 0,
+            table_count: p.table_count ?? 0,
+            bbox: p.bbox ?? null,
+            match_detail: p.match_detail || "visual",
+            tags_manual: p.tags_manual,
+            tags_auto: p.tags_auto,
+            date_start: p.date_start ?? null,
+            date_end: p.date_end ?? null,
+            date_start_label: p.date_start_label ?? null,
+            date_end_label: p.date_end_label ?? null,
+        };
+    }
+
+    const displayProjects = $derived.by((): SearchProject[] => {
+        const primary = data.projects ?? [];
+        const related = imageSession?.projects ?? [];
+        if (!related.length) return primary;
+        const seen = new Set(primary.map((p) => p.slug.toLowerCase()));
+        const out = [...primary];
+        for (const r of related) {
+            const key = r.slug.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(projectFromImageHit(r));
+        }
+        return out;
+    });
+
     const resultMarkers = $derived(
-        (data.projects ?? [])
+        displayProjects
             .filter((p) => p.bbox)
             .map((p) => ({
                 slug: p.slug,
@@ -106,6 +179,24 @@
                 bbox: p.bbox,
             })),
     );
+
+    let loadedImages = $state<Set<string>>(new Set());
+    let failedImages = $state<Set<string>>(new Set());
+
+    function onImageLoad(hash: string) {
+        loadedImages = new Set([...loadedImages, hash]);
+    }
+    function onImageError(hash: string) {
+        failedImages = new Set([...failedImages, hash]);
+    }
+
+    $effect(() => {
+        // Reset load tracking when the hit set changes.
+        const key = imageHits.map((h) => h.hash).join(",");
+        void key;
+        loadedImages = new Set();
+        failedImages = new Set();
+    });
 
     let expanded = $state<Record<string, boolean>>({});
     let entityCache = $state<
@@ -136,6 +227,8 @@
             dateTo: string | number | null;
             tags: string[];
             vocabularies: string[];
+            mediaHash: string | null;
+            imageQuery: boolean;
         }> = {},
     ) {
         const nextBBox =
@@ -144,6 +237,14 @@
             overrides.lat !== undefined ? overrides.lat : centerLat;
         const nextLng =
             overrides.lng !== undefined ? overrides.lng : centerLng;
+        const nextMediaHash =
+            overrides.mediaHash !== undefined
+                ? overrides.mediaHash
+                : mediaHash;
+        const nextImageQuery =
+            overrides.imageQuery !== undefined
+                ? overrides.imageQuery
+                : imageQuery;
         // BBox and point+radius are mutually exclusive in the URL.
         goto(
             searchHref({
@@ -167,10 +268,43 @@
                     overrides.vocabularies !== undefined
                         ? overrides.vocabularies
                         : vocabularies,
+                mediaHash: nextMediaHash,
+                // Catalogue seed and temp upload are mutually exclusive.
+                imageQuery: nextMediaHash ? false : nextImageQuery,
                 // Preserve quiet opt-out from the URL; never write semantic=1.
                 semantic: data.semantic ? undefined : false,
             }),
         );
+    }
+
+    /** Same URL shape as artefacts shelf (`/media/{hash}?token=`). */
+    function mediaUrl(item: SimilarMediaItem | ImageQueryHit): string {
+        const base = item.url?.startsWith("/")
+            ? item.url
+            : `/media/${item.hash}`;
+        return data.accessToken
+            ? `${base}?token=${encodeURIComponent(data.accessToken)}`
+            : base;
+    }
+
+    const queryPreview = $derived.by((): string | null => {
+        if (imageSession?.previewDataUrl) return imageSession.previewDataUrl;
+        if (!data.mediaHash) return null;
+        const base = `/media/${data.mediaHash}`;
+        return data.accessToken
+            ? `${base}?token=${encodeURIComponent(data.accessToken)}`
+            : base;
+    });
+
+    /** OpenCLIP cosine distance → rough similarity % for display. */
+    function similarityPct(distance: number): number {
+        const sim = Math.max(0, Math.min(1, 1 - distance));
+        return Math.round(sim * 100);
+    }
+
+    function clearImageSearch() {
+        clearImageQuery();
+        navigateWith({ mediaHash: null, imageQuery: false });
     }
 
     function onTemporalCommit(from: number | null, to: number | null) {
@@ -275,7 +409,7 @@
     // Prefetch once per query+slug (must not track entityCache).
     $effect(() => {
         const q = data.query;
-        const projects = data.projects;
+        const projects = displayProjects;
         if (!q || !projects?.length) return;
         untrack(() => {
             if (q !== lastPrefetchQ) {
@@ -317,6 +451,9 @@
                 {dateFrom}
                 {dateTo}
                 semantic={data.semantic}
+                mediaHash={mediaHash}
+                imageQuery={imageQuery}
+                accessToken={data.accessToken}
                 autofocus={!activeQuery}
             />
         </div>
@@ -333,7 +470,7 @@
                         Temporal
                     </h2>
                     <TemporalRangeFilter
-                        projects={data.projects}
+                        projects={displayProjects}
                         bind:dateFrom
                         bind:dateTo
                         onCommit={onTemporalCommit}
@@ -364,7 +501,8 @@
                         <SearchIcon class="size-8 mb-3 opacity-30" />
                         <p class="text-lg text-foreground">Search TinyOwl</p>
                         <p class="text-sm mt-2 max-w-md">
-                            Find projects by title, vocabulary, period, or place.
+                            Find projects by title, vocabulary, period, or place —
+                            or attach an image to find visually similar photos.
                             Use the filters on the left, or browse the
                             <a
                                 href="/"
@@ -373,25 +511,175 @@
                             >.
                         </p>
                     </div>
-                {:else if data.projects.length === 0}
-                    <div class="py-8 text-muted-foreground">
-                        <p class="text-lg text-foreground">No projects found</p>
-                        <p class="text-sm mt-2">
-                            Try different terms, a wider area, or
-                            <a
-                                href="/"
-                                class="text-primary underline-offset-2 hover:underline"
-                                >explore the map</a
-                            >.
-                        </p>
-                    </div>
                 {:else}
+                    {#if showImageResults}
+                        <section class="mb-8">
+                            {#if isReverseImage}
+                                <div
+                                    class="mb-4 flex flex-wrap items-start gap-4 border-b border-border pb-4"
+                                >
+                                    {#if queryPreview}
+                                        <div
+                                            class="relative size-24 shrink-0 overflow-hidden rounded-lg border border-border bg-secondary/50"
+                                        >
+                                            <img
+                                                src={queryPreview}
+                                                alt="Query image"
+                                                class="h-full w-full object-cover"
+                                            />
+                                        </div>
+                                    {/if}
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-sm text-foreground">
+                                            {#if data.imageQuery}
+                                                Visually similar photos
+                                            {:else}
+                                                Similar to catalogue photo
+                                            {/if}
+                                            {#if imageHits.length > 0}
+                                                <span class="text-muted-foreground">
+                                                    · {imageHits.length} match{imageHits.length !==
+                                                    1
+                                                        ? "es"
+                                                        : ""}
+                                                </span>
+                                            {/if}
+                                        </p>
+                                        <p
+                                            class="mt-1 text-xs text-muted-foreground max-w-lg"
+                                        >
+                                            {#if data.imageQuery}
+                                                Your upload was embedded with CLIP
+                                                and compared to the media corpus —
+                                                it was not saved to any project.
+                                                Related projects come from the same
+                                                embedding space.
+                                            {:else}
+                                                Neighbours from OpenCLIP embeddings
+                                                for this catalogue image, plus
+                                                related projects.
+                                            {/if}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            class="mt-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                                            onclick={clearImageSearch}
+                                        >
+                                            Clear image search
+                                        </button>
+                                    </div>
+                                </div>
+                            {:else if data.query}
+                                <p class="text-sm text-muted-foreground mb-3">
+                                    Photos matching “{data.query}”
+                                    {#if imageHits.length > 0}
+                                        · {imageHits.length}
+                                    {/if}
+                                </p>
+                            {/if}
+
+                            {#if data.imageQuery && !imageSession && imageHits.length === 0}
+                                <p class="text-sm text-muted-foreground py-4">
+                                    Query image is missing from this browser
+                                    session. Attach a photo again in the search
+                                    bar to re-run the comparison.
+                                </p>
+                            {:else if imageStatus && imageHits.length === 0 && isReverseImage}
+                                <p class="text-sm text-muted-foreground py-4">
+                                    {imageStatus}
+                                </p>
+                            {:else if imageHits.length > 0}
+                                <div
+                                    class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5"
+                                >
+                                    {#each imageHits as sim (sim.hash + sim.project_slug)}
+                                        {@const isImage =
+                                            sim.media_type.startsWith("image/")}
+                                        {@const imgLoaded = loadedImages.has(
+                                            sim.hash,
+                                        )}
+                                        {@const imgFailed = failedImages.has(
+                                            sim.hash,
+                                        )}
+                                        <a
+                                            href={`/${sim.project_slug}/artefacts`}
+                                            class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 no-underline outline-none transition-[box-shadow] hover:shadow-[inset_0_0_0_1px_var(--color-border)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                                            title="{sim.project_title} · {similarityPct(
+                                                sim.distance,
+                                            )}% similar"
+                                        >
+                                            {#if isImage}
+                                                {#if !imgLoaded && !imgFailed}
+                                                    <div
+                                                        class="absolute inset-0 animate-pulse bg-secondary"
+                                                    ></div>
+                                                {/if}
+                                                {#if imgFailed}
+                                                    <div
+                                                        class="absolute inset-0 flex items-center justify-center"
+                                                    >
+                                                        <ImageOffIcon
+                                                            class="size-6 text-muted-foreground/40"
+                                                        />
+                                                    </div>
+                                                {/if}
+                                                <img
+                                                    src={mediaUrl(sim)}
+                                                    alt=""
+                                                    class="h-full w-full object-cover {imgLoaded
+                                                        ? 'opacity-100'
+                                                        : 'opacity-0'} transition-opacity duration-200"
+                                                    loading="lazy"
+                                                    onload={() =>
+                                                        onImageLoad(sim.hash)}
+                                                    onerror={() =>
+                                                        onImageError(sim.hash)}
+                                                />
+                                            {:else}
+                                                <div
+                                                    class="flex h-full items-center justify-center px-2 text-center text-[11px] text-muted-foreground"
+                                                >
+                                                    {sim.project_title}
+                                                </div>
+                                            {/if}
+                                            <span
+                                                class="pointer-events-none absolute bottom-1 left-1 z-20 max-w-[calc(100%-0.5rem)] truncate rounded bg-background/80 px-1 py-0.5 text-[10px] text-foreground/80 opacity-0 transition-opacity group-hover:opacity-100"
+                                            >
+                                                {sim.project_title}
+                                            </span>
+                                            <span
+                                                class="absolute bottom-1.5 right-1.5 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-foreground"
+                                            >
+                                                {similarityPct(sim.distance)}%
+                                            </span>
+                                        </a>
+                                    {/each}
+                                </div>
+                            {/if}
+                        </section>
+                    {/if}
+
+                    {#if displayProjects.length === 0 && !showImageResults}
+                        <div class="py-8 text-muted-foreground">
+                            <p class="text-lg text-foreground">No projects found</p>
+                            <p class="text-sm mt-2">
+                                Try different terms, a wider area, or
+                                <a
+                                    href="/"
+                                    class="text-primary underline-offset-2 hover:underline"
+                                    >explore the map</a
+                                >.
+                            </p>
+                        </div>
+                    {:else if displayProjects.length > 0}
                     <p class="text-sm text-muted-foreground mb-3">
-                        {data.projects.length} project{data.projects.length !== 1
+                        {displayProjects.length} project{displayProjects.length !== 1
                             ? "s"
                             : ""}
                         {#if data.query}
                             matching “{data.query}”
+                        {:else if isReverseImage}
+                            related to this image
                         {/if}
                         {#if data.bbox}
                             in map area
@@ -408,7 +696,7 @@
                     </p>
 
                     <ul class="divide-y divide-border border-y border-border">
-                        {#each data.projects as proj}
+                        {#each displayProjects as proj}
                             {@const matchLabel = formatMatchDetail(
                                 proj.match_detail,
                             )}
@@ -659,6 +947,7 @@
                             </li>
                         {/each}
                     </ul>
+                    {/if}
                 {/if}
             </div>
         </div>

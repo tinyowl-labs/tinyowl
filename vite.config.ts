@@ -90,7 +90,12 @@ export default defineConfig({
     host: true,
     proxy: {
       "/media": "http://localhost:8080",
-      "/api/v1": "http://localhost:8080",
+      // Long timeout: reverse-image POST embeds via OpenCLIP / embed-worker.
+      "/api/v1": {
+        target: "http://localhost:8080",
+        timeout: 120_000,
+        proxyTimeout: 120_000,
+      },
     },
   },
 });

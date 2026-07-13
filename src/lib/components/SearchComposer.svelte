@@ -3,12 +3,22 @@
     import XIcon from "@lucide/svelte/icons/x";
     import TagIcon from "@lucide/svelte/icons/tag";
     import BookMarkedIcon from "@lucide/svelte/icons/book-marked";
+    import ImageIcon from "@lucide/svelte/icons/image";
+    import LoaderIcon from "@lucide/svelte/icons/loader";
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
     import {
         searchHref,
+        formatBBox,
         type SearchBBox,
     } from "$lib/search/params";
+    import {
+        clearImageQuery,
+        loadImageQuery,
+        postSimilarByImage,
+        previewDataUrlFromFile,
+        saveImageQuery,
+    } from "$lib/search/imageQuery";
 
     /** Cursor-style mention: main input stays focused; text after @ filters the list. */
     type MentionMode = "kinds" | "tag" | "vocab";
@@ -29,6 +39,11 @@
         dateTo?: number | string | null;
         /** When false, keep quiet `?semantic=0` opt-out across composer navigations. */
         semantic?: boolean;
+        /** Reverse-image seed (`?media_hash=`). */
+        mediaHash?: string | null;
+        /** Temp query-by-image (`?image=1`). */
+        imageQuery?: boolean;
+        accessToken?: string | null;
         autofocus?: boolean;
         placeholder?: string;
         examples?: string[];
@@ -46,6 +61,9 @@
         dateFrom = null,
         dateTo = null,
         semantic = true,
+        mediaHash = null,
+        imageQuery = false,
+        accessToken = null,
         autofocus = false,
         placeholder = "Search projects…  Type @ for filters",
         examples = [],
@@ -70,10 +88,14 @@
     ];
 
     let inputEl = $state<HTMLInputElement | null>(null);
+    let fileInputEl = $state<HTMLInputElement | null>(null);
     let focused = $state(false);
     let exampleIndex = $state(0);
     let exampleVisible = $state(true);
     let reduceMotion = $state(false);
+    let dragOver = $state(false);
+    let imageBusy = $state(false);
+    let imageError = $state("");
 
     let mentionOpen = $state(false);
     let mentionMode = $state<MentionMode>("kinds");
@@ -86,11 +108,31 @@
 
     const activeTags = $derived(tags);
     const activeVocabs = $derived(vocabularies);
+    const activeMediaHash = $derived(mediaHash?.trim() || null);
+    const imageSession = $derived(
+        imageQuery ? loadImageQuery() : null,
+    );
+    const hasImageChip = $derived(
+        Boolean(activeMediaHash) || Boolean(imageSession?.previewDataUrl),
+    );
     const cycling = $derived(examples.length > 0);
-    const paused = $derived(focused || value.trim().length > 0 || mentionOpen);
+    const paused = $derived(
+        focused ||
+            value.trim().length > 0 ||
+            mentionOpen ||
+            hasImageChip,
+    );
     const activePlaceholder = $derived(
         cycling ? (examples[exampleIndex] ?? placeholder) : placeholder,
     );
+    const seedThumbUrl = $derived.by(() => {
+        if (imageSession?.previewDataUrl) return imageSession.previewDataUrl;
+        if (!activeMediaHash) return null;
+                const q = accessToken
+                    ? `?token=${encodeURIComponent(accessToken)}`
+                    : "";
+                return `/media/${activeMediaHash}${q}`;
+    });
 
     const menuItems = $derived.by((): MenuItem[] => {
         if (mentionMode === "kinds") {
@@ -191,6 +233,8 @@
         q?: string;
         tags?: string[];
         vocabularies?: string[];
+        mediaHash?: string | null;
+        imageQuery?: boolean | null;
     }) {
         goto(
             searchHref({
@@ -204,8 +248,117 @@
                 dateFrom,
                 dateTo,
                 semantic: semantic ? undefined : false,
+                mediaHash:
+                    next.mediaHash !== undefined
+                        ? next.mediaHash
+                        : activeMediaHash,
+                imageQuery:
+                    next.imageQuery !== undefined
+                        ? next.imageQuery
+                        : next.mediaHash
+                          ? false
+                          : imageQuery,
             }),
         );
+    }
+
+    function removeMedia() {
+        imageError = "";
+        clearImageQuery();
+        navigate({ mediaHash: null, imageQuery: false });
+    }
+
+    async function attachImageFile(file: File) {
+        imageError = "";
+        if (!file.type.startsWith("image/") && !file.type) {
+            // Some browsers omit type for HEIC etc.; still try.
+        } else if (file.type && !file.type.startsWith("image/")) {
+            imageError = "Choose an image file (JPEG, PNG, or WebP)";
+            return;
+        }
+        if (file.size > 20 * 1024 * 1024) {
+            imageError = "Image too large (max 20MB)";
+            return;
+        }
+        imageBusy = true;
+        try {
+            const preview = await previewDataUrlFromFile(file);
+            const { items, projects, status } = await postSimilarByImage(file, {
+                accessToken,
+                limit: 24,
+                bbox: bbox ? formatBBox(bbox) : null,
+                dateFrom,
+                dateTo,
+                tag: activeTags[0] ?? null,
+            });
+            saveImageQuery({
+                previewDataUrl: preview,
+                items,
+                projects,
+                status:
+                    status === "no_matches" && items.length === 0
+                        ? "No similar photos found"
+                        : status,
+                at: Date.now(),
+            });
+            navigate({ mediaHash: null, imageQuery: true });
+        } catch (e: any) {
+            imageError = e?.message ?? "Could not search by image";
+        } finally {
+            imageBusy = false;
+        }
+    }
+
+    function onFilePicked(e: Event) {
+        const input = e.currentTarget as HTMLInputElement;
+        const file = input.files?.[0];
+        input.value = "";
+        if (file) void attachImageFile(file);
+    }
+
+    /** Open the native file picker from a trusted user gesture. */
+    function openImagePicker() {
+        imageError = "";
+        // Must stay synchronous with the click handler so browsers allow the picker.
+        fileInputEl?.click();
+    }
+
+    function onPaste(e: ClipboardEvent) {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+            if (!item.type.startsWith("image/")) continue;
+            const file = item.getAsFile();
+            if (!file) continue;
+            e.preventDefault();
+            void attachImageFile(file);
+            return;
+        }
+    }
+
+    function onDragOver(e: DragEvent) {
+        if (![...(e.dataTransfer?.types ?? [])].includes("Files")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        dragOver = true;
+    }
+
+    function onDragLeave(e: DragEvent) {
+        e.preventDefault();
+        dragOver = false;
+    }
+
+    function onDrop(e: DragEvent) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragOver = false;
+        const file = [...(e.dataTransfer?.files ?? [])].find((f) =>
+            f.type.startsWith("image/"),
+        );
+        if (file) void attachImageFile(file);
+        else if (e.dataTransfer?.files?.length)
+            imageError = "Drop an image file (JPEG, PNG, or WebP)";
     }
 
     /** Strip the active @mention token from the free-text query. */
@@ -440,8 +593,28 @@
 </script>
 
 <div class="relative z-30 space-y-2">
-    {#if activeTags.length > 0 || activeVocabs.length > 0}
+    {#if activeTags.length > 0 || activeVocabs.length > 0 || hasImageChip}
         <div class="flex flex-wrap gap-1.5" aria-label="Active filters">
+            {#if hasImageChip}
+                <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-1.5 py-1 text-[11px] font-medium text-primary hover:bg-primary/15"
+                    onclick={removeMedia}
+                    title="Remove image search"
+                >
+                    {#if seedThumbUrl}
+                        <img
+                            src={seedThumbUrl}
+                            alt=""
+                            class="size-5 rounded object-cover"
+                        />
+                    {:else}
+                        <ImageIcon class="size-3.5" />
+                    {/if}
+                    <span class="text-primary/60">image</span>
+                    <XIcon class="size-3 opacity-70" />
+                </button>
+            {/if}
             {#each activeTags as tag (tag.toLowerCase())}
                 <button
                     type="button"
@@ -467,14 +640,29 @@
         </div>
     {/if}
 
-    <form onsubmit={handleSubmit} class="relative w-full">
-        <div class="search-vt-bar relative w-full">
+    {#if imageError}
+        <p class="text-[11px] text-destructive">{imageError}</p>
+    {/if}
+
+    <form
+        onsubmit={handleSubmit}
+        class="relative w-full"
+        ondragover={onDragOver}
+        ondragleave={onDragLeave}
+        ondrop={onDrop}
+        onpaste={onPaste}
+    >
+        <div
+            class="search-vt-bar relative w-full {dragOver
+                ? 'ring-2 ring-primary/40 rounded-xl'
+                : ''}"
+        >
         <SearchIcon
             class="absolute left-3.5 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground"
         />
         {#if cycling && !paused}
             <span
-                class="pointer-events-none absolute left-10 right-4 top-1/2 z-10 -translate-y-1/2 truncate text-sm text-muted-foreground transition-opacity duration-200 {exampleVisible
+                class="pointer-events-none absolute left-10 right-12 top-1/2 z-10 -translate-y-1/2 truncate text-sm text-muted-foreground transition-opacity duration-200 {exampleVisible
                     ? 'opacity-100'
                     : 'opacity-0'}"
                 aria-hidden="true">{activePlaceholder}</span
@@ -496,8 +684,31 @@
             onkeydown={onKeydown}
             onfocus={() => (focused = true)}
             onblur={onBlur}
-            class="w-full rounded-xl border border-border bg-background py-3 pl-10 pr-4 text-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none shadow-sm {klass}"
+            class="w-full rounded-xl border border-border bg-background py-3 pl-10 pr-12 text-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none shadow-sm {klass}"
         />
+        <input
+            bind:this={fileInputEl}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/*"
+            class="sr-only"
+            tabindex="-1"
+            aria-hidden="true"
+            onchange={onFilePicked}
+        />
+        <button
+            type="button"
+            class="absolute right-2.5 top-1/2 z-10 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+            title="Search by image — click, drop, or paste a photo"
+            aria-label="Search by image"
+            disabled={imageBusy}
+            onclick={openImagePicker}
+        >
+            {#if imageBusy}
+                <LoaderIcon class="size-4 animate-spin" />
+            {:else}
+                <ImageIcon class="size-4" />
+            {/if}
+        </button>
         </div>
 
         {#if mentionOpen}

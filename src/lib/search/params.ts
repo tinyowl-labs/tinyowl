@@ -26,6 +26,10 @@ export type SearchParams = {
    * Omitted from normal URLs — only `semantic=0` is written when disabled.
    */
   semantic: boolean;
+  /** Reverse-image seed (`?media_hash=`); catalogue hash path. */
+  mediaHash: string | null;
+  /** Temp query-by-image session (`?image=1`); results live in sessionStorage. */
+  imageQuery: boolean;
 };
 
 export const DEFAULT_SEARCH_RADIUS = 5000;
@@ -86,6 +90,13 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
   // Default on; only an explicit opt-out disables the boost.
   const semantic = !semanticOff;
 
+  const mediaRaw = (sp.get("media_hash") ?? "").trim().toLowerCase();
+  const mediaHash =
+    /^[0-9a-f]{16,}$/.test(mediaRaw) ? mediaRaw : null;
+  const imageFlag = (sp.get("image") ?? "").trim().toLowerCase();
+  const imageQuery =
+    imageFlag === "1" || imageFlag === "true" || imageFlag === "yes";
+
   return {
     q,
     lat: lat != null && !Number.isNaN(lat) ? lat : null,
@@ -98,6 +109,8 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     vocabularies: parseListParam(sp, "vocab"),
     types: parseListParam(sp, "type"),
     semantic,
+    mediaHash,
+    imageQuery,
   };
 }
 
@@ -113,12 +126,18 @@ export function buildSearchParams(input: {
   vocabularies?: string[] | null;
   types?: string[] | null;
   semantic?: boolean | null;
+  mediaHash?: string | null;
+  imageQuery?: boolean | null;
 }): URLSearchParams {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
   if (q) params.set("q", q);
   // Boost is default-on; only persist an explicit opt-out.
   if (input.semantic === false) params.set("semantic", "0");
+
+  const media = (input.mediaHash ?? "").trim().toLowerCase();
+  if (/^[0-9a-f]{16,}$/.test(media)) params.set("media_hash", media);
+  if (input.imageQuery) params.set("image", "1");
 
   // Prefer explicit map-view bbox over point+radius when both present.
   if (input.bbox) {
@@ -191,6 +210,8 @@ export function searchHref(input: Parameters<typeof buildSearchParams>[0]): stri
 export function hasActiveSearch(p: SearchParams): boolean {
   return (
     Boolean(p.q) ||
+    Boolean(p.mediaHash) ||
+    Boolean(p.imageQuery) ||
     p.bbox != null ||
     (p.lat != null && p.lng != null) ||
     p.dateFrom != null ||

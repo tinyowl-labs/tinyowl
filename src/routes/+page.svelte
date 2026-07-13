@@ -57,6 +57,7 @@
                 <SearchComposer
                     bind:value={query}
                     examples={searchExamples}
+                    accessToken={data.accessToken}
                     class="border-2 border-border bg-card text-foreground placeholder:text-muted-foreground hover:shadow-md transition-all"
                 />
             </div>

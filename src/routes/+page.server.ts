@@ -23,5 +23,5 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
     if (res.ok) centroids = await res.json();
   } catch (_) {}
 
-  return { centroids };
+  return { centroids, accessToken };
 };
