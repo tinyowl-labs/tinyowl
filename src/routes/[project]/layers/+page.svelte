@@ -685,12 +685,24 @@
                                             return;
                                         }
                                         if (ev.ctrlKey || ev.metaKey) {
-                                            layerSelection.removeSelection(
+                                            layerSelection.toggleSelection(
                                                 tabValue,
                                                 id,
                                             );
                                             return;
                                         }
+                                        layerSelection.selectSingle(
+                                            tabValue,
+                                            id,
+                                        );
+                                    }}
+                                    onRowDblClick={(row) => {
+                                        const id = String(
+                                            row.source_id ??
+                                                row.SOURCE_ID ??
+                                                "",
+                                        );
+                                        if (!id) return;
                                         layerSelection.selectSingle(
                                             tabValue,
                                             id,

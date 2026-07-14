@@ -2,6 +2,8 @@
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import CopyIcon from "@lucide/svelte/icons/copy";
     import EyeOffIcon from "@lucide/svelte/icons/eye-off";
+    import EyeIcon from "@lucide/svelte/icons/eye";
+    import FocusIcon from "@lucide/svelte/icons/focus";
     import XIcon from "@lucide/svelte/icons/x";
 
     type Props = {
@@ -14,10 +16,14 @@
         selectionCount?: number;
         /** Whether the context target is in the current multi-selection. */
         targetInSelection?: boolean;
+        isolating?: boolean;
         onFlyTo?: () => void;
         onCopyId?: () => void;
         onHide?: () => void;
         onHideAll?: () => void;
+        onShowSelected?: () => void;
+        onIsolate?: () => void;
+        onExitIsolate?: () => void;
         onClear?: () => void;
         onClose?: () => void;
     };
@@ -30,10 +36,14 @@
         entityId = "",
         selectionCount = 0,
         targetInSelection = false,
+        isolating = false,
         onFlyTo,
         onCopyId,
         onHide,
         onHideAll,
+        onShowSelected,
+        onIsolate,
+        onExitIsolate,
         onClear,
         onClose,
     }: Props = $props();
@@ -41,9 +51,7 @@
     let rootEl = $state<HTMLDivElement>();
     let copied = $state(false);
 
-    const showMulti = $derived(
-        selectionCount > 1 && targetInSelection,
-    );
+    const showMulti = $derived(selectionCount > 1 && targetInSelection);
 
     $effect(() => {
         if (!open) {
@@ -153,6 +161,48 @@
                 >
                     <EyeOffIcon class="size-3.5 shrink-0 text-muted-foreground" />
                     Hide all
+                </button>
+            {/if}
+            {#if onShowSelected && (showMulti || targetInSelection)}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => {
+                        onShowSelected();
+                        onClose?.();
+                    }}
+                >
+                    <EyeIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                    Show selected
+                </button>
+            {/if}
+            {#if onIsolate && (showMulti || targetInSelection || selectionCount > 0)}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => {
+                        onIsolate();
+                        onClose?.();
+                    }}
+                >
+                    <FocusIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                    Isolate
+                </button>
+            {/if}
+            {#if isolating && onExitIsolate}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => {
+                        onExitIsolate();
+                        onClose?.();
+                    }}
+                >
+                    <FocusIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                    Exit isolate
                 </button>
             {/if}
             {#if onClear}

@@ -15,14 +15,21 @@
         type SelectionToolMode,
     } from "$lib/stores/layerSelection.svelte";
     import { SELECTION_PRIMARY, SELECTION_SECONDARY } from "./selectionStyle";
-    import { buildEntityPopupHtml, featureEntityId } from "./mapEntityPopup";
+    import { featureEntityId } from "./mapEntityPopup";
     import MapToolsRail from "./MapToolsRail.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
+    import PickPager from "./PickPager.svelte";
     import {
         collectLeafletKeysInBounds,
         collectLeafletKeysInLonLatRing,
     } from "./mapSelection";
+    import { mapToolShortcut } from "./mapShortcuts";
+    import {
+        dedupePickCandidates,
+        pickCandidateLabel,
+        type PickCandidate,
+    } from "./pickCandidates";
     import {
         computeMeasureValue,
         formatMeasureValue,
@@ -70,6 +77,12 @@
     let lastFlownKey = "";
     let filterToView = $state(false);
     let inViewEntityKeys = $state<string[]>([]);
+    let pickCandidates = $state<PickCandidate[]>([]);
+    let pickIndex = $state(0);
+    let pickOpen = $state(false);
+    let pickPanelX = $state(16);
+    let pickPanelY = $state(56);
+    let pickFlipBelow = $state(false);
 
     let ctxOpen = $state(false);
     let ctxX = $state(0);
@@ -118,6 +131,7 @@
 
     const selectionCount = $derived(layerSelection.size);
     const hiddenCount = $derived(layerSelection.hiddenCount);
+    const isolating = $derived(layerSelection.isIsolating);
     const selectionSig = $derived(
         `${[...layerSelection.selected].sort().join("|")}::${layerSelection.primaryKey ?? ""}`,
     );
@@ -336,6 +350,61 @@
         if (primary) {
             (featureLayers.get(primary) as any)?.bringToFront?.();
         }
+    }
+
+    function flyHome() {
+        if (!map || !L) return;
+        const bounds = L.latLngBounds([]);
+        let any = false;
+        for (const gl of geoLayers) {
+            try {
+                const b = gl.getBounds();
+                if (b?.isValid?.()) {
+                    bounds.extend(b);
+                    any = true;
+                }
+            } catch {
+                /* ignore */
+            }
+        }
+        if (!any || !bounds.isValid()) return;
+        map.fitBounds(bounds, {
+            padding: [40, 40],
+            maxZoom: 20,
+            animate: true,
+            duration: 0.85,
+        } as any);
+    }
+
+    function flyToLayerExtent(layerName: string) {
+        if (!map || !L) return;
+        const bounds = L.latLngBounds([]);
+        let any = false;
+        for (const [key, layer] of featureLayers) {
+            if (!key.startsWith(`${layerName}:`)) continue;
+            const anyLayer = layer as any;
+            if (typeof anyLayer.getLatLng === "function") {
+                bounds.extend(anyLayer.getLatLng());
+                any = true;
+            } else if (typeof anyLayer.getBounds === "function") {
+                const b = anyLayer.getBounds() as LType.LatLngBounds;
+                if (b?.isValid?.()) {
+                    bounds.extend(b);
+                    any = true;
+                }
+            }
+        }
+        if (!any || !bounds.isValid()) return;
+        map.fitBounds(bounds, {
+            padding: [60, 60],
+            maxZoom: 20,
+            animate: true,
+            duration: 0.85,
+        } as any);
+    }
+
+    function applyVisibilityRefresh() {
+        if (map && L) updateLayers();
     }
 
     function applyExternalSelection() {
@@ -603,59 +672,292 @@
         map?.zoomOut();
     }
 
+    function closePickPager() {
+        pickOpen = false;
+        pickCandidates = [];
+        pickIndex = 0;
+    }
+
+    /** Leaflet `_containsPoint` expects a layer point, not container point. */
+    function layerPointFromEvent(e: LType.LeafletMouseEvent): LType.Point | null {
+        if (!map || !L) return null;
+        if (e.layerPoint) return e.layerPoint;
+        const oe = e.originalEvent as MouseEvent | undefined;
+        if (oe) return map.mouseEventToLayerPoint(oe);
+        if (e.containerPoint) {
+            return map.containerPointToLayerPoint(e.containerPoint);
+        }
+        return null;
+    }
+
+    function layerHitsPoint(
+        layer: LType.Layer,
+        layerPoint: LType.Point,
+        latlng: LType.LatLng,
+    ): boolean {
+        const anyLayer = layer as any;
+        try {
+            if (typeof anyLayer._containsPoint === "function") {
+                if (anyLayer._containsPoint(layerPoint)) return true;
+            }
+        } catch {
+            /* fall through */
+        }
+        // Fallbacks when renderer internals are unavailable / flaky.
+        try {
+            if (typeof anyLayer.getLatLng === "function") {
+                const p = map!.latLngToLayerPoint(anyLayer.getLatLng());
+                const dx = p.x - layerPoint.x;
+                const dy = p.y - layerPoint.y;
+                const r = Math.max(Number(anyLayer.options?.radius) || 6, 8) + 4;
+                return dx * dx + dy * dy <= r * r;
+            }
+            if (typeof anyLayer.getBounds === "function") {
+                const b = anyLayer.getBounds();
+                if (b?.isValid?.() && b.contains(latlng)) {
+                    const geom = anyLayer.feature?.geometry;
+                    if (geom?.type === "Polygon" && Array.isArray(geom.coordinates?.[0])) {
+                        return pointInPolygonLngLat(
+                            latlng.lng,
+                            latlng.lat,
+                            geom.coordinates[0],
+                        );
+                    }
+                    if (geom?.type === "MultiPolygon") {
+                        for (const poly of geom.coordinates ?? []) {
+                            const ring = poly?.[0];
+                            if (
+                                Array.isArray(ring) &&
+                                pointInPolygonLngLat(
+                                    latlng.lng,
+                                    latlng.lat,
+                                    ring,
+                                )
+                            ) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                    // Lines / unknown: bounds hit is good enough for pick.
+                    return true;
+                }
+            }
+        } catch {
+            /* ignore */
+        }
+        return false;
+    }
+
+    function pointInPolygonLngLat(
+        lng: number,
+        lat: number,
+        ring: number[][],
+    ): boolean {
+        // Ray cast in lon/lat (fine for local extents).
+        let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const xi = ring[i]![0]!;
+            const yi = ring[i]![1]!;
+            const xj = ring[j]![0]!;
+            const yj = ring[j]![1]!;
+            const intersect =
+                yi > lat !== yj > lat &&
+                lng < ((xj - xi) * (lat - yi)) / (yj - yi + 0.0) + xi;
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    function collectLeafletHits(
+        layerPoint: LType.Point,
+        latlng: LType.LatLng,
+    ): PickCandidate[] {
+        if (!map || !L) return [];
+        const out: PickCandidate[] = [];
+        // Reverse insertion order so top-drawn features appear first.
+        const entries = [...featureLayers.entries()].reverse();
+        for (const [key, layer] of entries) {
+            if (!layerHitsPoint(layer, layerPoint, latlng)) continue;
+            const { layer: layerName, id } = parseSelectionKey(key);
+            if (!id || layerSelection.isHidden(layerName, id)) continue;
+            out.push({
+                key,
+                layerName,
+                entityId: id,
+                label: pickCandidateLabel(layerName, id, rows),
+            });
+        }
+        return dedupePickCandidates(out);
+    }
+
+    /** Prevent map `click` from clearing a pick opened by a feature click. */
+    let suppressMapClickClear = false;
+
+    function openPickFromHits(
+        hits: PickCandidate[],
+        clientX: number,
+        clientY: number,
+    ) {
+        if (hits.length === 0) {
+            closePickPager();
+            return;
+        }
+        const el = map?.getContainer();
+        const rect = el?.getBoundingClientRect();
+        if (rect) {
+            pickPanelX = Math.max(
+                8,
+                Math.min(clientX - rect.left, rect.width - 8),
+            );
+            pickPanelY = Math.max(
+                8,
+                Math.min(clientY - rect.top, rect.height - 8),
+            );
+            pickFlipBelow = pickPanelY < 200;
+        }
+        pickCandidates = hits;
+        pickIndex = 0;
+        pickOpen = true;
+        const top = hits[0]!;
+        layerSelection.selectSingle(top.layerName, top.entityId);
+        lastFlownKey = selectionFlownKey();
+        suppressMapClickClear = true;
+        queueMicrotask(() => {
+            suppressMapClickClear = false;
+        });
+    }
+
+    function applyPickIndex(i: number) {
+        const c = pickCandidates[i];
+        if (!c) return;
+        pickIndex = i;
+        layerSelection.selectSingle(c.layerName, c.entityId);
+        lastFlownKey = selectionFlownKey();
+        syncHighlightStyles();
+    }
+
     function onFeatureClick(
         e: LType.LeafletMouseEvent,
         name: string,
         id: string,
-        layer: LType.Layer,
+        _layer: LType.Layer,
     ) {
-        if (!L) return;
+        if (!L || !map) return;
         if (suppressNextClick) {
             suppressNextClick = false;
-            L.DomEvent.stopPropagation(e);
+            L.DomEvent.stop(e);
             return;
         }
         if (measureEnabled) {
-            L.DomEvent.stopPropagation(e);
+            L.DomEvent.stop(e);
             queueMeasureClick(e.latlng);
             return;
         }
         if (selectionToolLocal === "box" || selectionToolLocal === "lasso") {
-            // Drag tools own selection; ignore feature clicks.
-            L.DomEvent.stopPropagation(e);
+            L.DomEvent.stop(e);
             return;
         }
-        // Prevent map empty-click clear from firing after feature click.
-        L.DomEvent.stopPropagation(e);
+        // Stop Leaflet bubbling to map click (which would clear the pager).
+        L.DomEvent.stop(e);
         closeContextMenu();
         const oe = e.originalEvent as MouseEvent;
+        const lp = layerPointFromEvent(e);
+        const hits = lp
+            ? collectLeafletHits(lp, e.latlng)
+            : [];
+        const list =
+            hits.length > 0
+                ? hits
+                : [
+                      {
+                          key: toSelectionKey(name, id),
+                          layerName: name,
+                          entityId: id,
+                          label: pickCandidateLabel(name, id, rows),
+                      },
+                  ];
         if (oe.shiftKey) {
-            layerSelection.addSelection(name, id);
-        } else if (oe.ctrlKey || oe.metaKey) {
-            layerSelection.removeSelection(name, id);
-        } else {
-            layerSelection.selectSingle(name, id);
-            (layer as any).openPopup?.();
+            layerSelection.addSelection(list[0]!.layerName, list[0]!.entityId);
+            lastFlownKey = selectionFlownKey();
+            return;
         }
-        lastFlownKey = selectionFlownKey();
+        if (oe.ctrlKey || oe.metaKey) {
+            layerSelection.removeSelection(
+                list[0]!.layerName,
+                list[0]!.entityId,
+            );
+            lastFlownKey = selectionFlownKey();
+            return;
+        }
+        openPickFromHits(list, oe.clientX, oe.clientY);
     }
 
     onMount(() => {
         let cancelled = false;
         const onKey = (ev: KeyboardEvent) => {
-            if (ev.key === "Escape") {
+            const action = mapToolShortcut(ev);
+            if (!action) return;
+
+            if (action.type === "escape") {
                 if (measureEnabled) {
                     clearDraftDrawing();
                     measureStatus = measureHint(measureMode, "2d");
                 } else if (!ctxOpen) {
-                    layerSelection.clearSelection();
+                    if (pickOpen) {
+                        closePickPager();
+                    } else if (layerSelection.isIsolating) {
+                        layerSelection.exitIsolate();
+                        applyVisibilityRefresh();
+                    } else {
+                        layerSelection.clearSelection();
+                    }
                 }
                 return;
             }
-            if (!measureEnabled) return;
-            if (ev.key === "Enter") {
+            if (action.type === "enter") {
+                if (measureEnabled) {
+                    ev.preventDefault();
+                    finishDraft();
+                }
+                return;
+            }
+            if (action.type === "fly-to") {
                 ev.preventDefault();
-                finishDraft();
+                flyToSelection(true);
+                return;
+            }
+            if (action.type === "home") {
+                ev.preventDefault();
+                flyHome();
+                return;
+            }
+            if (action.type === "isolate") {
+                ev.preventDefault();
+                layerSelection.isolateSelected();
+                applyVisibilityRefresh();
+                return;
+            }
+            if (action.type === "exit-isolate") {
+                ev.preventDefault();
+                layerSelection.exitIsolate();
+                applyVisibilityRefresh();
+                return;
+            }
+            if (action.type === "select-tool") {
+                ev.preventDefault();
+                selectionToolLocal = action.mode;
+                return;
+            }
+            if (action.type === "measure-toggle") {
+                ev.preventDefault();
+                measureEnabled = !measureEnabled;
+                return;
+            }
+            if (action.type === "measure-mode") {
+                ev.preventDefault();
+                measureMode = action.mode;
+                measureEnabled = true;
             }
         };
         window.addEventListener("keydown", onKey);
@@ -687,10 +989,21 @@
                     suppressNextClick = false;
                     return;
                 }
+                if (suppressMapClickClear) return;
                 if (!measureEnabled) {
                     closeContextMenu();
                     if (selectionToolLocal === "click" && !dragActive) {
+                        const lp = layerPointFromEvent(e);
+                        const hits = lp
+                            ? collectLeafletHits(lp, e.latlng)
+                            : [];
+                        if (hits.length > 0) {
+                            const oe = e.originalEvent as MouseEvent;
+                            openPickFromHits(hits, oe.clientX, oe.clientY);
+                            return;
+                        }
                         layerSelection.clearSelection();
+                        closePickPager();
                     }
                     return;
                 }
@@ -935,9 +1248,6 @@
                         key,
                         isPoint ? basePointStyle(color) : basePathStyle(color),
                     );
-                    layer.bindPopup(buildEntityPopupHtml(name, id, rows), {
-                        maxWidth: 320,
-                    });
                     layer.on("click", (e: LType.LeafletMouseEvent) => {
                         onFeatureClick(e, name, id, layer);
                     });
@@ -1080,13 +1390,30 @@
             dim="2d"
             {fullscreen}
             selectionCount={selectionCount}
+            {isolating}
             onZoomIn={zoomIn}
             onZoomOut={zoomOut}
             onToggleFullscreen={onToggleFullscreen}
             onFlyToSelection={() => flyToSelection(true)}
-            onClearSelection={() => layerSelection.clearSelection()}
+            onFlyHome={flyHome}
+            onClearSelection={() => {
+                layerSelection.clearSelection();
+                closePickPager();
+            }}
             onHideSelected={() => {
                 layerSelection.hideSelected();
+                updateLayers();
+            }}
+            onShowSelected={() => {
+                layerSelection.showSelected();
+                updateLayers();
+            }}
+            onIsolateSelected={() => {
+                layerSelection.isolateSelected();
+                updateLayers();
+            }}
+            onExitIsolate={() => {
+                layerSelection.exitIsolate();
                 updateLayers();
             }}
             onClear={clearMeasurements}
@@ -1103,6 +1430,7 @@
         entityId={ctxEntityId}
         selectionCount={selectionCount}
         targetInSelection={layerSelection.isSelected(ctxLayerName, ctxEntityId)}
+        {isolating}
         onFlyTo={() => {
             if (!layerSelection.isSelected(ctxLayerName, ctxEntityId)) {
                 layerSelection.selectSingle(ctxLayerName, ctxEntityId);
@@ -1115,11 +1443,54 @@
             layerSelection.hideSelected();
             updateLayers();
         }}
-        onClear={() => layerSelection.clearSelection()}
+        onShowSelected={() => {
+            layerSelection.showSelected();
+            updateLayers();
+        }}
+        onIsolate={() => {
+            if (!layerSelection.isSelected(ctxLayerName, ctxEntityId)) {
+                layerSelection.selectSingle(ctxLayerName, ctxEntityId);
+            }
+            layerSelection.isolateSelected();
+            updateLayers();
+        }}
+        onExitIsolate={() => {
+            layerSelection.exitIsolate();
+            updateLayers();
+        }}
+        onClear={() => {
+            layerSelection.clearSelection();
+            closePickPager();
+        }}
         onClose={closeContextMenu}
     />
 
-    {#if hiddenCount > 0}
+    {#if pickOpen}
+        <PickPager
+            open={pickOpen}
+            candidates={pickCandidates}
+            bind:index={pickIndex}
+            {rows}
+            x={pickPanelX}
+            y={pickPanelY}
+            flipBelow={pickFlipBelow}
+            onIndexChange={applyPickIndex}
+            onClose={closePickPager}
+        />
+    {/if}
+
+    {#if isolating}
+        <button
+            type="button"
+            class="absolute bottom-3 left-3 z-999 rounded-md border border-border glass-panel px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm hover:text-foreground"
+            onclick={() => {
+                layerSelection.exitIsolate();
+                updateLayers();
+            }}
+        >
+            Isolating · Exit
+        </button>
+    {:else if hiddenCount > 0}
         <button
             type="button"
             class="absolute bottom-3 left-3 z-999 rounded-md border border-border glass-panel px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm hover:text-foreground"
@@ -1140,6 +1511,7 @@
                     if (map && L) updateLayers();
                 }}
                 onFlyTo={() => flyToSelection(true)}
+                onFlyToLayer={flyToLayerExtent}
                 bind:filterToView
                 {inViewEntityKeys}
             />

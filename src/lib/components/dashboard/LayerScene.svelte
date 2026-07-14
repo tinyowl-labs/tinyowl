@@ -14,18 +14,24 @@
         type SelectionToolMode,
     } from "$lib/stores/layerSelection.svelte";
     import {
-        buildEntityPopupHtml,
         featureEntityId,
     } from "./mapEntityPopup";
     import MapToolsRail from "./MapToolsRail.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
+    import PickPager from "./PickPager.svelte";
     import { SELECTION_PRIMARY, SELECTION_SECONDARY } from "./selectionStyle";
     import {
         collectKeysInScreenPolygon,
         collectKeysInScreenRect,
         type SelectableEntity,
     } from "./mapSelection";
+    import { mapToolShortcut } from "./mapShortcuts";
+    import {
+        dedupePickCandidates,
+        pickCandidateLabel,
+        type PickCandidate,
+    } from "./pickCandidates";
     import {
         computeMeasureValue,
         formatMeasureValue,
@@ -85,9 +91,18 @@
     let popupX = $state(0);
     let popupY = $state(0);
     let popupVisible = $state(false);
+    let pickCandidates = $state<PickCandidate[]>([]);
+    let pickIndex = $state(0);
+    let pickOpen = $state(false);
+    let pickPanelX = $state(16);
+    let pickPanelY = $state(56);
+    let pickFlipBelow = $state(false);
+    /** World-space anchor for the pick panel — fixed for the open session (not per candidate). */
+    let pickAnchorCartesian: any | null = null;
 
     const selectionCount = $derived(layerSelection.size);
     const hiddenCount = $derived(layerSelection.hiddenCount);
+    const isolating = $derived(layerSelection.isIsolating);
     const appliedHighlight = $derived(layerSelection.primaryKey ?? "");
     const selectionSig = $derived(
         `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}`,
@@ -339,8 +354,8 @@
         });
     }
 
-    async function flyToSphere(sphere: any) {
-        await flyCameraToSphere(sphere, 1.2);
+    async function flyToSphere(sphere: any, duration = 1.2) {
+        await flyCameraToSphere(sphere, duration);
         hasFramed = true;
         homeSphere = Cesium.BoundingSphere.clone(sphere);
         captureHomeView();
@@ -362,7 +377,7 @@
         }
     }
 
-    /** Union of visible entity + tileset spheres for Home framing. */
+    /** Entity-layer extent for Home. Tilesets are backdrop only — not part of home. */
     function computeHomeSphere(): any | null {
         if (!viewer || !Cesium) return null;
         const spheres: any[] = [];
@@ -389,14 +404,21 @@
         } catch {
             /* visualizer may not be ready */
         }
+        if (spheres.length > 0) {
+            return spheres.length === 1
+                ? spheres[0]
+                : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
+        }
+        // Tileset-only projects: fall back to mesh / bbox.
+        const hasEntityLayers = layers.some(
+            (l) => (l.geojson?.features?.length ?? 0) > 0,
+        );
+        if (hasEntityLayers) return null;
         for (const [hash, prim] of tilesetPrims) {
             if (!prim?.show) continue;
             try {
                 if (prim.boundingSphere?.radius > 0) {
-                    spheres.push(
-                        Cesium.BoundingSphere.clone(prim.boundingSphere),
-                    );
-                    continue;
+                    return Cesium.BoundingSphere.clone(prim.boundingSphere);
                 }
             } catch {
                 /* ignore */
@@ -405,18 +427,14 @@
             const bbox = m?.bbox_wgs84;
             if (Array.isArray(bbox)) {
                 const s = sphereFromBboxWgs84(bbox, frameHeightM(prim));
-                if (s) spheres.push(s);
+                if (s) return s;
             }
         }
-        if (spheres.length === 0) return null;
-        return spheres.length === 1
-            ? spheres[0]
-            : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
+        return null;
     }
 
     async function flyHome() {
         if (!viewer || !Cesium) return;
-        // Prefer live project extent so Home never falls back to Cesium's world view.
         const sphere = computeHomeSphere() ?? homeSphere;
         if (sphere) {
             homeSphere = Cesium.BoundingSphere.clone(sphere);
@@ -431,6 +449,27 @@
                 duration: 1.0,
             });
         }
+    }
+
+    async function flyToLayerExtent(layerName: string) {
+        if (!viewer || !Cesium) return;
+        const ds = layerSources.get(layerName);
+        if (!ds) return;
+        const spheres: any[] = [];
+        for (const entity of ds.entities.values) {
+            const s = entityBoundingSphere(entity);
+            if (s?.center && s.radius >= 0) {
+                spheres.push(
+                    new Cesium.BoundingSphere(s.center, Math.max(s.radius, 2)),
+                );
+            }
+        }
+        if (spheres.length === 0) return;
+        const combined =
+            spheres.length === 1
+                ? spheres[0]
+                : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
+        await flyCameraToSphere(combined, 1.0);
     }
 
     function flyTopDown() {
@@ -527,8 +566,8 @@
     }
 
     /**
-     * Initial camera once: prefer entity-layer extent (home), then tileset.
-     * Selection must not re-frame (mirrors LayerMap).
+     * Initial camera once: entity-layer home (instant). Do not zoom to tilesets
+     * when layers exist — mesh is backdrop. Tileset-only projects still frame mesh.
      */
     async function frameScene(attempt = 0) {
         if (!viewer || !Cesium || hasFramed) return;
@@ -543,13 +582,10 @@
             applyTilesetHeightOffset(prim, m?.height_offset_m);
         }
 
-        // Prefer entity extents so Home matches the data, not the mesh alone.
         const entitySpheres: any[] = [];
         try {
-            for (const ds of viewer.dataSources) {
+            for (const ds of layerSources.values()) {
                 if (!ds?.show) continue;
-                // Skip ephemeral measure datasource.
-                if (ds === measureDataSource) continue;
                 for (const entity of ds.entities.values) {
                     if (entity.show === false) continue;
                     const s = entityBoundingSphere(entity);
@@ -572,38 +608,47 @@
                 entitySpheres.length === 1
                     ? entitySpheres[0]
                     : Cesium.BoundingSphere.fromBoundingSpheres(entitySpheres);
-            await flyToSphere(combined);
+            await flyToSphere(combined, 0);
             return;
         }
 
-        // Wait for entity visualizers before falling back to tileset extent.
         const expectEntities = layers.some(
             (l) => l.visible && (l.geojson?.features?.length ?? 0) > 0,
         );
-        if (expectEntities && attempt < 10) {
-            await new Promise<void>((r) =>
-                requestAnimationFrame(() => r()),
-            );
-            await frameScene(attempt + 1);
+        // Wait for entity visualizers — never fall through to tileset while layers load.
+        if (expectEntities) {
+            if (attempt < 24) {
+                await new Promise<void>((r) =>
+                    requestAnimationFrame(() => r()),
+                );
+                await frameScene(attempt + 1);
+                return;
+            }
+            // Layers exist but spheres never became ready — don't zoom to mesh.
+            hasFramed = true;
             return;
         }
 
+        // No entity layers: tileset-only home.
         const bbox = m?.bbox_wgs84;
         if (Array.isArray(bbox)) {
             const sphere = sphereFromBboxWgs84(bbox, frameHeightM(prim));
             if (sphere) {
-                await flyToSphere(sphere);
+                await flyToSphere(sphere, 0);
                 return;
             }
         }
 
         if (prim?.boundingSphere?.radius > 0) {
-            await flyToSphere(Cesium.BoundingSphere.clone(prim.boundingSphere));
+            await flyToSphere(
+                Cesium.BoundingSphere.clone(prim.boundingSphere),
+                0,
+            );
             return;
         }
 
         if (prim) {
-            await viewer.flyTo(prim, { duration: 1.2 });
+            await viewer.flyTo(prim, { duration: 0 });
             hasFramed = true;
             try {
                 if (prim.boundingSphere?.radius > 0) {
@@ -618,8 +663,7 @@
             return;
         }
 
-        // Nothing to frame yet — retry briefly.
-        if (attempt < 10) {
+        if (attempt < 24) {
             await new Promise<void>((r) =>
                 requestAnimationFrame(() => r()),
             );
@@ -642,6 +686,10 @@
         selectedEntity = null;
         popupVisible = false;
         popupHtml = "";
+        pickOpen = false;
+        pickCandidates = [];
+        pickIndex = 0;
+        pickAnchorCartesian = null;
         ctxOpen = false;
         ctxEntity = null;
     }
@@ -1238,42 +1286,129 @@
         );
     }
 
-    /** Show popup for an entity (store selection already updated). */
+    /** Show pick pager for an entity (store selection already updated). */
     function selectEntity(
         entity: any,
         layerName: string,
         entityId: string,
     ) {
         selectedEntity = entity;
-        popupHtml = buildEntityPopupHtml(layerName, entityId, rows);
-        popupVisible = true;
-        updatePopupPosition();
+        const key = toSelectionKey(layerName, entityId);
+        if (
+            pickCandidates.length === 0 ||
+            !pickCandidates.some((c) => c.key === key)
+        ) {
+            pickCandidates = [
+                {
+                    key,
+                    layerName,
+                    entityId,
+                    label: pickCandidateLabel(layerName, entityId, rows),
+                },
+            ];
+            pickIndex = 0;
+        }
+        pickOpen = true;
+        // Only set a world anchor if we don't already have one (e.g. table→map).
+        if (!pickAnchorCartesian) {
+            setPickAnchorFromEntity(entity);
+        }
+        updatePickPanelFromAnchor();
     }
 
     function hideEntityPopup() {
         selectedEntity = null;
         popupVisible = false;
         popupHtml = "";
+        pickOpen = false;
+        pickCandidates = [];
+        pickIndex = 0;
+        pickAnchorCartesian = null;
     }
 
-    function updatePopupPosition() {
-        if (!selectedEntity || !popupHtml) return;
-        const win = entityScreenPos(selectedEntity);
-        if (!win) {
-            popupVisible = false;
+    function closePickPager() {
+        pickOpen = false;
+        pickCandidates = [];
+        pickIndex = 0;
+        selectedEntity = null;
+        popupVisible = false;
+        popupHtml = "";
+        pickAnchorCartesian = null;
+    }
+
+    function setPickAnchorFromScreen(position: { x: number; y: number }) {
+        if (!viewer || !Cesium) return;
+        // Prefer mesh/terrain pick so the panel sticks in 3D space under the cursor.
+        const world = pickMeasureCartesian(position);
+        if (world) {
+            pickAnchorCartesian = Cesium.Cartesian3.clone(world);
             return;
         }
-        const canvas = viewer?.scene?.canvas;
-        const onScreen =
-            win.x >= 0 &&
-            win.y >= 0 &&
-            (!canvas ||
-                (win.x <= canvas.clientWidth && win.y <= canvas.clientHeight));
-        popupVisible = onScreen;
-        if (onScreen) {
-            popupX = win.x;
-            popupY = win.y;
+        // Fallback: first candidate's bounding sphere center.
+        const top = pickCandidates[0];
+        if (top) setPickAnchorFromEntity(findEntityByKey(top.key));
+    }
+
+    function setPickAnchorFromEntity(entity: any) {
+        if (!viewer || !Cesium || !entity) return;
+        const sphere = entityBoundingSphere(entity);
+        if (sphere?.center) {
+            pickAnchorCartesian = Cesium.Cartesian3.clone(sphere.center);
         }
+    }
+
+    function updatePickPanelFromAnchor() {
+        if (!viewer || !Cesium || !pickAnchorCartesian) return;
+        const win = Cesium.SceneTransforms.worldToWindowCoordinates(
+            viewer.scene,
+            pickAnchorCartesian,
+        );
+        const canvas = viewer.scene?.canvas;
+        const w = canvas?.clientWidth ?? 400;
+        const h = canvas?.clientHeight ?? 300;
+        if (!win) return;
+        const onScreen =
+            win.x >= -40 &&
+            win.y >= -40 &&
+            win.x <= w + 40 &&
+            win.y <= h + 40;
+        if (!onScreen) return;
+
+        // Anchor at the click; PickPager translates fully above (or below if clipped).
+        pickPanelX = Math.max(8, Math.min(win.x, w - 8));
+        pickPanelY = Math.max(8, Math.min(win.y, h - 8));
+        pickFlipBelow = win.y < 200;
+    }
+
+    function applyPickIndex(i: number) {
+        const c = pickCandidates[i];
+        if (!c) return;
+        pickIndex = i;
+        layerSelection.selectSingle(c.layerName, c.entityId);
+        lastFlownKey = selectionFlyKey();
+        syncAllSelectionStyles();
+        selectedEntity = findEntityByKey(c.key);
+        // Do not retarget pickAnchorCartesian — panel stays pinned to the click in 3D.
+    }
+
+    function collectDrillCandidates(position: unknown): PickCandidate[] {
+        if (!viewer || !Cesium) return [];
+        const picks = viewer.scene.drillPick(position, 32) ?? [];
+        const out: PickCandidate[] = [];
+        for (const picked of picks) {
+            const entity = resolvePickedEntity(picked);
+            if (!entity) continue;
+            const meta = entityMeta.get(entity);
+            if (!meta) continue;
+            if (layerSelection.isHidden(meta.layerName, meta.entityId)) continue;
+            out.push({
+                key: toSelectionKey(meta.layerName, meta.entityId),
+                layerName: meta.layerName,
+                entityId: meta.entityId,
+                label: pickCandidateLabel(meta.layerName, meta.entityId, rows),
+            });
+        }
+        return dedupePickCandidates(out);
     }
 
     function hasNonZeroHeight(coords: GeoJSON.Position[]): boolean {
@@ -1622,30 +1757,36 @@
             }
             if (measureEnabled) return;
             closeContextMenu();
-            const picked = viewer.scene.pick(click.position);
-            const entity = resolvePickedEntity(picked);
-            const meta = entity ? entityMeta.get(entity) : undefined;
-            if (entity && meta) {
-                const { shift, ctrl, meta: cmd } = lastPointerMods;
-                if (shift) {
-                    layerSelection.addSelection(meta.layerName, meta.entityId);
-                    lastFlownKey = selectionFlyKey();
-                    syncAllSelectionStyles();
-                    return;
-                }
-                if (ctrl || cmd) {
-                    layerSelection.removeSelection(meta.layerName, meta.entityId);
-                    lastFlownKey = selectionFlyKey();
-                    syncAllSelectionStyles();
-                    return;
-                }
-                layerSelection.selectSingle(meta.layerName, meta.entityId);
-                // Mark flown so selectionSig effect does not re-fly on local pick.
+            const { shift, ctrl, meta: cmd } = lastPointerMods;
+            const candidates = collectDrillCandidates(click.position);
+            if (candidates.length === 0) {
+                clearSelection();
+                closePickPager();
+                return;
+            }
+            const top = candidates[0]!;
+            if (shift) {
+                layerSelection.addSelection(top.layerName, top.entityId);
                 lastFlownKey = selectionFlyKey();
                 syncAllSelectionStyles();
                 return;
             }
-            clearSelection();
+            if (ctrl || cmd) {
+                layerSelection.removeSelection(top.layerName, top.entityId);
+                lastFlownKey = selectionFlyKey();
+                syncAllSelectionStyles();
+                return;
+            }
+            pickCandidates = candidates;
+            pickIndex = 0;
+            pickOpen = true;
+            layerSelection.selectSingle(top.layerName, top.entityId);
+            lastFlownKey = selectionFlyKey();
+            syncAllSelectionStyles();
+            selectedEntity = findEntityByKey(top.key);
+            const pos = click.position as { x: number; y: number };
+            setPickAnchorFromScreen(pos);
+            updatePickPanelFromAnchor();
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         clickHandler.setInputAction((click: { position: { x: number; y: number } }) => {
@@ -1666,7 +1807,7 @@
         });
 
         postRenderRemover = viewer.scene.postRender.addEventListener(() => {
-            if (selectedEntity && popupHtml) updatePopupPosition();
+            if (pickOpen && pickAnchorCartesian) updatePickPanelFromAnchor();
             if (filterToView) scheduleInViewUpdate();
         });
 
@@ -1863,6 +2004,13 @@
     });
 
     $effect(() => {
+        void isolating;
+        void hiddenCount;
+        if (!ready || !started) return;
+        applyHiddenVisibility();
+    });
+
+    $effect(() => {
         themePrefs.accentHue;
         themePrefs.bgBase;
         if (!ready || !viewer) return;
@@ -1909,19 +2057,72 @@
     });
 
     function onSceneKey(ev: KeyboardEvent) {
-        if (ev.key === "Enter" && measureEnabled) {
+        const action = mapToolShortcut(ev);
+        if (!action) return;
+
+        if (action.type === "enter") {
+            if (measureEnabled) {
+                ev.preventDefault();
+                finishDraft3d();
+            }
+            return;
+        }
+        if (action.type === "escape") {
+            if (measureEnabled) {
+                clearDraftMeasure();
+                measureStatus = measureHint(measureMode, "3d");
+                return;
+            }
+            if (ctxOpen) return;
+            if (pickOpen) {
+                closePickPager();
+                return;
+            }
+            if (layerSelection.isIsolating) {
+                layerSelection.exitIsolate();
+                applyHiddenVisibility();
+                return;
+            }
+            clearSelection();
+            return;
+        }
+        if (action.type === "fly-to") {
             ev.preventDefault();
-            finishDraft3d();
+            void flyToSelection(true);
             return;
         }
-        if (ev.key !== "Escape") return;
-        if (measureEnabled) {
-            clearDraftMeasure();
-            measureStatus = measureHint(measureMode, "3d");
+        if (action.type === "home") {
+            ev.preventDefault();
+            void flyHome();
             return;
         }
-        if (ctxOpen) return;
-        clearSelection();
+        if (action.type === "isolate") {
+            ev.preventDefault();
+            layerSelection.isolateSelected();
+            applyHiddenVisibility();
+            return;
+        }
+        if (action.type === "exit-isolate") {
+            ev.preventDefault();
+            layerSelection.exitIsolate();
+            applyHiddenVisibility();
+            return;
+        }
+        if (action.type === "select-tool") {
+            ev.preventDefault();
+            selectionToolLocal = action.mode;
+            return;
+        }
+        if (action.type === "measure-toggle") {
+            ev.preventDefault();
+            measureEnabled = !measureEnabled;
+            return;
+        }
+        if (action.type === "measure-mode") {
+            ev.preventDefault();
+            measureMode = action.mode;
+            measureEnabled = true;
+        }
     }
 
     $effect(() => {
@@ -2202,6 +2403,7 @@
             dim="3d"
             {fullscreen}
             {selectionCount}
+            {isolating}
             onZoomIn={zoomIn3d}
             onZoomOut={zoomOut3d}
             onToggleFullscreen={onToggleFullscreen}
@@ -2214,6 +2416,18 @@
             onClearSelection={() => clearSelection()}
             onHideSelected={() => {
                 layerSelection.hideSelected();
+                applyHiddenVisibility();
+            }}
+            onShowSelected={() => {
+                layerSelection.showSelected();
+                applyHiddenVisibility();
+            }}
+            onIsolateSelected={() => {
+                layerSelection.isolateSelected();
+                applyHiddenVisibility();
+            }}
+            onExitIsolate={() => {
+                layerSelection.exitIsolate();
                 applyHiddenVisibility();
             }}
             onClear={() => void clearMeasurements()}
@@ -2230,6 +2444,7 @@
         entityId={ctxEntityId}
         {selectionCount}
         targetInSelection={layerSelection.isSelected(ctxLayerName, ctxEntityId)}
+        {isolating}
         onFlyTo={() => {
             if (ctxEntity && ctxLayerName && ctxEntityId) {
                 if (!layerSelection.isSelected(ctxLayerName, ctxEntityId)) {
@@ -2251,11 +2466,41 @@
             applyHiddenVisibility();
             closeContextMenu();
         }}
+        onShowSelected={() => {
+            layerSelection.showSelected();
+            applyHiddenVisibility();
+        }}
+        onIsolate={() => {
+            if (
+                ctxLayerName &&
+                ctxEntityId &&
+                !layerSelection.isSelected(ctxLayerName, ctxEntityId)
+            ) {
+                layerSelection.selectSingle(ctxLayerName, ctxEntityId);
+            }
+            layerSelection.isolateSelected();
+            applyHiddenVisibility();
+        }}
+        onExitIsolate={() => {
+            layerSelection.exitIsolate();
+            applyHiddenVisibility();
+        }}
         onClear={() => clearSelection()}
         onClose={closeContextMenu}
     />
 
-    {#if hiddenCount > 0}
+    {#if isolating}
+        <button
+            type="button"
+            class="absolute bottom-10 left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+            onclick={() => {
+                layerSelection.exitIsolate();
+                applyHiddenVisibility();
+            }}
+        >
+            Isolating · Exit
+        </button>
+    {:else if hiddenCount > 0}
         <button
             type="button"
             class="absolute bottom-10 left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
@@ -2292,6 +2537,9 @@
                     lastFlownKey = "";
                     void flyToSelection(true);
                 }}
+                onFlyToLayer={(name) => {
+                    void flyToLayerExtent(name);
+                }}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
@@ -2327,13 +2575,21 @@
         </div>
     {/if}
 
-    {#if popupVisible && popupHtml}
-        <div
-            class="entity-popup pointer-events-auto absolute z-30 max-w-xs -translate-x-1/2 -translate-y-full rounded-md border border-border bg-background px-2.5 py-2 text-foreground shadow-lg"
-            style="left: {popupX}px; top: {popupY - 12}px"
-        >
-            {@html popupHtml}
-        </div>
+    {#if pickOpen}
+        <PickPager
+            open={pickOpen}
+            candidates={pickCandidates}
+            bind:index={pickIndex}
+            {rows}
+            placement="floating"
+            x={pickPanelX}
+            y={pickPanelY}
+            flipBelow={pickFlipBelow}
+            onIndexChange={applyPickIndex}
+            onClose={() => {
+                closePickPager();
+            }}
+        />
     {/if}
 
     {#if selectionToolLocal === "box" && dragRectVisible}

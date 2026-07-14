@@ -25,6 +25,7 @@
         pageIndex?: number;
         onPageChange?: (index: number) => void;
         onRowClick?: (row: TData, event: MouseEvent) => void;
+        onRowDblClick?: (row: TData, event: MouseEvent) => void;
     };
 
     type TData = Record<string, unknown>;
@@ -36,6 +37,7 @@
         pageIndex = 0,
         onPageChange,
         onRowClick,
+        onRowDblClick,
     }: Props<TData> = $props();
 
     let sorting = $state<SortingState>([]);
@@ -125,10 +127,11 @@
             <Table.Body>
                 {#each table.getRowModel().rows as row}
                     <Table.Row
-                        class="border-border {onRowClick
+                        class="border-border {onRowClick || onRowDblClick
                             ? 'cursor-pointer'
                             : ''} {rowClassName?.(row.original) ?? ''}"
                         onclick={(e) => onRowClick?.(row.original, e)}
+                        ondblclick={(e) => onRowDblClick?.(row.original, e)}
                     >
                         {#each row.getVisibleCells() as cell}
                             <Table.Cell class="max-w-75">

@@ -1,13 +1,20 @@
 <script lang="ts">
     import BoxIcon from "@lucide/svelte/icons/box";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+    import ChevronsDownUpIcon from "@lucide/svelte/icons/chevrons-down-up";
+    import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
+    import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import EyeIcon from "@lucide/svelte/icons/eye";
     import EyeOffIcon from "@lucide/svelte/icons/eye-off";
     import FilterIcon from "@lucide/svelte/icons/filter";
     import HexagonIcon from "@lucide/svelte/icons/hexagon";
     import LayersIcon from "@lucide/svelte/icons/layers";
+    import MousePointerSquareDashedIcon from "@lucide/svelte/icons/mouse-pointer-square-dashed";
     import SearchIcon from "@lucide/svelte/icons/search";
-    import { layerSelection } from "$lib/stores/layerSelection.svelte";
+    import {
+        layerSelection,
+        toSelectionKey,
+    } from "$lib/stores/layerSelection.svelte";
     import { featureEntityId } from "./mapEntityPopup";
     import type { ProjectTileset } from "./tilesetTypes";
 
@@ -26,13 +33,12 @@
         onToggleLayer?: (idx: number) => void;
         onApplyHidden?: () => void;
         onFlyTo?: () => void;
+        /** Fly camera to a whole layer's extent without requiring selection. */
+        onFlyToLayer?: (layerName: string) => void;
         pendingModels?: number;
         palette?: string[];
-        /** `layer:id` keys currently in the map/camera frustum. */
         inViewEntityKeys?: string[];
-        /** Model hashes currently in view. */
         inViewModelHashes?: string[];
-        /** When true, list only items in the current view. */
         filterToView?: boolean;
     };
 
@@ -45,6 +51,7 @@
         onToggleLayer,
         onApplyHidden,
         onFlyTo,
+        onFlyToLayer,
         pendingModels = 0,
         palette = [],
         inViewEntityKeys = [],
@@ -55,11 +62,22 @@
     let query = $state("");
     let modelsOpen = $state(false);
     let layerOpen = $state<Record<string, boolean>>({});
+    let rangeAnchorKey = $state<string | null>(null);
+    let layerMenu = $state<{
+        name: string;
+        idx: number;
+        x: number;
+        y: number;
+        keys: string[];
+    } | null>(null);
+    let layerMenuEl = $state<HTMLDivElement>();
 
     const selectionSig = $derived(
         `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}`,
     );
-    const hiddenSig = $derived([...layerSelection.hidden].sort().join(","));
+    const hiddenSig = $derived(
+        `${[...layerSelection.hidden].sort().join(",")}|${layerSelection.isIsolating}`,
+    );
 
     const inViewEntitySet = $derived(new Set(inViewEntityKeys));
     const inViewModelSet = $derived(new Set(inViewModelHashes));
@@ -93,12 +111,11 @@
         for (const f of layer.geojson.features ?? []) {
             const id = featureEntityId(f);
             if (!id) continue;
-            const key = `${layer.name}:${id}`;
             out.push({
                 layerName: layer.name,
                 entityId: id,
                 label: entityLabel(layer.name, id),
-                key,
+                key: toSelectionKey(layer.name, id),
             });
         }
         return out;
@@ -110,6 +127,20 @@
 
     function toggleLayerExpanded(name: string) {
         layerOpen = { ...layerOpen, [name]: !isLayerExpanded(name) };
+    }
+
+    function expandAll() {
+        modelsOpen = true;
+        const next: Record<string, boolean> = {};
+        for (const l of layers) next[l.name] = true;
+        layerOpen = next;
+    }
+
+    function collapseAll() {
+        modelsOpen = false;
+        const next: Record<string, boolean> = {};
+        for (const l of layers) next[l.name] = false;
+        layerOpen = next;
     }
 
     function matchesQuery(text: string): boolean {
@@ -135,20 +166,45 @@
         );
     }
 
-    function onEntityClick(ev: MouseEvent, layerName: string, entityId: string) {
+    function filterEntities(layer: LayerData, ents: EntityRow[]): EntityRow[] {
+        return ents.filter((e) => {
+            if (
+                !(
+                    matchesQuery(e.label) ||
+                    matchesQuery(e.entityId) ||
+                    matchesQuery(layer.name)
+                )
+            ) {
+                return false;
+            }
+            if (filterToView) return inViewEntitySet.has(e.key);
+            return true;
+        });
+    }
+
+    function onEntityClick(
+        ev: MouseEvent,
+        layerName: string,
+        entityId: string,
+        orderedKeys: string[],
+    ) {
+        const key = toSelectionKey(layerName, entityId);
+        if (ev.shiftKey && rangeAnchorKey && orderedKeys.includes(rangeAnchorKey)) {
+            layerSelection.selectRange(orderedKeys, rangeAnchorKey, key);
+            return;
+        }
         if (ev.shiftKey) {
             layerSelection.addSelection(layerName, entityId);
+            rangeAnchorKey = key;
             return;
         }
         if (ev.ctrlKey || ev.metaKey) {
-            if (layerSelection.isSelected(layerName, entityId)) {
-                layerSelection.removeSelection(layerName, entityId);
-            } else {
-                layerSelection.addSelection(layerName, entityId);
-            }
+            layerSelection.toggleSelection(layerName, entityId);
+            rangeAnchorKey = key;
             return;
         }
         layerSelection.selectSingle(layerName, entityId);
+        rangeAnchorKey = key;
     }
 
     function onEntityDblClick(layerName: string, entityId: string) {
@@ -159,12 +215,46 @@
     }
 
     function toggleEntityHidden(layerName: string, entityId: string) {
-        if (layerSelection.isHidden(layerName, entityId)) {
+        if (layerSelection.isSessionHidden(layerName, entityId)) {
+            layerSelection.showEntity(layerName, entityId);
+        } else if (layerSelection.isHidden(layerName, entityId)) {
+            // Outside isolate set — exit isolate for this key by exiting isolate.
+            layerSelection.exitIsolate();
             layerSelection.showEntity(layerName, entityId);
         } else {
             layerSelection.hideEntity(layerName, entityId);
         }
         onApplyHidden?.();
+    }
+
+    function openLayerMenu(
+        ev: MouseEvent,
+        layerName: string,
+        idx: number,
+        keys: string[],
+    ) {
+        ev.preventDefault();
+        layerMenu = { name: layerName, idx, x: ev.clientX, y: ev.clientY, keys };
+    }
+
+    function closeLayerMenu() {
+        layerMenu = null;
+    }
+
+    function selectAllInLayer(keys: string[]) {
+        layerSelection.setSelection(keys);
+        closeLayerMenu();
+    }
+
+    function hideAllInLayer(keys: string[]) {
+        layerSelection.hideKeys(keys);
+        onApplyHidden?.();
+        closeLayerMenu();
+    }
+
+    function flyToLayer(name: string) {
+        onFlyToLayer?.(name);
+        closeLayerMenu();
     }
 
     const filteredModels = $derived(
@@ -206,34 +296,71 @@
         void hiddenSig;
     });
 
-    /** Past the group chevron so children nest under the group label. */
-    const childIndent =
-        "ml-[1.375rem] border-l border-border/60 pl-2.5";
+    $effect(() => {
+        if (!layerMenu) return;
+        const onDoc = (ev: MouseEvent) => {
+            if (layerMenuEl && !layerMenuEl.contains(ev.target as Node)) {
+                closeLayerMenu();
+            }
+        };
+        const onKey = (ev: KeyboardEvent) => {
+            if (ev.key === "Escape") closeLayerMenu();
+        };
+        const t = setTimeout(() => {
+            document.addEventListener("mousedown", onDoc);
+            document.addEventListener("keydown", onKey);
+        }, 0);
+        return () => {
+            clearTimeout(t);
+            document.removeEventListener("mousedown", onDoc);
+            document.removeEventListener("keydown", onKey);
+        };
+    });
+
+    const childIndent = "ml-[1.375rem] border-l border-border/60 pl-2.5";
+    const menuItem =
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-secondary";
 </script>
 
 <div
     class="flex max-h-[min(70vh,28rem)] w-60 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
 >
     <div class="border-b border-border px-2 py-1.5">
-        <div
-            class="mb-1.5 flex items-center justify-between gap-2 px-0.5"
-        >
+        <div class="mb-1.5 flex items-center justify-between gap-2 px-0.5">
             <span
                 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
                 >Scene</span
             >
-            <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition-colors {filterToView
-                    ? 'bg-secondary text-foreground'
-                    : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}"
-                title="Show only items in the current view"
-                aria-pressed={filterToView}
-                onclick={() => (filterToView = !filterToView)}
-            >
-                <FilterIcon class="size-3" />
-                In view
-            </button>
+            <div class="flex items-center gap-0.5">
+                <button
+                    type="button"
+                    class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    title="Expand all"
+                    onclick={expandAll}
+                >
+                    <ChevronsUpDownIcon class="size-3" />
+                </button>
+                <button
+                    type="button"
+                    class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    title="Collapse all"
+                    onclick={collapseAll}
+                >
+                    <ChevronsDownUpIcon class="size-3" />
+                </button>
+                <button
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition-colors {filterToView
+                        ? 'bg-secondary text-foreground'
+                        : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}"
+                    title="Show only items in the current view"
+                    aria-pressed={filterToView}
+                    onclick={() => (filterToView = !filterToView)}
+                >
+                    <FilterIcon class="size-3" />
+                    In view
+                </button>
+            </div>
         </div>
         <label
             class="flex items-center gap-1.5 rounded-md border border-border bg-background px-1.5 py-1"
@@ -310,9 +437,7 @@
                         </div>
                     {:else}
                         <p class="px-1 py-1 text-[10px] text-muted-foreground">
-                            {filterToView
-                                ? "None in view"
-                                : "No models"}
+                            {filterToView ? "None in view" : "No models"}
                         </p>
                     {/each}
                     {#if pendingModels > 0}
@@ -325,22 +450,19 @@
         {/if}
 
         {#each sortedLayers as { layer, idx }}
-            {@const ents = entitiesForLayerSorted(layer).filter((e) => {
-                if (
-                    !(
-                        matchesQuery(e.label) ||
-                        matchesQuery(e.entityId) ||
-                        matchesQuery(layer.name)
-                    )
-                ) {
-                    return false;
-                }
-                if (filterToView) return inViewEntitySet.has(e.key);
-                return true;
-            })}
+            {@const allEnts = entitiesForLayerSorted(layer)}
+            {@const ents = filterEntities(layer, allEnts)}
+            {@const orderedKeys = ents.map((e) => e.key)}
             {#if ents.length > 0 || (!filterToView && !query.trim()) || matchesQuery(layer.name)}
                 <div
                     class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                    oncontextmenu={(e) =>
+                        openLayerMenu(
+                            e,
+                            layer.name,
+                            idx,
+                            allEnts.map((en) => en.key),
+                        )}
                 >
                     <button
                         type="button"
@@ -405,6 +527,7 @@
                                             e,
                                             ent.layerName,
                                             ent.entityId,
+                                            orderedKeys,
                                         )}
                                     ondblclick={() =>
                                         onEntityDblClick(
@@ -462,3 +585,64 @@
         {/if}
     </div>
 </div>
+
+{#if layerMenu}
+    <div
+        bind:this={layerMenuEl}
+        class="fixed z-10000 w-48 overflow-hidden rounded-lg border border-border bg-background/98 p-1 shadow-lg backdrop-blur-sm"
+        style="left: {layerMenu.x}px; top: {layerMenu.y}px"
+        role="menu"
+    >
+        <div
+            class="truncate px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+        >
+            {layerDisplayName(layerMenu.name)}
+        </div>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={() => selectAllInLayer(layerMenu!.keys)}
+        >
+            <MousePointerSquareDashedIcon
+                class="size-3.5 shrink-0 text-muted-foreground"
+            />
+            Select all
+        </button>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={() => flyToLayer(layerMenu!.name)}
+        >
+            <CrosshairIcon class="size-3.5 shrink-0 text-muted-foreground" />
+            Fly to layer
+        </button>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={() => hideAllInLayer(layerMenu!.keys)}
+        >
+            <EyeOffIcon class="size-3.5 shrink-0 text-muted-foreground" />
+            Hide contents
+        </button>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={() => {
+                onToggleLayer?.(layerMenu!.idx);
+                closeLayerMenu();
+            }}
+        >
+            {#if layers[layerMenu.idx]?.visible}
+                <EyeOffIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                Hide layer
+            {:else}
+                <EyeIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                Show layer
+            {/if}
+        </button>
+    </div>
+{/if}

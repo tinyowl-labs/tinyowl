@@ -15,6 +15,9 @@
     import SquareDashedIcon from "@lucide/svelte/icons/square-dashed";
     import LassoIcon from "@lucide/svelte/icons/lasso";
     import EyeOffIcon from "@lucide/svelte/icons/eye-off";
+    import EyeIcon from "@lucide/svelte/icons/eye";
+    import FocusIcon from "@lucide/svelte/icons/focus";
+    import CopyIcon from "@lucide/svelte/icons/copy";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
     import { measureHint } from "$lib/measure";
     import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
@@ -29,6 +32,7 @@
         fullscreen?: boolean;
         selectionCount?: number;
         selectionTool?: SelectionToolMode;
+        isolating?: boolean;
         onZoomIn?: () => void;
         onZoomOut?: () => void;
         onToggleFullscreen?: () => void;
@@ -38,6 +42,9 @@
         onLockNorth?: () => void;
         onClearSelection?: () => void;
         onHideSelected?: () => void;
+        onShowSelected?: () => void;
+        onIsolateSelected?: () => void;
+        onExitIsolate?: () => void;
         onClear?: () => void;
         onFinish?: () => void;
         onRemove?: (id: string) => void;
@@ -53,6 +60,7 @@
         fullscreen = false,
         selectionCount = 0,
         selectionTool = $bindable<SelectionToolMode>("click"),
+        isolating = false,
         onZoomIn,
         onZoomOut,
         onToggleFullscreen,
@@ -62,6 +70,9 @@
         onLockNorth,
         onClearSelection,
         onHideSelected,
+        onShowSelected,
+        onIsolateSelected,
+        onExitIsolate,
         onClear,
         onFinish,
         onRemove,
@@ -69,6 +80,7 @@
 
     let cameraOpen = $state(false);
     let selectionOpen = $state(false);
+    let copiedId = $state<string | null>(null);
 
     const measureModes: { id: MeasureMode; label: string }[] = [
         { id: "point", label: "Point" },
@@ -150,6 +162,22 @@
 
     function setSelectTool(id: SelectionToolMode) {
         selectionTool = id;
+    }
+
+    async function copyRecord(rec: MeasureRecord) {
+        const text =
+            rec.mode === "point"
+                ? rec.label
+                : `${modeLabel[rec.mode]}: ${rec.label}`;
+        try {
+            await navigator.clipboard.writeText(text);
+            copiedId = rec.id;
+            setTimeout(() => {
+                if (copiedId === rec.id) copiedId = null;
+            }, 900);
+        } catch {
+            /* ignore */
+        }
     }
 
     const railBtn =
@@ -301,6 +329,44 @@
                             Hide selected
                         </button>
                     {/if}
+                    {#if onShowSelected}
+                        <button
+                            type="button"
+                            class={menuItem}
+                            onclick={() => onShowSelected()}
+                        >
+                            <EyeIcon
+                                class="size-3.5 shrink-0 text-muted-foreground"
+                            />
+                            Show selected
+                        </button>
+                    {/if}
+                    {#if onIsolateSelected}
+                        <button
+                            type="button"
+                            class={menuItem}
+                            onclick={() => onIsolateSelected()}
+                        >
+                            <FocusIcon
+                                class="size-3.5 shrink-0 text-muted-foreground"
+                            />
+                            Isolate selected
+                        </button>
+                    {/if}
+                </div>
+            {/if}
+            {#if isolating && onExitIsolate}
+                <div class="mx-1 border-t border-border pt-1">
+                    <button
+                        type="button"
+                        class={menuItem}
+                        onclick={() => onExitIsolate()}
+                    >
+                        <FocusIcon
+                            class="size-3.5 shrink-0 text-muted-foreground"
+                        />
+                        Exit isolate
+                    </button>
                 </div>
             {/if}
         </div>
@@ -451,6 +517,16 @@
                                         >{rec.label}</span
                                     >
                                 </span>
+                                <button
+                                    type="button"
+                                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                    title={copiedId === rec.id
+                                        ? "Copied"
+                                        : "Copy"}
+                                    onclick={() => void copyRecord(rec)}
+                                >
+                                    <CopyIcon class="size-3" />
+                                </button>
                                 <button
                                     type="button"
                                     class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"

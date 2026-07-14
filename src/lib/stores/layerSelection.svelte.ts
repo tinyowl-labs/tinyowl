@@ -22,6 +22,8 @@ function resolveLastKey(ids: Iterable<string>): string | null {
 let selected = $state<Set<string>>(new Set());
 let primaryKey = $state<string | null>(null);
 let hidden = $state<Set<string>>(new Set());
+/** When set, only these keys are visible (others treated as hidden). */
+let isolatedKeys = $state<Set<string> | null>(null);
 let toolMode = $state<SelectionToolMode>("click");
 
 export const layerSelection = {
@@ -44,6 +46,14 @@ export const layerSelection = {
 
 	get hiddenCount() {
 		return hidden.size;
+	},
+
+	get isIsolating() {
+		return isolatedKeys !== null;
+	},
+
+	get isolatedKeys() {
+		return isolatedKeys;
 	},
 
 	get toolMode() {
@@ -77,7 +87,15 @@ export const layerSelection = {
 		return this.primaryKey === toSelectionKey(layerName, entityId);
 	},
 
+	/** Session-hidden or outside the current isolate set. */
 	isHidden(layerName: string, entityId: string): boolean {
+		const key = toSelectionKey(layerName, entityId);
+		if (isolatedKeys !== null && !isolatedKeys.has(key)) return true;
+		return hidden.has(key);
+	},
+
+	/** Session hide only (ignores isolate). */
+	isSessionHidden(layerName: string, entityId: string): boolean {
 		return hidden.has(toSelectionKey(layerName, entityId));
 	},
 
@@ -166,13 +184,25 @@ export const layerSelection = {
 		}
 	},
 
+	/** Shift-click range within an ordered list of keys. */
+	selectRange(orderedKeys: string[], fromKey: string, toKey: string) {
+		const a = orderedKeys.indexOf(fromKey);
+		const b = orderedKeys.indexOf(toKey);
+		if (a < 0 || b < 0) {
+			this.setSelection([toKey]);
+			return;
+		}
+		const lo = Math.min(a, b);
+		const hi = Math.max(a, b);
+		this.setSelection(orderedKeys.slice(lo, hi + 1));
+	},
+
 	hideEntity(layerName: string, entityId: string) {
 		const key = toSelectionKey(layerName, entityId);
 		if (!entityId || hidden.has(key)) return;
 		const next = new Set(hidden);
 		next.add(key);
 		hidden = next;
-		if (selected.has(key)) this.removeSelection(layerName, entityId);
 	},
 
 	hideSelected() {
@@ -180,8 +210,15 @@ export const layerSelection = {
 		const nextHidden = new Set(hidden);
 		for (const key of selected) nextHidden.add(key);
 		hidden = nextHidden;
-		selected = new Set();
-		primaryKey = null;
+	},
+
+	hideKeys(keys: string[]) {
+		if (keys.length === 0) return;
+		const next = new Set(hidden);
+		for (const key of keys) {
+			if (key.includes(":")) next.add(key);
+		}
+		hidden = next;
 	},
 
 	showEntity(layerName: string, entityId: string) {
@@ -200,14 +237,27 @@ export const layerSelection = {
 	},
 
 	showAllHidden() {
-		if (hidden.size === 0) return;
+		if (hidden.size === 0 && isolatedKeys === null) return;
 		hidden = new Set();
+		isolatedKeys = null;
+	},
+
+	/** Show only the current selection; exit with {@link exitIsolate}. */
+	isolateSelected() {
+		if (selected.size === 0) return;
+		isolatedKeys = new Set(selected);
+	},
+
+	exitIsolate() {
+		if (isolatedKeys === null) return;
+		isolatedKeys = null;
 	},
 
 	reset() {
 		selected = new Set();
 		primaryKey = null;
 		hidden = new Set();
+		isolatedKeys = null;
 		toolMode = "click";
 	},
 };
