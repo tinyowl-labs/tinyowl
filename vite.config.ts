@@ -2,11 +2,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
-import adapter from "@sveltejs/adapter-static";
+import adapterNode from "@sveltejs/adapter-node";
+import adapterStatic from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { defineConfig } from "vite";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
+const useNodeAdapter = process.env.TINYOWL_ADAPTER === "node";
+const kitAdapter = useNodeAdapter
+  ? adapterNode({ out: "build" })
+  : adapterStatic({ fallback: "index.html" });
 const cesiumBuildRoot = path.resolve(
   projectRoot,
   "node_modules/cesium/Build/Cesium",
@@ -66,11 +71,11 @@ export default defineConfig({
     ensureCesiumAssetsPlugin(),
     tailwindcss(),
     sveltekit({
+      adapter: kitAdapter,
       compilerOptions: {
         runes: ({ filename }) =>
           filename.split(/[/\\]/).includes("node_modules") ? undefined : true,
       },
-      adapter: adapter({ fallback: "index.html" }),
     }),
   ],
   define: {
@@ -95,6 +100,54 @@ export default defineConfig({
         target: "http://localhost:8080",
         timeout: 120_000,
         proxyTimeout: 120_000,
+      },
+      // Same-origin Supabase for Tailscale Funnel demos (browser never hits :54321).
+      "/auth/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+      },
+      "/rest/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+      },
+      "/storage/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+      },
+      "/realtime/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+        ws: true,
+      },
+    },
+  },
+  preview: {
+    host: true,
+    // Tailscale Funnel serves https://<machine>.<tailnet>.ts.net
+    allowedHosts: [".ts.net"],
+    proxy: {
+      "/media": "http://localhost:8080",
+      "/api/v1": {
+        target: "http://localhost:8080",
+        timeout: 120_000,
+        proxyTimeout: 120_000,
+      },
+      "/auth/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+      },
+      "/rest/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+      },
+      "/storage/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+      },
+      "/realtime/v1": {
+        target: "http://127.0.0.1:54321",
+        changeOrigin: true,
+        ws: true,
       },
     },
   },

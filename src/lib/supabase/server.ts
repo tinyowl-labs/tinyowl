@@ -1,10 +1,29 @@
 import { createServerClient } from "@supabase/ssr";
 import type { RequestEvent } from "@sveltejs/kit";
+import { env } from "$env/dynamic/private";
 
+/** Must match browser client — see client.ts */
+const AUTH_COOKIE = "sb-tinyowl-auth-token";
+
+function supabaseUrl(): string {
+  // Prefer runtime URL in Docker (host.docker.internal); bake-time Vite URL otherwise.
+  return (
+    env.SUPABASE_URL ||
+    env.VITE_SUPABASE_URL ||
+    import.meta.env.VITE_SUPABASE_URL!
+  );
+}
+
+/**
+ * Server talks to Supabase directly.
+ * Cookie name is fixed so Funnel/same-origin browser sessions are visible to SSR.
+ */
 export function createClient(event: RequestEvent) {
-  const isHttps = event.url.protocol === "https:";
+  const isHttps =
+    event.url.protocol === "https:" ||
+    event.request.headers.get("x-forwarded-proto") === "https";
   return createServerClient(
-    import.meta.env.VITE_SUPABASE_URL!,
+    supabaseUrl(),
     import.meta.env.VITE_SUPABASE_ANON_KEY!,
     {
       cookies: {
@@ -12,10 +31,10 @@ export function createClient(event: RequestEvent) {
         setAll: (cookies) => {
           for (const { name, value, options } of cookies) {
             try {
-              // Browsers reject Secure cookies on plain HTTP (e.g. LAN IP dev).
               event.cookies.set(name, value, {
                 ...options,
                 path: "/",
+                sameSite: options.sameSite ?? "lax",
                 secure: isHttps ? (options.secure ?? true) : false,
               });
             } catch {
@@ -23,6 +42,12 @@ export function createClient(event: RequestEvent) {
             }
           }
         },
+      },
+      cookieOptions: {
+        name: AUTH_COOKIE,
+        path: "/",
+        sameSite: "lax",
+        secure: isHttps,
       },
     },
   );

@@ -1,5 +1,6 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
+    import { env } from "$env/dynamic/public";
     import { createClient } from "$lib/supabase/client";
     import {
         FieldGroup,
@@ -9,6 +10,8 @@
     } from "$lib/components/ui/field/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
+
+    const inviteOnly = env.PUBLIC_DEMO_INVITE_ONLY === "true";
 
     let email = $state("");
     let password = $state("");
@@ -29,7 +32,8 @@
             loading = false;
             return;
         }
-        await goto("/profile");
+        // Ensure auth cookies are written before SSR loads the next page.
+        await goto("/", { invalidateAll: true });
     }
 </script>
 
@@ -38,7 +42,11 @@
         <div class="flex flex-col items-center gap-1 text-center">
             <h1 class="text-2xl font-bold">Sign in to TinyOwl</h1>
             <p class="text-muted-foreground text-sm text-balance">
-                Enter your email below to sign in to your account
+                {#if inviteOnly}
+                    Use the credentials you were given for this private demo
+                {:else}
+                    Enter your email below to sign in to your account
+                {/if}
             </p>
         </div>
         <Field>
@@ -68,11 +76,13 @@
                 {loading ? "Signing in…" : "Sign in"}
             </Button>
         </Field>
-        <FieldDescription class="text-center">
-            Don't have an account?
-            <a href="/auth/signup" class="underline underline-offset-4"
-                >Sign up</a
-            >
-        </FieldDescription>
+        {#if !inviteOnly}
+            <FieldDescription class="text-center">
+                Don't have an account?
+                <a href="/auth/signup" class="underline underline-offset-4"
+                    >Sign up</a
+                >
+            </FieldDescription>
+        {/if}
     </FieldGroup>
 </form>

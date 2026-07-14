@@ -310,47 +310,53 @@ export function setPreference<K extends keyof ThemePreferences>(
 	applyTheme(prefs);
 }
 
-// ─── Supabase sync ────────────────────────────────────────────────────────────
+// ─── Supabase sync (browser client — works with static + node demo builds) ────
 
 export async function pushThemeToSupabase(): Promise<void> {
 	try {
-		const response = await fetch('/api/user-preferences/theme', {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ themePreferences: { ...prefs } })
+		const { createClient } = await import("$lib/supabase/client");
+		const supabase = createClient();
+		const { error } = await supabase.auth.updateUser({
+			data: { theme_preferences: { ...prefs } },
 		});
-		if (!response.ok) return;
+		if (error) {
+			console.warn("[theme] pushThemeToSupabase failed:", error.message);
+		}
 	} catch (e) {
-		console.warn('[theme] pushThemeToSupabase failed:', e);
+		console.warn("[theme] pushThemeToSupabase failed:", e);
 	}
 }
 
 export async function pullThemeFromSupabase(): Promise<void> {
 	try {
-		const response = await fetch('/api/user-preferences/theme');
-		if (!response.ok) return;
+		const { createClient } = await import("$lib/supabase/client");
+		const supabase = createClient();
+		const {
+			data: { user },
+			error,
+		} = await supabase.auth.getUser();
+		if (error || !user) return;
 
-		const payload = (await response.json()) as {
-			themePreferences?: Partial<ThemePreferences>;
-		};
-		const remote = payload?.themePreferences;
-		if (!remote || typeof remote !== 'object') return;
+		const remote = user.user_metadata?.theme_preferences as
+			| Partial<ThemePreferences>
+			| undefined;
+		if (!remote || typeof remote !== "object") return;
 
-		if (typeof remote.accentHue === 'number') {
-			setPreference('accentHue', Math.max(0, Math.min(360, remote.accentHue)));
+		if (typeof remote.accentHue === "number") {
+			setPreference("accentHue", Math.max(0, Math.min(360, remote.accentHue)));
 		}
 		if (remote.bgBase && remote.bgBase in BG_L) {
-			setPreference('bgBase', remote.bgBase);
+			setPreference("bgBase", remote.bgBase);
 		}
 		if (remote.radius && remote.radius in RADIUS_VALUES) {
-			setPreference('radius', remote.radius);
+			setPreference("radius", remote.radius);
 		}
 		if (remote.blur && remote.blur in BLUR_VALUES) {
-			setPreference('blur', remote.blur);
+			setPreference("blur", remote.blur);
 		}
 
 		applyTheme(prefs);
 	} catch (e) {
-		console.warn('[theme] pullThemeFromSupabase failed:', e);
+		console.warn("[theme] pullThemeFromSupabase failed:", e);
 	}
 }

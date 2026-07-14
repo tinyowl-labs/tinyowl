@@ -24,13 +24,26 @@ npm run dev
 
 Requires `tinyowl-server` running on `localhost:8080`. The dev server opens on `http://localhost:5173`.
 
+For an invite-only Tailscale Funnel demo, use a production build + preview (not `dev`):
+
+```bash
+ORIGIN=https://desktop.YOUR-TAILNET.ts.net npm run demo
+# Node build + front door on :4173 (SSR, /api/*, API + Supabase proxies)
+```
+
+See [`docs/demo-funnel.md`](../docs/demo-funnel.md).
+
 ## Environment variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
+| `VITE_SUPABASE_URL` | Yes | Supabase URL for **server-side** clients (usually `http://127.0.0.1:54321`) |
 | `VITE_SUPABASE_ANON_KEY` | Yes | Supabase anon key for browser auth |
+| `VITE_SUPABASE_SAME_ORIGIN` | No | `true` → browser uses page origin for Supabase (Vite proxies `/auth/v1` etc.; needed for Tailscale Funnel) |
+| `PUBLIC_DEMO_INVITE_ONLY` | No | `true` → hide signup link and redirect `/auth/signup` → login |
 | `TINYOWL_CORE_URL` | Yes (server-side) | Internal API URL for server-side fetches (set in `.env`) |
+
+Invite-only PC demos: see [`docs/demo-funnel.md`](../docs/demo-funnel.md).
 
 ## Features
 
