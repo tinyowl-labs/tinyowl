@@ -4,8 +4,6 @@
     import MapIcon from "@lucide/svelte/icons/map";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import DownloadIcon from "@lucide/svelte/icons/download";
-    import MaximizeIcon from "@lucide/svelte/icons/maximize-2";
-    import MinimizeIcon from "@lucide/svelte/icons/minimize-2";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { DataTable } from "$lib/components/ui/data-table/index.js";
     import { renderComponent } from "$lib/components/ui/data-table/render-helpers.js";
@@ -23,6 +21,10 @@
     import RowNum from "$lib/components/ui/row-num.svelte";
     import { browser } from "$app/environment";
     import { onMount } from "svelte";
+    import {
+        layerSelection,
+        toSelectionKey,
+    } from "$lib/stores/layerSelection.svelte";
 
     let { data } = $props();
 
@@ -211,27 +213,39 @@
         );
     }
 
-    /** Interactive selection — client state only (URL highlight is for media/search deep links). */
-    let selectedId = $state("");
-    let selectedLayer = $state("");
+    /** Interactive selection — shared store (URL highlight seeds once). */
     let lastUrlHighlight = $state("");
+    const selectedId = $derived(layerSelection.primaryId);
+    const selectedLayer = $derived(layerSelection.primaryLayer);
+    const selectionSize = $derived(layerSelection.size);
+    const selectionSig = $derived(
+        `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}`,
+    );
 
     $effect(() => {
         const id = highlightId;
         if (id && id !== lastUrlHighlight) {
             lastUrlHighlight = id;
-            selectedId = id;
-            selectedLayer = resolvedLayer || layerParam || activeTab;
-            if (selectedLayer) activeTab = selectedLayer;
+            const layer = resolvedLayer || layerParam || activeTab;
+            if (layer) {
+                layerSelection.selectSingle(layer, id);
+                activeTab = layer;
+            }
         }
     });
 
     function rowClassName(row: Record<string, unknown>): string {
-        if (!selectedId) return "";
-        const id = (row.source_id ?? row.SOURCE_ID ?? "") as string;
-        return id === selectedId
-            ? "bg-accent ring-1 ring-inset ring-primary/20"
-            : "";
+        // Depend on selectionSig so row styles update when membership changes at same size.
+        void selectionSig;
+        if (selectionSize === 0) return "";
+        const id = String(row.source_id ?? row.SOURCE_ID ?? "");
+        if (!id) return "";
+        const key = toSelectionKey(activeTab, id);
+        if (!layerSelection.selected.has(key)) return "";
+        if (layerSelection.primaryKey === key) {
+            return "bg-accent ring-1 ring-inset ring-primary/20";
+        }
+        return "bg-accent/40";
     }
 
     type ViewMode = "schema" | "table" | "map";
@@ -322,17 +336,11 @@
         selectedTilesetHash = hash;
     }
 
-    function setEntityHighlight(layerName: string, entityId: string) {
-        if (entityId === selectedId && layerName === selectedLayer) return;
-        selectedId = entityId;
-        selectedLayer = layerName;
-        if (layerName) activeTab = layerName;
-    }
-
-    function clearEntityHighlight() {
-        selectedId = "";
-        selectedLayer = "";
-    }
+    /** Keep table tab on the primary selected layer. */
+    $effect(() => {
+        const layer = layerSelection.primaryLayer;
+        if (layer && tableNames.includes(layer)) activeTab = layer;
+    });
 
     async function toggleMapFullscreen() {
         const el = mapChrome;
@@ -627,11 +635,9 @@
                         loading={tilesetsLoading}
                         layers={mapLayers}
                         {rows}
-                        highlightId={selectedId}
-                        highlightLayer={selectedLayer || activeTab}
+                        fullscreen={mapFullscreen}
                         onSelectTileset={selectTileset}
-                        onSelectEntity={setEntityHighlight}
-                        onClearEntity={clearEntityHighlight}
+                        onToggleFullscreen={toggleMapFullscreen}
                     />
                 {:else}
                     <div
@@ -645,23 +651,10 @@
                     layers={mapLayers}
                     loading={mapLoading}
                     {rows}
-                    highlightId={selectedId}
-                    highlightLayer={selectedLayer || activeTab}
-                    onSelectEntity={setEntityHighlight}
+                    fullscreen={mapFullscreen}
+                    onToggleFullscreen={toggleMapFullscreen}
                 />
             {/if}
-            <button
-                type="button"
-                class="absolute bottom-3 left-3 z-[1000] rounded-md border border-border bg-background/95 p-1.5 text-muted-foreground shadow-sm hover:text-foreground backdrop-blur-sm"
-                title={mapFullscreen ? "Exit fullscreen" : "Fullscreen"}
-                onclick={toggleMapFullscreen}
-            >
-                {#if mapFullscreen}
-                    <MinimizeIcon class="size-3.5" />
-                {:else}
-                    <MaximizeIcon class="size-3.5" />
-                {/if}
-            </button>
         </div>
     {:else if viewMode === "table"}
         {#if tableNames.length > 0}
@@ -677,15 +670,32 @@
                                     data={tableRows}
                                     {rowClassName}
                                     pageIndex={currentPage}
-                                    onRowClick={(row) => {
+                                    onRowClick={(row, ev) => {
                                         const id = String(
                                             row.source_id ??
                                                 row.SOURCE_ID ??
                                                 "",
                                         );
-                                        if (id) {
-                                            setEntityHighlight(tabValue, id);
+                                        if (!id) return;
+                                        if (ev.shiftKey) {
+                                            layerSelection.addSelection(
+                                                tabValue,
+                                                id,
+                                            );
+                                            return;
                                         }
+                                        if (ev.ctrlKey || ev.metaKey) {
+                                            layerSelection.removeSelection(
+                                                tabValue,
+                                                id,
+                                            );
+                                            return;
+                                        }
+                                        layerSelection.selectSingle(
+                                            tabValue,
+                                            id,
+                                        );
+                                        setViewMode("map");
                                     }}
                                 />
                             </div>

@@ -24,7 +24,7 @@
         rowClassName?: (row: TData) => string;
         pageIndex?: number;
         onPageChange?: (index: number) => void;
-        onRowClick?: (row: TData) => void;
+        onRowClick?: (row: TData, event: MouseEvent) => void;
     };
 
     type TData = Record<string, unknown>;
@@ -128,7 +128,7 @@
                         class="border-border {onRowClick
                             ? 'cursor-pointer'
                             : ''} {rowClassName?.(row.original) ?? ''}"
-                        onclick={() => onRowClick?.(row.original)}
+                        onclick={(e) => onRowClick?.(row.original, e)}
                     >
                         {#each row.getVisibleCells() as cell}
                             <Table.Cell class="max-w-75">
