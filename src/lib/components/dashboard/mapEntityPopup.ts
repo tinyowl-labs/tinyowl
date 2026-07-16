@@ -1,9 +1,10 @@
-/** Shared entity popup helpers for Leaflet (2D) and Cesium (3D). */
+/** Shared entity popup helpers for map + table selection. */
 
-export function featureEntityId(feature: GeoJSON.Feature): string {
-    return String(
-        feature.properties?.entity_id ?? feature.properties?.source_id ?? "",
-    );
+export function featureEntityId(feature: {
+    properties?: Record<string, unknown> | null;
+}): string {
+    const p = feature.properties ?? {};
+    return String(p.entity_id ?? p.source_id ?? "");
 }
 
 export function escapeHtml(s: string): string {

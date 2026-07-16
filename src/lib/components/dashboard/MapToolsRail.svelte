@@ -18,6 +18,8 @@
     import EyeIcon from "@lucide/svelte/icons/eye";
     import FocusIcon from "@lucide/svelte/icons/focus";
     import CopyIcon from "@lucide/svelte/icons/copy";
+    import BoxIcon from "@lucide/svelte/icons/box";
+    import MapIcon from "@lucide/svelte/icons/map";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
     import { measureHint } from "$lib/measure";
     import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
@@ -33,6 +35,8 @@
         selectionCount?: number;
         selectionTool?: SelectionToolMode;
         isolating?: boolean;
+        /** When set, shows 2D/3D toggle above fullscreen. */
+        onSetDim?: (dim: "2d" | "3d") => void;
         onZoomIn?: () => void;
         onZoomOut?: () => void;
         onToggleFullscreen?: () => void;
@@ -61,6 +65,7 @@
         selectionCount = 0,
         selectionTool = $bindable<SelectionToolMode>("click"),
         isolating = false,
+        onSetDim,
         onZoomIn,
         onZoomOut,
         onToggleFullscreen,
@@ -257,7 +262,35 @@
             <MinusIcon class="size-3.5" />
         </button>
 
-        <!-- 6. Fullscreen -->
+        {#if onSetDim}
+            <!-- 2D / 3D — above fullscreen -->
+            <button
+                type="button"
+                class="{railBtn} border-b border-border {dim === '2d'
+                    ? 'bg-secondary text-foreground'
+                    : ''}"
+                title="2D map"
+                aria-label="2D map"
+                aria-pressed={dim === "2d"}
+                onclick={() => onSetDim("2d")}
+            >
+                <MapIcon class="size-3.5" />
+            </button>
+            <button
+                type="button"
+                class="{railBtn} border-b border-border {dim === '3d'
+                    ? 'bg-secondary text-foreground'
+                    : ''}"
+                title="3D view"
+                aria-label="3D view"
+                aria-pressed={dim === "3d"}
+                onclick={() => onSetDim("3d")}
+            >
+                <BoxIcon class="size-3.5" />
+            </button>
+        {/if}
+
+        <!-- Fullscreen -->
         <button
             type="button"
             class={railBtn}
