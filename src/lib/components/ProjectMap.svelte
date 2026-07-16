@@ -140,15 +140,15 @@
 
 <div class="relative {klass}">
     <div
-        class="rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-[280px]"
+        class="rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
     >
-        <div bind:this={container} class="w-full h-full min-h-[280px]"></div>
+        <div bind:this={container} class="w-full h-full min-h-70"></div>
     </div>
     {#if enableAreaSearch}
         <button
             type="button"
             onclick={searchThisArea}
-            class="absolute bottom-3 left-1/2 z-[1000] -translate-x-1/2 rounded-full border border-border glass-overlay px-3.5 py-1.5 text-xs font-medium shadow-sm hover:bg-muted transition-colors"
+            class="absolute bottom-3 left-1/2 z-1000 -translate-x-1/2 rounded-full border border-border glass-overlay px-3.5 py-1.5 text-xs font-medium shadow-sm hover:bg-muted transition-colors"
         >
             Search this area
         </button>
