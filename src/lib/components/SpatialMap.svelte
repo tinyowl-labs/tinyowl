@@ -459,7 +459,7 @@
         <div bind:this={container} class="w-full h-full"></div>
         {#if mode === "none" || drafting}
             <div
-                class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background/90 to-transparent px-3 pb-3 pt-8"
+                class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-background/90 to-transparent px-3 pb-3 pt-8"
             >
                 <p class="text-xs text-muted-foreground">
                     {#if pointStep === "centre"}

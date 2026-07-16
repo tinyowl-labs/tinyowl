@@ -2549,7 +2549,7 @@
 
     {#if ready && !loading && models.length === 0 && layers.length === 0}
         <div
-            class="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-2 bg-background/70 px-6 text-center"
+            class="absolute inset-0 z-5 flex flex-col items-center justify-center gap-2 bg-background/70 px-6 text-center"
         >
             <BoxIcon class="size-10 text-muted-foreground/30" />
             <p class="text-sm">No layers or 3D models</p>
@@ -2652,15 +2652,5 @@
     :global(.cesium-scene .cesium-widget-credits),
     :global(.cesium-scene .cesium-credit-lightbox) {
         display: none !important;
-    }
-    .entity-popup::after {
-        content: "";
-        position: absolute;
-        left: 50%;
-        bottom: -6px;
-        margin-left: -6px;
-        border: 6px solid transparent;
-        border-top-color: var(--border);
-        border-bottom: 0;
     }
 </style>
