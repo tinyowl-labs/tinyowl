@@ -1,4 +1,4 @@
-export type CoverageRole = "tileset" | "imagery" | "raster";
+export type CoverageRole = "tileset" | "imagery" | "raster" | "model";
 
 export type ProjectCoverage = {
     hash: string;
@@ -12,6 +12,8 @@ export type ProjectCoverage = {
     url: string;
     /** Low-res JPEG from raster-worker — map base + artefact thumbs. */
     preview_url?: string;
+    /** XYZ template …/tiles/{z}/{x}/{y} when static archive is ready. */
+    tiles_url?: string;
     bbox_wgs84?: number[];
     crs_epsg?: number | null;
     ingest_status?: string;
@@ -34,9 +36,22 @@ export function coveragePreviewUrl(
     return `${raw}${sep}token=${encodeURIComponent(accessToken)}`;
 }
 
-/** Raster coverages only (exclude tilesets — those use Cesium3DTileset). */
+export function coverageTilesUrlTemplate(
+    cov: ProjectCoverage,
+    accessToken: string | null | undefined,
+): string | null {
+    if (!cov.tiles_url) return null;
+    let url = cov.tiles_url;
+    if (accessToken && !url.includes("token=")) {
+        const sep = url.includes("?") ? "&" : "?";
+        url = `${url}${sep}token=${encodeURIComponent(accessToken)}`;
+    }
+    return url;
+}
+
+/** Raster coverages only (exclude tilesets/models — those use Cesium3DTileset). */
 export function rasterCoverages(list: ProjectCoverage[]): ProjectCoverage[] {
-    return list.filter((c) => c.role !== "tileset");
+    return list.filter((c) => c.role !== "tileset" && c.role !== "model");
 }
 
 const SMALL_FALLBACK_BYTES = 5_000_000;

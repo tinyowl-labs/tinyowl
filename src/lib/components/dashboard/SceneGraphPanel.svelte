@@ -17,6 +17,7 @@
     } from "$lib/stores/layerSelection.svelte";
     import type { LayerData } from "./layerTypes";
     import type { ProjectTileset } from "./tilesetTypes";
+    import { isLocalTileset } from "./tilesetTypes";
     import type { ProjectCoverage } from "./coverageTypes";
 
     type Props = {
@@ -414,6 +415,7 @@
                 <div class="mb-1 space-y-0.5 {childIndent}">
                     {#each filteredModels as m, idx}
                         {@const visible = modelVisible(m.hash)}
+                        {@const local = isLocalTileset(m)}
                         <div
                             class="flex w-full items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary"
                         >
@@ -421,7 +423,9 @@
                                 type="button"
                                 class="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-0.5 text-left"
                                 onclick={() => onToggleModel?.(m.hash)}
-                                title={m.label || m.hash}
+                                title={local
+                                    ? `${m.label || m.hash} (not georeferenced)`
+                                    : m.label || m.hash}
                             >
                                 <span
                                     class="size-2 shrink-0 rounded-full"
@@ -438,6 +442,12 @@
                                 >
                                     {m.label || m.hash.slice(0, 12)}
                                 </span>
+                                {#if local}
+                                    <span
+                                        class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                        >unplaced</span
+                                    >
+                                {/if}
                             </button>
                             <button
                                 type="button"

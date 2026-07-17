@@ -3,7 +3,6 @@
     import { env as publicEnv } from "$env/dynamic/public";
     import { onDestroy, onMount } from "svelte";
     import BoxIcon from "@lucide/svelte/icons/box";
-    import type { ProjectTileset } from "./tilesetTypes";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
     import CesiumAttribution from "$lib/components/CesiumAttribution.svelte";
     import { isDark, mapColors, mapLayerPalette, themePrefs } from "$lib/stores/theme.svelte";
@@ -32,10 +31,13 @@
         type PickCandidate,
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
+    import type { ProjectTileset } from "./tilesetTypes";
+    import { isLocalTileset } from "./tilesetTypes";
     import type { ProjectCoverage } from "./coverageTypes";
     import {
         loadableRasters,
         coveragePreviewUrl,
+        coverageTilesUrlTemplate,
     } from "./coverageTypes";
     import {
         loadCoverageImagery,
@@ -717,6 +719,15 @@
                 /* continue */
             }
             applyTilesetHeightOffset(prim, m?.height_offset_m);
+        }
+
+        // Non-georeferenced models: orbit the mesh locally; do not treat as site truth.
+        if (m && isLocalTileset(m) && prim?.boundingSphere?.radius > 0) {
+            await flyToSphere(
+                Cesium.BoundingSphere.clone(prim.boundingSphere),
+                1.0,
+            );
+            return;
         }
 
         // No entity layers: tileset-only home.
@@ -2191,6 +2202,32 @@
                     cov,
                     accessToken || null,
                 );
+                const tilesTpl = coverageTilesUrlTemplate(
+                    cov,
+                    accessToken || null,
+                );
+
+                // Static XYZ archive (PMTiles/MBTiles proxy) — preferred when ready.
+                if (tilesTpl && rect) {
+                    const tileProvider = new Cesium.UrlTemplateImageryProvider({
+                        url: tilesTpl,
+                        rectangle: Cesium.Rectangle.fromDegrees(
+                            rect.west,
+                            rect.south,
+                            rect.east,
+                            rect.north,
+                        ),
+                        // Credit omitted — project coverage
+                    });
+                    if (gen !== coverageLoadGen) return;
+                    const tileLayer =
+                        viewer.imageryLayers.addImageryProvider(tileProvider);
+                    tileLayer.show = isCoverageVisible(cov.hash);
+                    added.push(tileLayer);
+                    coverageLayers.set(cov.hash, added);
+                    continue;
+                }
+
                 // Baked low-res overview: instant base (also used for artefact thumbs).
                 if (previewUrl && rect) {
                     const previewProvider =

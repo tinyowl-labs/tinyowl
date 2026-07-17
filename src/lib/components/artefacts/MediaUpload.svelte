@@ -85,8 +85,21 @@
         );
     }
 
+    function isModelFile(file: File): boolean {
+        const name = file.name.toLowerCase();
+        return (
+            name.endsWith(".glb") ||
+            name.endsWith(".gltf") ||
+            file.type === "model/gltf-binary" ||
+            file.type === "model/gltf+json" ||
+            file.type === "model/gltf"
+        );
+    }
+
     function mediaTypeForUpload(file: File): string {
         if (isTilesetFile(file)) return "model/vnd.3dtiles";
+        if (file.name.toLowerCase().endsWith(".glb")) return "model/gltf-binary";
+        if (file.name.toLowerCase().endsWith(".gltf")) return "model/gltf+json";
         if (file.type) return file.type;
         if (file.name.toLowerCase().endsWith(".pdf")) return "application/pdf";
         return "application/octet-stream";
@@ -110,17 +123,21 @@
                 "X-TinyOwl-Media-Hash": hash,
                 "X-TinyOwl-Media-Type": mediaType,
             };
-            if (entityType.trim() && !isTilesetFile(file)) {
+            if (entityType.trim() && !isTilesetFile(file) && !isModelFile(file)) {
                 headers["X-TinyOwl-Entity-Type"] = entityType.trim();
             }
-            if (entityId.trim() && !isTilesetFile(file)) {
+            if (entityId.trim() && !isTilesetFile(file) && !isModelFile(file)) {
                 headers["X-TinyOwl-Entity-Id"] = entityId.trim();
             }
-            if (isTilesetFile(file)) {
+            if (isTilesetFile(file) || isModelFile(file)) {
                 headers["X-TinyOwl-Media-Label"] = file.name.replace(
-                    /\.3tz$/i,
+                    /\.(3tz|glb|gltf)$/i,
                     "",
                 );
+            }
+            // Optional georef for GLB: set via headers when provided later; default local.
+            if (isModelFile(file)) {
+                headers["X-TinyOwl-Media-Profile"] = "coverage";
             }
             const res = await fetch(`/api/v1/projects/${projectSlug}/media`, {
                 method: "POST",
@@ -131,9 +148,10 @@
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error ?? `HTTP ${res.status}`);
             }
-            status = isTilesetFile(file)
-                ? `Queued ${file.name} for 3D ingest`
-                : `Stored ${file.name}`;
+            status =
+                isTilesetFile(file) || isModelFile(file)
+                    ? `Queued ${file.name} for 3D ingest`
+                    : `Stored ${file.name}`;
             onUploaded({ mediaType });
         } catch (e: any) {
             error = e?.message ?? "Upload failed";
@@ -150,10 +168,11 @@
                 f.type.startsWith("image/") ||
                 f.type === "application/pdf" ||
                 f.name.toLowerCase().endsWith(".pdf") ||
-                isTilesetFile(f),
+                isTilesetFile(f) ||
+                isModelFile(f),
         );
         if (files.length === 0) {
-            error = "Choose an image, PDF, or georeferenced .3tz";
+            error = "Choose an image, PDF, .3tz, or GLB/glTF";
             return;
         }
         (async () => {
@@ -265,7 +284,7 @@
                 <input
                     type="file"
                     class="sr-only"
-                    accept="image/*,application/pdf,.pdf,.3tz,model/vnd.3dtiles"
+                    accept="image/*,application/pdf,.pdf,.3tz,.glb,.gltf,model/vnd.3dtiles,model/gltf-binary"
                     multiple
                     disabled={busy}
                     onchange={(e) => onFiles(e.currentTarget.files)}
@@ -295,7 +314,7 @@
             {/if}
             {#if dragOver}
                 <span class="w-full text-[11px] text-muted-foreground"
-                    >Drop images, PDFs, or .3tz here</span
+                    >Drop images, PDFs, .3tz, or GLB here</span
                 >
             {/if}
         </div>
