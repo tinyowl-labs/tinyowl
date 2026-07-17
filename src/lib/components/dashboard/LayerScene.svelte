@@ -32,6 +32,9 @@
         type PickCandidate,
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
+    import type { ProjectCoverage } from "./coverageTypes";
+    import { loadableRasters } from "./coverageTypes";
+    import { loadCoverageImagery } from "./coverageImagery";
     import {
         cesiumPropValue,
         entityIdFromPacketId,
@@ -64,6 +67,8 @@
         projectSlug: string;
         accessToken?: string;
         tilesets?: ProjectTileset[];
+        /** Raster + tileset coverage rows from GET …/coverages */
+        coverages?: ProjectCoverage[];
         selectedHash?: string;
         loading?: boolean;
         layers?: LayerData[];
@@ -82,6 +87,7 @@
         projectSlug,
         accessToken = "",
         tilesets = [],
+        coverages = [],
         selectedHash = "",
         loading = false,
         layers = [],
@@ -101,6 +107,8 @@
     /** True when World Terrain was attached (Ion attribution). */
     let hasIonTerrain = $state(false);
     let modelVis = $state<Record<string, boolean>>({});
+    let coverageVis = $state<Record<string, boolean>>({});
+    let coverageError = $state("");
     let popupHtml = $state("");
     let popupX = $state(0);
     let popupY = $state(0);
@@ -145,11 +153,13 @@
     let measureHandler: any;
     let postRenderRemover: (() => void) | null = null;
     const tilesetPrims = new Map<string, any>();
+    const coverageLayers = new Map<string, any>();
     const layerSources = new Map<string, any>();
     const entityMeta = new WeakMap<object, EntityMeta>();
     let selectedEntity: any = null;
     let layerLoadGen = 0;
     let modelLoadGen = 0;
+    let coverageLoadGen = 0;
     let started = false;
     /** Frame the project/tileset extent once on boot. Reactive — gates loading overlay. */
     let hasFramed = $state(false);
@@ -193,6 +203,7 @@
     const models = $derived(
         tilesets.filter((t) => t.ingest_status === "ready" && t.root_url),
     );
+    const rasters = $derived(loadableRasters(coverages));
     const selected = $derived(
         models.find((t) => t.hash === selectedHash) ?? models[0] ?? null,
     );
@@ -207,6 +218,11 @@
     function isModelVisible(hash: string) {
         if (hash in modelVis) return modelVis[hash]!;
         return selected?.hash === hash;
+    }
+
+    function isCoverageVisible(hash: string) {
+        if (hash in coverageVis) return coverageVis[hash]!;
+        return true;
     }
 
     async function loadCesium() {
@@ -2104,6 +2120,90 @@
         }
     }
 
+    function destroyCoverageLayer(hash: string) {
+        const layer = coverageLayers.get(hash);
+        if (!layer || !viewer) return;
+        try {
+            viewer.imageryLayers.remove(layer, true);
+        } catch {
+            /* ignore */
+        }
+        coverageLayers.delete(hash);
+    }
+
+    async function syncCoverageImagery() {
+        if (!viewer || !Cesium) return;
+        const gen = ++coverageLoadGen;
+        coverageError = "";
+        const want = new Set(rasters.map((c) => c.hash));
+
+        for (const hash of [...coverageLayers.keys()]) {
+            if (!want.has(hash)) destroyCoverageLayer(hash);
+        }
+
+        for (const cov of rasters) {
+            if (gen !== coverageLoadGen) return;
+            const existing = coverageLayers.get(cov.hash);
+            if (existing) {
+                existing.show = isCoverageVisible(cov.hash);
+                continue;
+            }
+            if (!isCoverageVisible(cov.hash)) continue;
+            try {
+                const loaded = await loadCoverageImagery(cov, accessToken || null);
+                if (gen !== coverageLoadGen) return;
+                const rect = Cesium.Rectangle.fromDegrees(
+                    loaded.rectangle.west,
+                    loaded.rectangle.south,
+                    loaded.rectangle.east,
+                    loaded.rectangle.north,
+                );
+                const provider = await Cesium.SingleTileImageryProvider.fromUrl(
+                    loaded.dataUrl,
+                    { rectangle: rect },
+                );
+                if (gen !== coverageLoadGen) return;
+                const layer = viewer.imageryLayers.addImageryProvider(provider);
+                layer.show = isCoverageVisible(cov.hash);
+                coverageLayers.set(cov.hash, layer);
+            } catch (e) {
+                if (gen === coverageLoadGen) {
+                    const msg =
+                        e instanceof Error
+                            ? e.message
+                            : "Failed to load coverage imagery";
+                    coverageError = coverageError
+                        ? `${coverageError}; ${msg}`
+                        : msg;
+                    console.warn("coverage imagery", cov.hash, e);
+                }
+            }
+        }
+    }
+
+    function toggleCoverage(hash: string) {
+        const next = !isCoverageVisible(hash);
+        coverageVis = { ...coverageVis, [hash]: next };
+        const layer = coverageLayers.get(hash);
+        if (layer) {
+            layer.show = next;
+            return;
+        }
+        if (next) void syncCoverageImagery();
+    }
+
+    function flyToCoverage(hash: string) {
+        if (!viewer || !Cesium) return;
+        const cov = rasters.find((c) => c.hash === hash);
+        const bb = cov?.bbox_wgs84;
+        if (!bb || bb.length !== 4) return;
+        const rect = Cesium.Rectangle.fromDegrees(bb[0], bb[1], bb[2], bb[3]);
+        void viewer.camera.flyTo({
+            destination: rect,
+            duration: 0.8,
+        });
+    }
+
     async function syncLayers() {
         if (!viewer || !Cesium) return;
         const gen = ++layerLoadGen;
@@ -2177,6 +2277,13 @@
     let modelKey = $derived(
         models.map((m) => m.hash).join("|") + "|" + accessToken,
     );
+    let coverageKey = $derived(
+        rasters.map((c) => c.hash).join("|") +
+            "|" +
+            accessToken +
+            "|" +
+            rasters.map((c) => (c.bbox_wgs84 ?? []).join(",")).join(";"),
+    );
     let layerContentKey = $derived(
         layers
             .map((l) => `${l.name}:${l.packets?.length ?? 0}`)
@@ -2187,6 +2294,12 @@
         modelKey;
         if (!ready || !started) return;
         void syncModels(false);
+    });
+
+    $effect(() => {
+        coverageKey;
+        if (!ready || !started) return;
+        void syncCoverageImagery();
     });
 
     $effect(() => {
@@ -2283,6 +2396,7 @@
         }
         dragHandler = null;
         for (const hash of [...tilesetPrims.keys()]) destroyTileset(hash);
+        for (const hash of [...coverageLayers.keys()]) destroyCoverageLayer(hash);
         for (const name of [...layerSources.keys()]) destroyLayerSource(name);
         try {
             viewer?.destroy?.();
@@ -2751,16 +2865,19 @@
         <CesiumLoading />
     {/if}
 
-    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0)}
+    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || rasters.length > 0)}
         <div class="absolute top-2 right-2 z-10">
             <SceneGraphPanel
                 {layers}
                 {models}
+                coverages={rasters}
                 {rows}
                 {palette}
                 pendingModels={pending}
                 modelVisible={isModelVisible}
+                coverageVisible={isCoverageVisible}
                 onToggleModel={toggleModel}
+                onToggleCoverage={toggleCoverage}
                 onToggleLayer={toggleLayer}
                 onApplyHidden={applyHiddenVisibility}
                 onFlyTo={() => {
@@ -2770,6 +2887,7 @@
                 onFlyToLayer={(name) => {
                     void flyToLayerExtent(name);
                 }}
+                onFlyToCoverage={flyToCoverage}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
@@ -2777,7 +2895,15 @@
         </div>
     {/if}
 
-    {#if ready && !loading && models.length === 0 && layers.length === 0}
+    {#if coverageError}
+        <div
+            class="absolute bottom-10 left-2 right-2 z-10 rounded-md border border-border bg-background/95 px-2 py-1.5 text-[11px] text-muted-foreground"
+        >
+            Coverage: {coverageError}
+        </div>
+    {/if}
+
+    {#if ready && !loading && models.length === 0 && layers.length === 0 && rasters.length === 0}
         <div
             class="absolute inset-0 z-5 flex flex-col items-center justify-center gap-2 bg-background/70 px-6 text-center"
         >
