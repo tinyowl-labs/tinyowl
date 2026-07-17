@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Cesium">
+  <!-- Icon-only Cesium ion mark (no wordmark). -->
+  <defs>
+    <clipPath id="disk">
+      <circle cx="64" cy="64" r="58"/>
+    </clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="62" fill="#fff"/>
+  <g clip-path="url(#disk)">
+    <rect width="128" height="128" fill="#6ec1e0"/>
+    <circle cx="92" cy="38" r="10" fill="#fff"/>
+    <path fill="#7ac143" d="M0 78 C22 58, 40 70, 58 62 C76 54, 90 40, 128 52 L128 128 L0 128 Z"/>
+    <path fill="#fff" d="M0 78 C22 58, 40 70, 58 62 C76 54, 90 40, 128 52 L128 56 C90 44, 76 58, 58 66 C40 74, 22 62, 0 82 Z"/>
+  </g>
+</svg>

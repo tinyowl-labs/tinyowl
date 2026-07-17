@@ -84,7 +84,8 @@ export default defineConfig({
   worker: {
     format: "es",
   },
-  // Cesium is loaded as a browser global from /static/cesium — keep it out of SSR.
+  // Cesium is loaded as a browser global from /static/cesium — keep it out of
+  // Vite's dep optimizer (prebundled cesium can break WebGL / texture atlas).
   ssr: {
     external: ["cesium"],
   },

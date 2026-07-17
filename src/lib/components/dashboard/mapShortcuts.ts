@@ -1,4 +1,4 @@
-/** Shared keyboard shortcuts for LayerMap + LayerScene tool rails. */
+/** Shared keyboard shortcuts for LayerScene tool rails. */
 
 import type { MeasureMode } from "$lib/measure";
 import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";

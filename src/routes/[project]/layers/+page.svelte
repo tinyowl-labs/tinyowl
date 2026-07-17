@@ -12,12 +12,17 @@
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
     import { untrack } from "svelte";
-    import LayerMap from "$lib/components/dashboard/LayerMap.svelte";
     import type { ProjectTileset } from "$lib/components/dashboard/tilesetTypes";
+    import type { LayerData } from "$lib/components/dashboard/layerTypes";
+    import {
+        entityIdsFromPackets,
+        parseNdjsonCzml,
+    } from "$lib/components/dashboard/czmlLoad";
     import SchemaGraph, {
         type SchemaTable,
         type SchemaEdge,
     } from "$lib/components/dashboard/SchemaGraph.svelte";
+    import FkLinker from "$lib/components/digitize/FkLinker.svelte";
     import RowNum from "$lib/components/ui/row-num.svelte";
     import { browser } from "$app/environment";
     import { onMount } from "svelte";
@@ -25,10 +30,16 @@
         layerSelection,
         toSelectionKey,
     } from "$lib/stores/layerSelection.svelte";
+    import LayerScene from "$lib/components/dashboard/LayerScene.svelte";
 
     let { data } = $props();
 
     const project = $derived(data?.project as Record<string, unknown> | null);
+    const canWrite = $derived(
+        ["owner", "admin", "collaborator"].includes(
+            String((data as any)?.role ?? ($page.data as any)?.role ?? "viewer"),
+        ),
+    );
     const gpkgUri = $derived(project?.gpkg_uri as string | null);
     const entityCount = $derived(project?.entity_count as number | null);
     const tables = $derived(
@@ -174,6 +185,9 @@
         }
     });
 
+    type ViewMode = "schema" | "table" | "map";
+    type MapDim = "2d" | "3d";
+
     /** Compact layers URL — interactive selection stays in client state. */
     function layersSearch(opts: {
         mode: ViewMode;
@@ -184,6 +198,9 @@
         const params = new URLSearchParams();
         if (opts.mode === "map" && opts.dim === "3d") {
             params.set("view", "3d");
+        } else if (opts.mode === "map" && opts.dim === "2d") {
+            params.set("view", "map");
+            params.set("dim", "2d");
         } else if (opts.mode === "map") {
             params.set("view", "map");
         } else {
@@ -248,15 +265,15 @@
         return "bg-accent/40";
     }
 
-    type ViewMode = "schema" | "table" | "map";
     let viewMode = $state<ViewMode>(
         untrack(() => {
             if (
                 viewParam === "map" ||
+                viewParam === "3d" ||
                 viewParam === "table" ||
                 viewParam === "schema"
             ) {
-                return viewParam;
+                return viewParam === "3d" ? "map" : viewParam;
             }
             return "map";
         }),
@@ -266,10 +283,11 @@
     $effect(() => {
         if (
             viewParam === "map" ||
+            viewParam === "3d" ||
             viewParam === "table" ||
             viewParam === "schema"
         ) {
-            viewMode = viewParam;
+            viewMode = viewParam === "3d" ? "map" : viewParam;
         }
     });
 
@@ -285,20 +303,15 @@
         );
     }
 
-    type MapDim = "2d" | "3d";
+    // Default 3D — matches the working terrain-sampled load path.
     let mapDim = $state<MapDim>(
-        untrack(() => (dimParam === "3d" ? "3d" : "2d")),
+        untrack(() => (dimParam === "2d" ? "2d" : "3d")),
     );
     let selectedTilesetHash = $state("");
     let tilesets = $state<ProjectTileset[]>([]);
     let tilesetsLoading = $state(false);
     let mapChrome = $state<HTMLDivElement>();
     let mapFullscreen = $state(false);
-
-    /** Cesium island — loaded only in the browser after mount. */
-    let LayerSceneComp = $state<
-        typeof import("$lib/components/dashboard/LayerScene.svelte").default | null
-    >(null);
 
     onMount(() => {
         if (!browser) return;
@@ -311,13 +324,12 @@
         } catch {
             /* ignore */
         }
-        void import("$lib/components/dashboard/LayerScene.svelte").then((m) => {
-            LayerSceneComp = m.default;
-        });
     });
 
     $effect(() => {
-        mapDim = dimParam === "3d" ? "3d" : "2d";
+        if (dimParam === "2d" || dimParam === "3d") {
+            mapDim = dimParam;
+        }
     });
 
     function setMapDim(dim: MapDim) {
@@ -366,14 +378,10 @@
         return () => document.removeEventListener("fullscreenchange", onFs);
     });
 
-    let mapLayers = $state<
-        {
-            name: string;
-            geojson: GeoJSON.FeatureCollection;
-            visible: boolean;
-        }[]
-    >([]);
+    let mapLayers = $state<LayerData[]>([]);
     let mapLoading = $state(false);
+    let czmlLoadGen = 0;
+    let czmlContentKey = "";
 
     let schemaTables = $state<SchemaTable[]>([]);
     let schemaEdges = $state<SchemaEdge[]>([]);
@@ -384,29 +392,51 @@
         return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     }
 
-    async function loadAllGeoJSON() {
-        mapLoading = true;
+    function layersContentKey(layers: LayerData[]): string {
+        return layers
+            .map((l) => `${l.name}:${l.packets?.length ?? 0}`)
+            .join("|");
+    }
+
+    async function loadAllCzml() {
+        const gen = ++czmlLoadGen;
+        // Only show the loading gate on the first fetch — flipping mapLoading
+        // later would destroy/recreate LayerScene (full Cesium remount).
+        const initial = mapLayers.length === 0;
+        if (initial) mapLoading = true;
         const slug = $page.params.project;
         const names = untrack(() => tableNames);
-        const results: typeof mapLayers = [];
+        const results: LayerData[] = [];
 
         for (const name of names) {
+            if (gen !== czmlLoadGen) return;
             try {
                 const res = await fetch(
-                    `/api/v1/projects/${slug}/layers/${name}/geojson`,
+                    `/api/v1/projects/${slug}/layers/${name}/czml`,
                     { headers: authHeaders() },
                 );
                 if (res.ok) {
-                    const geo = await res.json();
-                    if (geo?.features?.length > 0) {
-                        results.push({ name, geojson: geo, visible: true });
+                    const packets = parseNdjsonCzml(await res.text());
+                    const entityIds = entityIdsFromPackets(packets, name);
+                    if (entityIds.length > 0) {
+                        results.push({
+                            name,
+                            packets,
+                            entityIds,
+                            visible: true,
+                        });
                     }
                 }
             } catch (_) {}
         }
 
-        mapLayers = results;
-        mapLoading = false;
+        if (gen !== czmlLoadGen) return;
+        const key = layersContentKey(results);
+        if (key !== czmlContentKey) {
+            czmlContentKey = key;
+            mapLayers = results;
+        }
+        if (initial) mapLoading = false;
     }
 
     /** Ensure selected layer is visible — no refetch. */
@@ -482,16 +512,20 @@
 
     $effect(() => {
         const mode = viewMode;
-        const dim = mapDim;
         const namesKey = tableNamesKey;
+        // Do NOT depend on mapDim — refetching CZML on 2D/3D toggle remounts
+        // datasources and looks like a full reload.
         if (mode === "map" && namesKey) {
-            void loadAllGeoJSON();
-        }
-        if (mode === "map" && dim === "3d") {
-            void loadTilesets();
+            void loadAllCzml();
         }
         if (mode === "schema" && namesKey) {
             void loadSchema();
+        }
+    });
+
+    $effect(() => {
+        if (viewMode === "map" && mapDim === "3d") {
+            void loadTilesets();
         }
     });
 
@@ -573,33 +607,6 @@
                         <WaypointsIcon class="size-3.5" />
                     </button>
                 </div>
-                {#if viewMode === "map"}
-                    <div
-                        class="ml-2 flex items-center rounded-md border border-border overflow-hidden"
-                    >
-                        <button
-                            type="button"
-                            onclick={() => setMapDim("2d")}
-                            class="px-2.5 py-1 text-xs {mapDim === '2d'
-                                ? 'bg-secondary text-foreground font-medium'
-                                : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                            title="2D map"
-                        >
-                            2D
-                        </button>
-                        <button
-                            type="button"
-                            onclick={() => setMapDim("3d")}
-                            class="px-2.5 py-1 text-xs border-l border-border {mapDim ===
-                            '3d'
-                                ? 'bg-secondary text-foreground font-medium'
-                                : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                            title="3D models"
-                        >
-                            3D
-                        </button>
-                    </div>
-                {/if}
             </div>
         </div>
         <p class="mt-0.5 text-sm text-muted-foreground">
@@ -618,152 +625,175 @@
         </p>
     </div>
 
-    {#if viewMode === "map"}
+    <!-- Stable content shell: Cesium stays mounted (lamina-style). Table/schema
+         overlay it — never {#if}-destroy the Viewer on tab or CZML load. -->
+    <div class="flex-1 min-h-0 relative">
         <div
             bind:this={mapChrome}
-            class="flex-1 min-h-0 relative rounded-lg overflow-hidden border border-border bg-background {mapFullscreen
-                ? 'rounded-none border-0'
-                : ''}"
+            class="absolute inset-0 rounded-lg overflow-hidden border border-border bg-background {mapFullscreen
+                ? 'rounded-none border-0 z-50'
+                : ''} {viewMode === 'map'
+                ? 'z-10'
+                : 'invisible pointer-events-none z-0'}"
         >
-            {#if mapDim === "3d"}
-                {#if browser && LayerSceneComp}
-                    <LayerSceneComp
-                        projectSlug={$page.params.project ?? ""}
-                        {accessToken}
-                        {tilesets}
-                        selectedHash={selectedTilesetHash}
-                        loading={tilesetsLoading}
-                        layers={mapLayers}
-                        {rows}
-                        fullscreen={mapFullscreen}
-                        onSelectTileset={selectTileset}
-                        onToggleFullscreen={toggleMapFullscreen}
-                    />
-                {:else}
-                    <div
-                        class="flex h-full items-center justify-center text-xs text-muted-foreground"
-                    >
-                        Starting 3D…
-                    </div>
-                {/if}
-            {:else}
-                <LayerMap
-                    layers={mapLayers}
+            {#if browser}
+                <LayerScene
+                    projectSlug={$page.params.project ?? ""}
+                    {accessToken}
+                    {tilesets}
+                    selectedHash={selectedTilesetHash}
                     loading={mapLoading}
+                    layers={mapLayers}
                     {rows}
+                    dim={mapDim}
+                    active={viewMode === "map"}
                     fullscreen={mapFullscreen}
+                    onSelectTileset={selectTileset}
                     onToggleFullscreen={toggleMapFullscreen}
+                    onDimChange={setMapDim}
                 />
             {/if}
         </div>
-    {:else if viewMode === "table"}
-        {#if tableNames.length > 0}
-            <div class="flex-1 min-h-0">
-                <Tabs value={activeTab} onValueChange={handleTabChange} {tabs}>
-                    {#snippet children(tabValue: string)}
-                        {@const tableRows = rows[tabValue] ?? []}
-                        {@const tableCols = buildColumns(tabValue)}
-                        {#if tableRows.length > 0}
-                            <div bind:this={tableContainer}>
-                                <DataTable
-                                    columns={tableCols}
-                                    data={tableRows}
-                                    {rowClassName}
-                                    pageIndex={currentPage}
-                                    onRowClick={(row, ev) => {
-                                        const id = String(
-                                            row.source_id ??
-                                                row.SOURCE_ID ??
-                                                "",
-                                        );
-                                        if (!id) return;
-                                        if (ev.shiftKey) {
-                                            layerSelection.addSelection(
-                                                tabValue,
-                                                id,
-                                            );
-                                            return;
-                                        }
-                                        if (ev.ctrlKey || ev.metaKey) {
-                                            layerSelection.toggleSelection(
-                                                tabValue,
-                                                id,
-                                            );
-                                            return;
-                                        }
-                                        layerSelection.selectSingle(
-                                            tabValue,
-                                            id,
-                                        );
-                                    }}
-                                    onRowDblClick={(row) => {
-                                        const id = String(
-                                            row.source_id ??
-                                                row.SOURCE_ID ??
-                                                "",
-                                        );
-                                        if (!id) return;
-                                        layerSelection.selectSingle(
-                                            tabValue,
-                                            id,
-                                        );
-                                        setViewMode("map");
-                                    }}
-                                />
-                            </div>
-                        {:else}
-                            <div
-                                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+
+        {#if viewMode === "table"}
+            <div class="absolute inset-0 z-20 bg-background">
+                {#if tableNames.length > 0}
+                    <div class="h-full min-h-0">
+                        <Tabs
+                            value={activeTab}
+                            onValueChange={handleTabChange}
+                            {tabs}
+                        >
+                            {#snippet children(tabValue: string)}
+                                {@const tableRows = rows[tabValue] ?? []}
+                                {@const tableCols = buildColumns(tabValue)}
+                                {#if tableRows.length > 0}
+                                    <div bind:this={tableContainer}>
+                                        <DataTable
+                                            columns={tableCols}
+                                            data={tableRows}
+                                            {rowClassName}
+                                            pageIndex={currentPage}
+                                            onRowClick={(row, ev) => {
+                                                const id = String(
+                                                    row.source_id ??
+                                                        row.SOURCE_ID ??
+                                                        "",
+                                                );
+                                                if (!id) return;
+                                                if (ev.shiftKey) {
+                                                    layerSelection.addSelection(
+                                                        tabValue,
+                                                        id,
+                                                    );
+                                                    return;
+                                                }
+                                                if (ev.ctrlKey || ev.metaKey) {
+                                                    layerSelection.toggleSelection(
+                                                        tabValue,
+                                                        id,
+                                                    );
+                                                    return;
+                                                }
+                                                layerSelection.selectSingle(
+                                                    tabValue,
+                                                    id,
+                                                );
+                                            }}
+                                            onRowDblClick={(row) => {
+                                                const id = String(
+                                                    row.source_id ??
+                                                        row.SOURCE_ID ??
+                                                        "",
+                                                );
+                                                if (!id) return;
+                                                layerSelection.selectSingle(
+                                                    tabValue,
+                                                    id,
+                                                );
+                                                setViewMode("map");
+                                            }}
+                                        />
+                                    </div>
+                                {:else}
+                                    <div
+                                        class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                                    >
+                                        <TableIcon
+                                            class="size-10 text-muted-foreground/30 mb-3"
+                                        />
+                                        <p class="text-sm text-muted-foreground">
+                                            No rows in this table yet.
+                                        </p>
+                                    </div>
+                                {/if}
+                            {/snippet}
+                        </Tabs>
+                    </div>
+                {:else}
+                    <div
+                        class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                    >
+                        <LayersIcon
+                            class="size-10 text-muted-foreground/30 mb-3"
+                        />
+                        <p class="text-sm text-muted-foreground">
+                            No GeoPackage data yet. Run
+                            <code
+                                class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
+                                >tinyowl push</code
                             >
-                                <TableIcon
-                                    class="size-10 text-muted-foreground/30 mb-3"
-                                />
-                                <p class="text-sm text-muted-foreground">
-                                    No rows in this table yet.
-                                </p>
-                            </div>
+                            to upload.
+                        </p>
+                    </div>
+                {/if}
+            </div>
+        {:else if viewMode === "schema"}
+            <div class="absolute inset-0 z-20 bg-background flex flex-col">
+                {#if tableNames.length > 0}
+                    <div class="flex-1 min-h-0">
+                        <SchemaGraph
+                            tables={schemaTables}
+                            edges={schemaEdges}
+                            loading={schemaLoading}
+                        />
+                    </div>
+                    {#if canWrite && accessToken}
+                        <div
+                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[40%] overflow-y-auto"
+                        >
+                            <FkLinker
+                                {accessToken}
+                                slug={$page.params.project ?? ""}
+                                tables={schemaTables}
+                                edges={schemaEdges}
+                                onSaved={() => {
+                                    schemaLoaded = false;
+                                    void loadSchema();
+                                }}
+                            />
+                        </div>
+                    {/if}
+                {:else}
+                    <div
+                        class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                    >
+                        <LayersIcon
+                            class="size-10 text-muted-foreground/30 mb-3"
+                        />
+                        <p class="text-sm text-muted-foreground mb-3">
+                            No tables yet.
+                        </p>
+                        {#if canWrite}
+                            <a
+                                href={`/${$page.params.project}/import`}
+                                class="text-sm text-primary hover:underline"
+                                >Import CSV or GeoJSON</a
+                            >
                         {/if}
-                    {/snippet}
-                </Tabs>
-            </div>
-        {:else}
-            <div
-                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-            >
-                <LayersIcon class="size-10 text-muted-foreground/30 mb-3" />
-                <p class="text-sm text-muted-foreground">
-                    No GeoPackage data yet. Run
-                    <code
-                        class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
-                        >tinyowl push</code
-                    >
-                    to upload.
-                </p>
+                    </div>
+                {/if}
             </div>
         {/if}
-    {:else if viewMode === "schema"}
-        {#if tableNames.length > 0}
-            <div class="flex-1 min-h-0 flex flex-col">
-                <SchemaGraph
-                    tables={schemaTables}
-                    edges={schemaEdges}
-                    loading={schemaLoading}
-                />
-            </div>
-        {:else}
-            <div
-                class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-            >
-                <LayersIcon class="size-10 text-muted-foreground/30 mb-3" />
-                <p class="text-sm text-muted-foreground">
-                    No GeoPackage data yet. Run
-                    <code
-                        class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
-                        >tinyowl push</code
-                    >
-                    to upload.
-                </p>
-            </div>
-        {/if}
-    {/if}
+    </div>
 </div>

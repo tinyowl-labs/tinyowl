@@ -19,7 +19,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   const highlight = url.searchParams.get("highlight") ?? "";
   const viewRaw = url.searchParams.get("view") ?? "";
   const dimRaw = url.searchParams.get("dim") ?? "";
-  // view=3d is the short form of view=map&dim=3d (dim kept for legacy links).
+  // view=3d is a short form of view=map&dim=3d.
   const view =
     viewRaw === "3d" ||
     viewRaw === "map" ||

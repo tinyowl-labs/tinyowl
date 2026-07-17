@@ -2,15 +2,19 @@
     import { onMount } from "svelte";
     import { browser } from "$app/environment";
     import { goto } from "$app/navigation";
-    import {
-        isDark,
-        mapColors,
-        themePrefs,
-    } from "$lib/stores/theme.svelte";
-    import {
-        searchHref,
-    } from "$lib/search/params";
+    import { isDark, mapColors, themePrefs } from "$lib/stores/theme.svelte";
+    import { searchHref } from "$lib/search/params";
     import type { Centroid } from "../../routes/+page.server";
+    import {
+        cesiumColorFromCss,
+        createCesiumMap,
+        destroyCesiumViewer,
+        loadCesiumGlobal,
+        tuneCesiumBasemap,
+        viewRectangle,
+    } from "./cesiumBoot";
+    import CesiumLoading from "./CesiumLoading.svelte";
+    import CesiumAttribution from "./CesiumAttribution.svelte";
 
     type Props = {
         centroids: Centroid[];
@@ -26,109 +30,33 @@
     }: Props = $props();
 
     let container = $state<HTMLDivElement>();
+    let creditSink = $state<HTMLDivElement>();
     let mounted = $state(false);
-    let mapRef: any = null;
+    let viewer: any = null;
+    let Cesium: any = null;
+    let clickHandler: any = null;
+    let error = $state("");
+    let mapReady = $state(false);
 
     onMount(() => {
         mounted = true;
     });
 
     function searchThisArea() {
-        if (!mapRef) return;
-        const bounds = mapRef.getBounds();
-        const sw = bounds.getSouthWest();
-        const ne = bounds.getNorthEast();
+        if (!viewer || !Cesium) return;
+        const rect = viewRectangle(viewer, Cesium);
+        if (!rect) return;
         goto(
             searchHref({
                 bbox: {
-                    west: parseFloat(sw.lng.toFixed(6)),
-                    south: parseFloat(sw.lat.toFixed(6)),
-                    east: parseFloat(ne.lng.toFixed(6)),
-                    north: parseFloat(ne.lat.toFixed(6)),
+                    west: parseFloat(rect.west.toFixed(6)),
+                    south: parseFloat(rect.south.toFixed(6)),
+                    east: parseFloat(rect.east.toFixed(6)),
+                    north: parseFloat(rect.north.toFixed(6)),
                 },
             }),
         );
     }
-
-    $effect(() => {
-        // Re-init when theme accent / bg changes so markers pick up new colors.
-        themePrefs.accentHue;
-        themePrefs.bgBase;
-        if (!mounted || !container || !browser || centroids.length === 0) return;
-
-        let cleanup: (() => void) | undefined;
-        let cancelled = false;
-
-        import("leaflet").then(async ({ default: L }) => {
-            if (cancelled || !container) return;
-            await import("leaflet/dist/leaflet.css");
-
-            const map = L.map(container!, {
-                attributionControl: true,
-                zoomControl: true,
-                scrollWheelZoom: true,
-            }).setView([20, 0], 2);
-            mapRef = map;
-
-            const dark = isDark();
-            const colors = mapColors();
-            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                maxZoom: 19,
-                attribution:
-                    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-            }).addTo(map);
-
-            container!.classList.toggle("leaflet-dark", dark);
-
-            const bounds = L.latLngBounds([]);
-
-            for (const c of centroids) {
-                if (!c.lat || !c.lng) continue;
-
-                const marker = L.circleMarker([c.lat, c.lng], {
-                    radius: 6,
-                    fillColor: colors.marker,
-                    color: colors.stroke,
-                    weight: 2,
-                    fillOpacity: 0.7,
-                }).addTo(map);
-
-                const detail =
-                    c.entity_count > 0
-                        ? `${c.entity_count.toLocaleString()} entities across ${c.table_count} tables`
-                        : `${c.table_count} tables`;
-
-                marker.bindPopup(
-                    `<div class="text-[13px]">
-                        <strong>${escapeHTML(c.title)}</strong><br/>
-                        <span class="map-popup-muted">${detail}</span><br/>
-                        <a href="/${c.slug}" class="text-xs">View project →</a>
-                    </div>`,
-                    { closeButton: false },
-                );
-
-                marker.on("click", () => {
-                    goto(`/${c.slug}`);
-                });
-
-                bounds.extend([c.lat, c.lng]);
-            }
-
-            if (bounds.isValid()) {
-                map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });
-            }
-
-            cleanup = () => {
-                mapRef = null;
-                map.remove();
-            };
-        });
-
-        return () => {
-            cancelled = true;
-            cleanup?.();
-        };
-    });
 
     function escapeHTML(str: string): string {
         return str
@@ -136,13 +64,184 @@
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
     }
+
+    function hasCoord(c: Centroid): boolean {
+        return Number.isFinite(c.lat) && Number.isFinite(c.lng);
+    }
+
+    $effect(() => {
+        themePrefs.accentHue;
+        themePrefs.bgBase;
+        const list = centroids.filter(hasCoord);
+        if (!mounted || !container || !creditSink || !browser) return;
+        // No plottable points — clear the preparing overlay (empty map shell).
+        if (list.length === 0) {
+            mapReady = true;
+            return;
+        }
+
+        let cancelled = false;
+        let cleanup: (() => void) | undefined;
+        let resizeObs: ResizeObserver | undefined;
+        mapReady = false;
+
+        void (async () => {
+            try {
+                Cesium = await loadCesiumGlobal();
+                if (cancelled || !container || !creditSink) return;
+
+                viewer = createCesiumMap(Cesium, container, creditSink, {
+                    requestRenderMode: false,
+                });
+                tuneCesiumBasemap(viewer, Cesium, isDark());
+
+                const colors = mapColors();
+                const marker =
+                    cesiumColorFromCss(Cesium, colors.marker, "#3b82f6") ??
+                    Cesium.Color.DODGERBLUE;
+                const stroke =
+                    cesiumColorFromCss(Cesium, colors.stroke, "#1d4ed8") ??
+                    Cesium.Color.WHITE;
+                const positions: any[] = [];
+
+                for (const c of list) {
+                    const position = Cesium.Cartesian3.fromDegrees(
+                        c.lng,
+                        c.lat,
+                        0,
+                    );
+                    positions.push(position);
+                    const detail =
+                        c.entity_count > 0
+                            ? `${c.entity_count.toLocaleString()} entities across ${c.table_count} tables`
+                            : `${c.table_count} tables`;
+                    viewer.entities.add({
+                        id: `project:${c.slug}`,
+                        position,
+                        point: {
+                            pixelSize: 12,
+                            color: marker.withAlpha(0.9),
+                            outlineColor: stroke,
+                            outlineWidth: 2,
+                            heightReference: Cesium.HeightReference.NONE,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        },
+                        label: {
+                            text: c.title,
+                            font: "12px sans-serif",
+                            fillColor: Cesium.Color.WHITE,
+                            outlineColor: Cesium.Color.BLACK,
+                            outlineWidth: 3,
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            pixelOffset: new Cesium.Cartesian2(0, -14),
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                            show: list.length <= 40,
+                        },
+                        description: `<div class="text-[13px]">
+                            <strong>${escapeHTML(c.title)}</strong><br/>
+                            <span class="opacity-60">${detail}</span>
+                        </div>`,
+                        properties: { slug: c.slug },
+                    });
+                }
+
+                clickHandler = new Cesium.ScreenSpaceEventHandler(
+                    viewer.scene.canvas,
+                );
+                clickHandler.setInputAction(
+                    (click: { position: unknown }) => {
+                        const picked = viewer.scene.pick(click.position);
+                        const entity = picked?.id;
+                        const slug =
+                            entity?.properties?.slug?.getValue?.() ??
+                            entity?.properties?.slug;
+                        if (slug) goto(`/${String(slug)}`);
+                    },
+                    Cesium.ScreenSpaceEventType.LEFT_CLICK,
+                );
+
+                if (positions.length === 1) {
+                    const only = list[0]!;
+                    await viewer.camera.flyTo({
+                        destination: Cesium.Cartesian3.fromDegrees(
+                            only.lng,
+                            only.lat,
+                            1_500_000,
+                        ),
+                        duration: 0.8,
+                    });
+                } else if (positions.length > 1) {
+                    const bs = Cesium.BoundingSphere.fromPoints(positions);
+                    await viewer.camera.flyToBoundingSphere(bs, {
+                        duration: 0.8,
+                        offset: new Cesium.HeadingPitchRange(
+                            0,
+                            Cesium.Math.toRadians(-90),
+                            Math.max(bs.radius * 3, 400_000),
+                        ),
+                    });
+                }
+
+                if (!cancelled) mapReady = true;
+
+                resizeObs = new ResizeObserver(() => {
+                    try {
+                        viewer?.resize();
+                        viewer?.scene?.requestRender();
+                    } catch {
+                        /* ignore */
+                    }
+                });
+                resizeObs.observe(container);
+
+                viewer.resize();
+                viewer.scene.requestRender();
+                error = "";
+                cleanup = () => {
+                    resizeObs?.disconnect();
+                    try {
+                        clickHandler?.destroy?.();
+                    } catch {
+                        /* ignore */
+                    }
+                    clickHandler = null;
+                    destroyCesiumViewer(viewer);
+                    viewer = null;
+                };
+            } catch (e) {
+                error =
+                    e instanceof Error ? e.message : "Failed to start map";
+                console.warn("ProjectMap Cesium failed", e);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+            cleanup?.();
+        };
+    });
 </script>
 
 <div class="relative {klass}">
     <div
-        class="rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
+        class="relative rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
     >
         <div bind:this={container} class="w-full h-full min-h-70"></div>
+        <div bind:this={creditSink} class="hidden"></div>
+        {#if !mapReady && !error}
+            <CesiumLoading />
+        {/if}
+        {#if mapReady && !error}
+            <CesiumAttribution />
+        {/if}
+        {#if error}
+            <div
+                class="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground"
+            >
+                {error}
+            </div>
+        {/if}
     </div>
     {#if enableAreaSearch}
         <button

@@ -15,14 +15,8 @@
         layerSelection,
         toSelectionKey,
     } from "$lib/stores/layerSelection.svelte";
-    import { featureEntityId } from "./mapEntityPopup";
+    import type { LayerData } from "./layerTypes";
     import type { ProjectTileset } from "./tilesetTypes";
-
-    type LayerData = {
-        name: string;
-        geojson: GeoJSON.FeatureCollection;
-        visible: boolean;
-    };
 
     type Props = {
         layers?: LayerData[];
@@ -108,8 +102,7 @@
 
     function entitiesForLayer(layer: LayerData): EntityRow[] {
         const out: EntityRow[] = [];
-        for (const f of layer.geojson.features ?? []) {
-            const id = featureEntityId(f);
+        for (const id of layer.entityIds ?? []) {
             if (!id) continue;
             out.push({
                 layerName: layer.name,

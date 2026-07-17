@@ -12,6 +12,19 @@
     import Maximize2Icon from "@lucide/svelte/icons/maximize-2";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import MapIcon from "@lucide/svelte/icons/map";
+    import {
+        cesiumColorFromCss,
+        circlePositions,
+        createCesiumMap,
+        destroyCesiumViewer,
+        haversineMetres,
+        loadCesiumGlobal,
+        pickLatLng,
+        tuneCesiumBasemap,
+        viewRectangle,
+    } from "./cesiumBoot";
+    import CesiumLoading from "./CesiumLoading.svelte";
+    import CesiumAttribution from "./CesiumAttribution.svelte";
 
     type ResultMarker = {
         slug: string;
@@ -44,13 +57,14 @@
     const MIN_RADIUS_M = 200;
 
     let container = $state<HTMLDivElement>();
+    let creditSink = $state<HTMLDivElement>();
     let mounted = $state(false);
-    let mapRef: any = null;
-    let Lref: any = null;
-    let centerMarker: any = null;
-    let radiusCircle: any = null;
-    let bboxRect: any = null;
-    let resultLayer: any = null;
+    let mapReady = $state(false);
+    let viewer: any = null;
+    let Cesium: any = null;
+    let overlayDs: any = null;
+    let resultsDs: any = null;
+    let clickHandler: any = null;
     let pointStep = $state<PointStep>("idle");
     /** Live radius while dragging/moving before second click. */
     let previewRadius = $state<number | null>(null);
@@ -104,137 +118,201 @@
     }
 
     function clearOverlay() {
-        if (!mapRef) return;
-        if (centerMarker) {
-            mapRef.removeLayer(centerMarker);
-            centerMarker = null;
-        }
-        if (radiusCircle) {
-            mapRef.removeLayer(radiusCircle);
-            radiusCircle = null;
-        }
-        if (bboxRect) {
-            mapRef.removeLayer(bboxRect);
-            bboxRect = null;
-        }
+        overlayDs?.entities?.removeAll?.();
     }
 
     function syncSpatialGraphics() {
-        if (!mapRef || !Lref) return;
+        if (!viewer || !Cesium || !overlayDs) return;
         const colors = mapColors();
+        const marker =
+            cesiumColorFromCss(Cesium, colors.marker, "#3b82f6") ??
+            Cesium.Color.DODGERBLUE;
+        const stroke =
+            cesiumColorFromCss(Cesium, colors.stroke, "#1d4ed8") ??
+            Cesium.Color.WHITE;
         clearOverlay();
 
         if (searchBBox) {
-            const bounds = Lref.latLngBounds(
-                [searchBBox.south, searchBBox.west],
-                [searchBBox.north, searchBBox.east],
-            );
-            bboxRect = Lref.rectangle(bounds, {
-                color: colors.stroke,
-                weight: 2,
-                fillColor: colors.marker,
-                fillOpacity: 0.12,
-            }).addTo(mapRef);
+            const west = searchBBox.west;
+            const south = searchBBox.south;
+            const east = searchBBox.east;
+            const north = searchBBox.north;
+            const ring = Cesium.Cartesian3.fromDegreesArray([
+                west,
+                south,
+                east,
+                south,
+                east,
+                north,
+                west,
+                north,
+                west,
+                south,
+            ]);
+            overlayDs.entities.add({
+                polygon: {
+                    hierarchy: ring,
+                    material: marker.withAlpha(0.12),
+                    outline: false,
+                    height: 0,
+                },
+                polyline: {
+                    positions: ring,
+                    width: 2,
+                    material: stroke,
+                    clampToGround: true,
+                },
+            });
+            viewer.scene.requestRender();
             return;
         }
 
-        if (centerLat == null || centerLng == null) return;
+        if (centerLat == null || centerLng == null) {
+            viewer.scene.requestRender();
+            return;
+        }
 
-        centerMarker = Lref.circleMarker([centerLat, centerLng], {
-            radius: 7,
-            fillColor: colors.marker,
-            color: colors.stroke,
-            weight: 2,
-            fillOpacity: 1,
-        }).addTo(mapRef);
+        overlayDs.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(centerLng, centerLat, 0),
+            point: {
+                pixelSize: 12,
+                color: marker,
+                outlineColor: stroke,
+                outlineWidth: 2,
+                heightReference: Cesium.HeightReference.NONE,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+        });
 
         const r =
             pointStep === "radius" && previewRadius != null
                 ? previewRadius
                 : radius;
-        radiusCircle = Lref.circle([centerLat, centerLng], {
-            radius: r,
-            fillColor: colors.marker,
-            color: colors.stroke,
-            weight: 2,
-            fillOpacity: 0.12,
-            dashArray: pointStep === "radius" ? "6 6" : undefined,
-        }).addTo(mapRef);
+        const circle = circlePositions(Cesium, centerLat, centerLng, r);
+        overlayDs.entities.add({
+            polygon: {
+                hierarchy: circle,
+                material: marker.withAlpha(0.12),
+                outline: false,
+                height: 0,
+            },
+            polyline: {
+                positions: circle,
+                width: 2,
+                material: stroke,
+                clampToGround: true,
+            },
+        });
+        viewer.scene.requestRender();
     }
 
     function syncResultMarkers() {
-        if (!mapRef || !Lref) return;
-        if (resultLayer) {
-            mapRef.removeLayer(resultLayer);
-            resultLayer = null;
-        }
+        if (!viewer || !Cesium || !resultsDs) return;
+        resultsDs.entities.removeAll();
         const colors = mapColors();
-        resultLayer = Lref.layerGroup().addTo(mapRef);
+        const marker =
+            cesiumColorFromCss(Cesium, colors.marker, "#3b82f6") ??
+            Cesium.Color.DODGERBLUE;
+        const stroke =
+            cesiumColorFromCss(Cesium, colors.stroke, "#1d4ed8") ??
+            Cesium.Color.WHITE;
 
         for (const r of results) {
             if (!r.bbox) continue;
             const c = bboxCentroid(r.bbox);
             if (!c) continue;
-            const m = Lref.circleMarker([c.lat, c.lng], {
-                radius: 5,
-                fillColor: colors.marker,
-                color: colors.stroke,
-                weight: 1.5,
-                fillOpacity: 0.75,
-            });
-            m.bindPopup(
-                `<div class="text-[13px]">
+            resultsDs.entities.add({
+                id: `result:${r.slug}`,
+                position: Cesium.Cartesian3.fromDegrees(c.lng, c.lat, 0),
+                point: {
+                    pixelSize: 9,
+                    color: marker.withAlpha(0.85),
+                    outlineColor: stroke,
+                    outlineWidth: 1.5,
+                    heightReference: Cesium.HeightReference.NONE,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+                description: `<div class="text-[13px]">
                     <strong>${escapeHTML(r.title)}</strong><br/>
                     <a href="/${r.slug}" class="text-xs">View project →</a>
                 </div>`,
-                { closeButton: false },
-            );
-            m.on("click", () => goto(`/${r.slug}`));
-            resultLayer.addLayer(m);
+                properties: { slug: r.slug },
+            });
         }
+        viewer.scene.requestRender();
     }
 
     function fitToContent() {
-        if (!mapRef || !Lref) return;
+        if (!viewer || !Cesium) return;
         if (searchBBox) {
-            mapRef.fitBounds(
-                [
-                    [searchBBox.south, searchBBox.west],
-                    [searchBBox.north, searchBBox.east],
-                ],
-                { padding: [24, 24], maxZoom: 12 },
+            const rect = Cesium.Rectangle.fromDegrees(
+                searchBBox.west,
+                searchBBox.south,
+                searchBBox.east,
+                searchBBox.north,
             );
+            viewer.camera.setView({ destination: rect });
+            viewer.scene.requestRender();
             return;
         }
-        const bounds = Lref.latLngBounds([]);
+        const positions: any[] = [];
         if (centerLat != null && centerLng != null) {
-            bounds.extend([centerLat, centerLng]);
+            positions.push(
+                Cesium.Cartesian3.fromDegrees(centerLng, centerLat, 0),
+            );
             const deg = radius / 111320;
-            bounds.extend([centerLat + deg, centerLng]);
-            bounds.extend([centerLat - deg, centerLng]);
+            positions.push(
+                Cesium.Cartesian3.fromDegrees(centerLng, centerLat + deg, 0),
+            );
+            positions.push(
+                Cesium.Cartesian3.fromDegrees(centerLng, centerLat - deg, 0),
+            );
         }
         for (const r of results) {
             if (!r.bbox) continue;
             const c = bboxCentroid(r.bbox);
-            if (c) bounds.extend([c.lat, c.lng]);
+            if (c) {
+                positions.push(
+                    Cesium.Cartesian3.fromDegrees(c.lng, c.lat, 0),
+                );
+            }
         }
-        if (bounds.isValid()) {
-            mapRef.fitBounds(bounds, { padding: [36, 36], maxZoom: 12 });
+        if (positions.length === 0) return;
+        if (positions.length === 1) {
+            viewer.camera.setView({
+                destination: Cesium.Cartesian3.fromDegrees(
+                    Cesium.Cartographic.fromCartesian(positions[0]).longitude *
+                        (180 / Math.PI),
+                    Cesium.Cartographic.fromCartesian(positions[0]).latitude *
+                        (180 / Math.PI),
+                    500_000,
+                ),
+            });
+        } else {
+            const bs = Cesium.BoundingSphere.fromPoints(positions);
+            viewer.camera.flyToBoundingSphere(bs, {
+                duration: 0,
+                offset: new Cesium.HeadingPitchRange(
+                    0,
+                    -Cesium.Math.PI_OVER_TWO,
+                    Math.max(bs.radius * 2.5, 50_000),
+                ),
+            });
         }
+        viewer.scene.requestRender();
     }
 
     function useMapArea() {
-        if (!mapRef) return;
+        if (!viewer || !Cesium) return;
         pointStep = "idle";
         previewRadius = null;
-        const bounds = mapRef.getBounds();
-        const sw = bounds.getSouthWest();
-        const ne = bounds.getNorthEast();
+        const rect = viewRectangle(viewer, Cesium);
+        if (!rect) return;
         searchBBox = {
-            west: parseFloat(sw.lng.toFixed(6)),
-            south: parseFloat(sw.lat.toFixed(6)),
-            east: parseFloat(ne.lng.toFixed(6)),
-            north: parseFloat(ne.lat.toFixed(6)),
+            west: parseFloat(rect.west.toFixed(6)),
+            south: parseFloat(rect.south.toFixed(6)),
+            east: parseFloat(rect.east.toFixed(6)),
+            north: parseFloat(rect.north.toFixed(6)),
         };
         centerLat = null;
         centerLng = null;
@@ -250,7 +328,6 @@
         radius = DEFAULT_SEARCH_RADIUS;
         pointStep = "centre";
         syncSpatialGraphics();
-        // Drop bbox from the URL so the page sync effect cannot restore it.
         onChange();
     }
 
@@ -265,28 +342,47 @@
         onChange();
     }
 
-    function handleMapClick(e: any) {
+    function handleMapClick(position: { x: number; y: number }) {
+        if (!viewer || !Cesium) return;
+
+        // Result marker pick takes priority when not drafting.
+        if (pointStep === "idle") {
+            const picked = viewer.scene.pick(position);
+            const entity = picked?.id;
+            const slug =
+                entity?.properties?.slug?.getValue?.() ??
+                entity?.properties?.slug;
+            if (slug) {
+                goto(`/${String(slug)}`);
+                return;
+            }
+        }
+
         if (pointStep === "idle" && mode !== "point") return;
 
-        // Restart placement when already committed, or continue the two-click flow.
         if (pointStep === "idle") {
             pointStep = "centre";
         }
 
+        const ll = pickLatLng(viewer, Cesium, position);
+        if (!ll) return;
+
         if (pointStep === "centre") {
             searchBBox = null;
-            centerLat = parseFloat(e.latlng.lat.toFixed(6));
-            centerLng = parseFloat(e.latlng.lng.toFixed(6));
+            centerLat = parseFloat(ll.lat.toFixed(6));
+            centerLng = parseFloat(ll.lng.toFixed(6));
             previewRadius = DEFAULT_SEARCH_RADIUS;
             pointStep = "radius";
             syncSpatialGraphics();
             return;
         }
 
-        if (pointStep === "radius" && centerLat != null && centerLng != null && mapRef) {
-            const metres = mapRef.distance(
-                [centerLat, centerLng],
-                [e.latlng.lat, e.latlng.lng],
+        if (pointStep === "radius" && centerLat != null && centerLng != null) {
+            const metres = haversineMetres(
+                centerLat,
+                centerLng,
+                ll.lat,
+                ll.lng,
             );
             radius = clampRadius(metres);
             previewRadius = null;
@@ -296,70 +392,107 @@
         }
     }
 
-    function handleMapMove(e: any) {
-        if (pointStep !== "radius" || centerLat == null || centerLng == null || !mapRef)
+    function handleMapMove(position: { x: number; y: number }) {
+        if (
+            pointStep !== "radius" ||
+            centerLat == null ||
+            centerLng == null ||
+            !viewer ||
+            !Cesium
+        )
             return;
-        const metres = mapRef.distance(
-            [centerLat, centerLng],
-            [e.latlng.lat, e.latlng.lng],
-        );
+        const ll = pickLatLng(viewer, Cesium, position);
+        if (!ll) return;
+        const metres = haversineMetres(centerLat, centerLng, ll.lat, ll.lng);
         previewRadius = clampRadius(metres);
         syncSpatialGraphics();
     }
 
     $effect(() => {
-        if (!mounted || !container || !browser) return;
+        if (!mounted || !container || !creditSink || !browser) return;
         let cancelled = false;
         let cleanup: (() => void) | undefined;
+        mapReady = false;
 
-        import("leaflet").then(async ({ default: L }) => {
-            if (cancelled || !container) return;
-            await import("leaflet/dist/leaflet.css");
-            Lref = L;
+        void (async () => {
+            try {
+                Cesium = await loadCesiumGlobal();
+                if (cancelled || !container || !creditSink) return;
 
-            const map = L.map(container, {
-                attributionControl: true,
-                zoomControl: true,
-                scrollWheelZoom: true,
-            }).setView(
-                centerLat != null && centerLng != null
-                    ? [centerLat, centerLng]
-                    : searchBBox
-                      ? [
-                            (searchBBox.south + searchBBox.north) / 2,
-                            (searchBBox.west + searchBBox.east) / 2,
-                        ]
-                      : [20, 0],
-                centerLat != null || searchBBox ? 10 : 2,
-            );
-            mapRef = map;
+                viewer = createCesiumMap(Cesium, container, creditSink);
+                tuneCesiumBasemap(viewer, Cesium, isDark());
 
-            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                maxZoom: 19,
-                attribution:
-                    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-            }).addTo(map);
+                overlayDs = new Cesium.CustomDataSource("spatial-overlay");
+                resultsDs = new Cesium.CustomDataSource("spatial-results");
+                await viewer.dataSources.add(overlayDs);
+                await viewer.dataSources.add(resultsDs);
 
-            if (isDark()) container.classList.add("leaflet-dark");
-            else container.classList.remove("leaflet-dark");
+                if (centerLat != null && centerLng != null) {
+                    await viewer.camera.flyTo({
+                        destination: Cesium.Cartesian3.fromDegrees(
+                            centerLng,
+                            centerLat,
+                            500_000,
+                        ),
+                        duration: 0.6,
+                    });
+                } else if (searchBBox) {
+                    await viewer.camera.flyTo({
+                        destination: Cesium.Rectangle.fromDegrees(
+                            searchBBox.west,
+                            searchBBox.south,
+                            searchBBox.east,
+                            searchBBox.north,
+                        ),
+                        duration: 0.6,
+                    });
+                } else {
+                    await viewer.camera.flyTo({
+                        destination: Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000),
+                        duration: 0.6,
+                    });
+                }
 
-            map.on("click", (e: any) => handleMapClick(e));
-            map.on("mousemove", (e: any) => handleMapMove(e));
+                clickHandler = new Cesium.ScreenSpaceEventHandler(
+                    viewer.scene.canvas,
+                );
+                clickHandler.setInputAction(
+                    (click: { position: { x: number; y: number } }) => {
+                        handleMapClick(click.position);
+                    },
+                    Cesium.ScreenSpaceEventType.LEFT_CLICK,
+                );
+                clickHandler.setInputAction(
+                    (move: { endPosition: { x: number; y: number } }) => {
+                        handleMapMove(move.endPosition);
+                    },
+                    Cesium.ScreenSpaceEventType.MOUSE_MOVE,
+                );
 
-            syncResultMarkers();
-            syncSpatialGraphics();
-            fitToContent();
+                syncResultMarkers();
+                syncSpatialGraphics();
+                fitToContent();
+                if (!cancelled) mapReady = true;
 
-            cleanup = () => {
-                map.remove();
-                mapRef = null;
-                Lref = null;
-                centerMarker = null;
-                radiusCircle = null;
-                bboxRect = null;
-                resultLayer = null;
-            };
-        });
+                cleanup = () => {
+                    try {
+                        clickHandler?.destroy?.();
+                    } catch {
+                        /* ignore */
+                    }
+                    clickHandler = null;
+                    destroyCesiumViewer(viewer);
+                    viewer = null;
+                    overlayDs = null;
+                    resultsDs = null;
+                    Cesium = null;
+                };
+            } catch (e) {
+                console.warn("SpatialMap Cesium failed", e);
+                // Release the loading overlay even on failure.
+                if (!cancelled) mapReady = true;
+            }
+        })();
 
         return () => {
             cancelled = true;
@@ -371,7 +504,10 @@
         results;
         themePrefs.accentHue;
         themePrefs.bgBase;
-        if (mapRef && Lref) syncResultMarkers();
+        if (viewer && Cesium) {
+            tuneCesiumBasemap(viewer, Cesium, isDark());
+            syncResultMarkers();
+        }
     });
 
     $effect(() => {
@@ -383,8 +519,8 @@
         previewRadius;
         themePrefs.accentHue;
         themePrefs.bgBase;
-        if (mapRef && Lref) {
-            container?.classList.toggle("leaflet-dark", isDark());
+        if (viewer && Cesium) {
+            tuneCesiumBasemap(viewer, Cesium, isDark());
             syncSpatialGraphics();
         }
     });
@@ -457,6 +593,13 @@
             : ''}"
     >
         <div bind:this={container} class="w-full h-full"></div>
+        <div bind:this={creditSink} class="hidden"></div>
+        {#if !mapReady}
+            <CesiumLoading />
+        {/if}
+        {#if mapReady}
+            <CesiumAttribution />
+        {/if}
         {#if mode === "none" || drafting}
             <div
                 class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-background/90 to-transparent px-3 pb-3 pt-8"

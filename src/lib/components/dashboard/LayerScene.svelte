@@ -3,8 +3,9 @@
     import { env as publicEnv } from "$env/dynamic/public";
     import { onDestroy, onMount } from "svelte";
     import BoxIcon from "@lucide/svelte/icons/box";
-    import LoaderIcon from "@lucide/svelte/icons/loader";
     import type { ProjectTileset } from "./tilesetTypes";
+    import CesiumLoading from "$lib/components/CesiumLoading.svelte";
+    import CesiumAttribution from "$lib/components/CesiumAttribution.svelte";
     import { isDark, mapColors, mapLayerPalette, themePrefs } from "$lib/stores/theme.svelte";
     import {
         layerSelection,
@@ -13,9 +14,6 @@
         type SelectionOp,
         type SelectionToolMode,
     } from "$lib/stores/layerSelection.svelte";
-    import {
-        featureEntityId,
-    } from "./mapEntityPopup";
     import MapToolsRail from "./MapToolsRail.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
@@ -32,6 +30,12 @@
         pickCandidateLabel,
         type PickCandidate,
     } from "./pickCandidates";
+    import type { LayerData } from "./layerTypes";
+    import {
+        cesiumPropValue,
+        entityIdFromPacketId,
+    } from "./czmlLoad";
+    import { customDataSourceFromCzml } from "./czmlEntities";
     import {
         computeMeasureValue,
         formatMeasureValue,
@@ -43,17 +47,16 @@
         type MeasureVertex,
     } from "$lib/measure";
 
-    type LayerData = {
-        name: string;
-        geojson: GeoJSON.FeatureCollection;
-        visible: boolean;
-    };
-
     type EntityMeta = {
         layerName: string;
         entityId: string;
         kind: "point" | "polyline" | "polygon";
         base: any;
+        basePixelSize: number;
+        baseWidth: number;
+        baseOutlineWidth: number;
+        baseOutline: any;
+        baseAlpha: number;
     };
 
     type Props = {
@@ -64,9 +67,14 @@
         loading?: boolean;
         layers?: LayerData[];
         rows?: Record<string, Record<string, unknown>[]>;
+        /** Scene mode: 2d = SCENE2D, 3d = SCENE3D. Does not reload CZML. */
+        dim?: "2d" | "3d";
         onSelectTileset?: (hash: string) => void;
         fullscreen?: boolean;
         onToggleFullscreen?: () => void;
+        onDimChange?: (dim: "2d" | "3d") => void;
+        /** False when map tab is hidden — resize on show, never destroy. */
+        active?: boolean;
     };
 
     let {
@@ -77,15 +85,20 @@
         loading = false,
         layers = [],
         rows = {},
+        dim = "3d",
         onSelectTileset,
         fullscreen = false,
         onToggleFullscreen,
+        onDimChange,
+        active = true,
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
     let creditSink = $state<HTMLDivElement>();
     let error = $state("");
     let ready = $state(false);
+    /** True when World Terrain was attached (Ion attribution). */
+    let hasIonTerrain = $state(false);
     let modelVis = $state<Record<string, boolean>>({});
     let popupHtml = $state("");
     let popupX = $state(0);
@@ -137,8 +150,10 @@
     let layerLoadGen = 0;
     let modelLoadGen = 0;
     let started = false;
-    /** Frame the project/tileset extent once on boot (like LayerMap.hasFramed). */
-    let hasFramed = false;
+    /** Frame the project/tileset extent once on boot. Reactive — gates loading overlay. */
+    let hasFramed = $state(false);
+    /** True once we framed to entity layers (allows upgrade from tileset/empty home). */
+    let framedEntityHome = false;
     let lastFlownKey = "";
     let filterToView = $state(false);
     let inViewEntityKeys = $state<string[]>([]);
@@ -194,25 +209,30 @@
     }
 
     async function loadCesium() {
-        if ((window as any).Cesium) return (window as any).Cesium;
-        (window as any).CESIUM_BASE_URL = "/cesium/";
-        if (!document.querySelector('link[href="/cesium/Widgets/widgets.css"]')) {
-            const link = document.createElement("link");
-            link.rel = "stylesheet";
-            link.href = "/cesium/Widgets/widgets.css";
-            document.head.appendChild(link);
-        }
-        await new Promise<void>((resolve, reject) => {
-            const s = document.createElement("script");
-            s.src = "/cesium/Cesium.js";
-            s.onload = () => resolve();
-            s.onerror = () => reject(new Error("Failed to load Cesium.js"));
-            document.head.appendChild(s);
-        });
-        return (window as any).Cesium;
+        const { loadCesiumGlobal } = await import("$lib/components/cesiumBoot");
+        return loadCesiumGlobal();
     }
 
-    /** Cesium fromCssColorString misses modern `rgb(r g b)` — parse safely. */
+    /** Attach World Terrain before any entity load (injalak Terrain.svelte order). */
+    async function attachWorldTerrain(token: string) {
+        if (!viewer || !Cesium || !token) return;
+        try {
+            if (typeof Cesium.createWorldTerrainAsync === "function") {
+                viewer.terrainProvider = await Cesium.createWorldTerrainAsync();
+                hasIonTerrain = true;
+                return;
+            }
+            if (typeof Cesium.createWorldTerrain === "function") {
+                viewer.terrainProvider = Cesium.createWorldTerrain();
+                hasIonTerrain = true;
+                return;
+            }
+        } catch (e) {
+            console.warn("[LayerScene] World Terrain failed", e);
+            hasIonTerrain = false;
+        }
+    }
+
     function cesiumColorFromCss(css: string | undefined, fallbackHex = "#3b82f6") {
         const tryOne = (raw: string) => {
             if (!raw || !Cesium) return null;
@@ -241,11 +261,6 @@
             Cesium?.Color?.DODGERBLUE ??
             null
         );
-    }
-
-    function color(css: string, a = 0.75) {
-        const c = cesiumColorFromCss(css, "#3b82f6");
-        return c ? c.withAlpha(a) : Cesium.Color.DODGERBLUE.withAlpha(a);
     }
 
     function destroyTileset(hash: string) {
@@ -344,14 +359,35 @@
 
     async function flyCameraToSphere(sphere: any, duration = 1.0) {
         if (!viewer || !Cesium || !sphere) return;
+        const is3d = viewer.scene.mode === Cesium.SceneMode.SCENE3D;
         await viewer.camera.flyToBoundingSphere(sphere, {
             duration,
             offset: new Cesium.HeadingPitchRange(
                 0,
-                -0.45,
-                Math.max(sphere.radius * 2.5, 40),
+                is3d ? Cesium.Math.toRadians(-45) : Cesium.Math.toRadians(-90),
+                Math.max(sphere.radius * (is3d ? 2.5 : 2.2), is3d ? 40 : 800),
             ),
         });
+    }
+
+    /** After 2D↔3D morph, reset camera frame and reframe to project data. */
+    async function refocusAfterMorph(is3d: boolean) {
+        if (!viewer || !Cesium) return;
+        try {
+            viewer.camera.cancelFlight();
+        } catch {
+            /* ignore */
+        }
+        // Morph from SCENE2D can leave a non-identity transform; 3D flies then miss.
+        try {
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        } catch {
+            /* ignore */
+        }
+        // Let the scene settle one frame after morphComplete.
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        if (!viewer || viewer.isDestroyed?.()) return;
+        await flyHome(is3d ? 0.85 : 0.5);
     }
 
     async function flyToSphere(sphere: any, duration = 1.2) {
@@ -411,7 +447,7 @@
         }
         // Tileset-only projects: fall back to mesh / bbox.
         const hasEntityLayers = layers.some(
-            (l) => (l.geojson?.features?.length ?? 0) > 0,
+            (l) => (l.entityIds?.length ?? 0) > 0,
         );
         if (hasEntityLayers) return null;
         for (const [hash, prim] of tilesetPrims) {
@@ -433,12 +469,12 @@
         return null;
     }
 
-    async function flyHome() {
+    async function flyHome(duration = 1.0) {
         if (!viewer || !Cesium) return;
         const sphere = computeHomeSphere() ?? homeSphere;
         if (sphere) {
             homeSphere = Cesium.BoundingSphere.clone(sphere);
-            await flyCameraToSphere(sphere, 1.0);
+            await flyCameraToSphere(sphere, duration);
             captureHomeView();
             return;
         }
@@ -446,7 +482,7 @@
             viewer.camera.flyTo({
                 destination: homeView.destination,
                 orientation: homeView.orientation,
-                duration: 1.0,
+                duration,
             });
         }
     }
@@ -518,25 +554,33 @@
         return out;
     }
 
-    function findEntityByKey(key: string): any | null {
-        if (!key) return null;
+    function findEntitiesByKey(key: string): any[] {
+        if (!key) return [];
         const { layer, id } = parseSelectionKey(key);
-        if (!id) return null;
+        if (!id) return [];
+        const out: any[] = [];
         for (const [name, ds] of layerSources) {
             if (layer && name !== layer) continue;
             try {
                 for (const entity of ds.entities.values) {
                     const meta = entityMeta.get(entity);
                     if (!meta) continue;
-                    if (meta.entityId === id && (!layer || meta.layerName === layer)) {
-                        return entity;
+                    if (
+                        meta.entityId === id &&
+                        (!layer || meta.layerName === layer)
+                    ) {
+                        out.push(entity);
                     }
                 }
             } catch {
                 /* ignore */
             }
         }
-        return null;
+        return out;
+    }
+
+    function findEntityByKey(key: string): any | null {
+        return findEntitiesByKey(key)[0] ?? null;
     }
 
     async function flyToSelection(force = true) {
@@ -547,13 +591,16 @@
 
         const spheres: any[] = [];
         for (const key of keys) {
-            const entity = findEntityByKey(key);
-            if (!entity) continue;
-            const s = entityBoundingSphere(entity);
-            if (s?.center && s.radius >= 0) {
-                spheres.push(
-                    new Cesium.BoundingSphere(s.center, Math.max(s.radius, 2)),
-                );
+            for (const entity of findEntitiesByKey(key)) {
+                const s = entityBoundingSphere(entity);
+                if (s?.center && s.radius >= 0) {
+                    spheres.push(
+                        new Cesium.BoundingSphere(
+                            s.center,
+                            Math.max(s.radius, 2),
+                        ),
+                    );
+                }
             }
         }
         if (spheres.length === 0) return;
@@ -566,21 +613,13 @@
     }
 
     /**
-     * Initial camera once: entity-layer home (instant). Do not zoom to tilesets
-     * when layers exist — mesh is backdrop. Tileset-only projects still frame mesh.
+     * Initial camera: prefer entity-layer home. Do not lock hasFramed while CZML
+     * is still loading — otherwise syncLayers cannot reframe to the data.
      */
     async function frameScene(attempt = 0) {
-        if (!viewer || !Cesium || hasFramed) return;
-        const m = selected ?? models[0] ?? null;
-        const prim = m ? tilesetPrims.get(m.hash) : undefined;
-        if (prim) {
-            try {
-                await prim.readyPromise;
-            } catch {
-                /* continue */
-            }
-            applyTilesetHeightOffset(prim, m?.height_offset_m);
-        }
+        if (!viewer || !Cesium) return;
+        // Parent still fetching CZML — keep the prepare overlay and retry later.
+        if (loading) return;
 
         const entitySpheres: any[] = [];
         try {
@@ -604,20 +643,28 @@
         }
 
         if (entitySpheres.length > 0) {
+            // Upgrade tileset/empty home once entities are ready.
+            if (hasFramed && framedEntityHome) return;
             const combined =
                 entitySpheres.length === 1
                     ? entitySpheres[0]
                     : Cesium.BoundingSphere.fromBoundingSpheres(entitySpheres);
-            await flyToSphere(combined, 0);
+            await flyToSphere(combined, 1.0);
+            framedEntityHome = true;
             return;
         }
 
+        if (hasFramed) return;
+
         const expectEntities = layers.some(
-            (l) => l.visible && (l.geojson?.features?.length ?? 0) > 0,
+            (l) =>
+                l.visible &&
+                ((l.packets?.length ?? 0) > 0 ||
+                    (l.entityIds?.length ?? 0) > 0),
         );
         // Wait for entity visualizers — never fall through to tileset while layers load.
         if (expectEntities) {
-            if (attempt < 24) {
+            if (attempt < 40) {
                 await new Promise<void>((r) =>
                     requestAnimationFrame(() => r()),
                 );
@@ -629,12 +676,23 @@
             return;
         }
 
+        const m = selected ?? models[0] ?? null;
+        const prim = m ? tilesetPrims.get(m.hash) : undefined;
+        if (prim) {
+            try {
+                await prim.readyPromise;
+            } catch {
+                /* continue */
+            }
+            applyTilesetHeightOffset(prim, m?.height_offset_m);
+        }
+
         // No entity layers: tileset-only home.
         const bbox = m?.bbox_wgs84;
         if (Array.isArray(bbox)) {
             const sphere = sphereFromBboxWgs84(bbox, frameHeightM(prim));
             if (sphere) {
-                await flyToSphere(sphere, 0);
+                await flyToSphere(sphere, 1.0);
                 return;
             }
         }
@@ -642,13 +700,13 @@
         if (prim?.boundingSphere?.radius > 0) {
             await flyToSphere(
                 Cesium.BoundingSphere.clone(prim.boundingSphere),
-                0,
+                1.0,
             );
             return;
         }
 
         if (prim) {
-            await viewer.flyTo(prim, { duration: 0 });
+            await viewer.flyTo(prim, { duration: 1.0 });
             hasFramed = true;
             try {
                 if (prim.boundingSphere?.radius > 0) {
@@ -668,7 +726,10 @@
                 requestAnimationFrame(() => r()),
             );
             await frameScene(attempt + 1);
+            return;
         }
+        // Nothing to frame (empty project) — release the loading overlay.
+        hasFramed = true;
     }
 
     function destroyLayerSource(name: string) {
@@ -1001,7 +1062,7 @@
         ];
         draftVertices = [];
         draftCartesians = [];
-        measureStatus = `${label} saved · ${measureHint(measureMode, "3d")}`;
+        measureStatus = `${label} saved · ${measureHint(measureMode, dim === "2d" ? "2d" : "3d")}`;
     }
 
     async function removeMeasurement(id: string) {
@@ -1050,7 +1111,7 @@
         const n = draftCartesians.length;
         measureStatus =
             n < minVertices(measureMode)
-                ? `${n} point${n === 1 ? "" : "s"} · ${measureHint(measureMode, "3d")}`
+                ? `${n} point${n === 1 ? "" : "s"} · ${measureHint(measureMode, dim === "2d" ? "2d" : "3d")}`
                 : `${formatMeasureValue(
                       measureMode,
                       measureMode === "area"
@@ -1076,7 +1137,7 @@
         }
         measureDataSource = null;
         measureRecords = [];
-        measureStatus = measureHint(measureMode, "3d");
+        measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
     }
 
     function finishDraft3d() {
@@ -1411,27 +1472,6 @@
         return dedupePickCandidates(out);
     }
 
-    function hasNonZeroHeight(coords: GeoJSON.Position[]): boolean {
-        for (const c of coords) {
-            const z = c.length > 2 && typeof c[2] === "number" ? c[2] : 0;
-            // Ignore tiny Z noise — treat as ground-clamped 2D.
-            if (Math.abs(z) > 0.5) return true;
-        }
-        return false;
-    }
-
-    function posDegrees(c: GeoJSON.Position) {
-        const useZ =
-            c.length > 2 &&
-            typeof c[2] === "number" &&
-            Math.abs(c[2] as number) > 0.5;
-        return Cesium.Cartesian3.fromDegrees(
-            c[0],
-            c[1],
-            useZ ? (c[2] as number) : 0,
-        );
-    }
-
     function applyEntitySelectionStyle(
         entity: any,
         kind: "primary" | "secondary" | null,
@@ -1451,40 +1491,69 @@
             : null;
         const selected = kind != null;
         if (meta.kind === "point" && entity.point) {
-            entity.point.pixelSize = kind === "primary" ? 14 : selected ? 11 : 8;
+            entity.point.pixelSize = kind === "primary"
+                ? Math.max(meta.basePixelSize + 6, 14)
+                : selected
+                  ? Math.max(meta.basePixelSize + 3, 11)
+                  : meta.basePixelSize;
             entity.point.color = accent ?? base;
             entity.point.outlineColor = selected
                 ? Cesium.Color.WHITE
-                : Cesium.Color.WHITE.withAlpha(0.85);
-            entity.point.outlineWidth = kind === "primary" ? 3 : selected ? 2 : 1;
+                : (meta.baseOutline ?? Cesium.Color.WHITE.withAlpha(0.85));
+            entity.point.outlineWidth = kind === "primary"
+                ? Math.max(meta.baseOutlineWidth + 2, 3)
+                : selected
+                  ? Math.max(meta.baseOutlineWidth + 1, 2)
+                  : meta.baseOutlineWidth;
         } else if (meta.kind === "polyline" && entity.polyline) {
-            entity.polyline.width = kind === "primary" ? 5 : selected ? 3.5 : 2;
+            entity.polyline.width = kind === "primary"
+                ? Math.max(meta.baseWidth + 3, 5)
+                : selected
+                  ? Math.max(meta.baseWidth + 1.5, 3.5)
+                  : meta.baseWidth;
             entity.polyline.material = accent ?? base;
         } else if (meta.kind === "polygon" && entity.polygon) {
             const fill = accent ?? base;
-            entity.polygon.material = fill.withAlpha(
-                kind === "primary" ? 0.45 : selected ? 0.4 : 0.35,
-            );
-            entity.polygon.outlineColor = selected
-                ? Cesium.Color.WHITE
-                : base;
-            entity.polygon.outlineWidth = kind === "primary" ? 3 : selected ? 2.5 : 2;
+            const a = selected
+                ? kind === "primary"
+                    ? Math.min(meta.baseAlpha + 0.1, 0.55)
+                    : Math.min(meta.baseAlpha + 0.05, 0.5)
+                : meta.baseAlpha;
+            entity.polygon.material =
+                fill && typeof fill.withAlpha === "function"
+                    ? fill.withAlpha(a)
+                    : fill;
+            if (entity.polygon.outlineColor !== undefined) {
+                entity.polygon.outlineColor = selected
+                    ? Cesium.Color.WHITE
+                    : (meta.baseOutline ?? base);
+            }
+            if (entity.polygon.outlineWidth !== undefined) {
+                entity.polygon.outlineWidth = kind === "primary"
+                    ? Math.max(meta.baseOutlineWidth + 1, 3)
+                    : selected
+                      ? Math.max(meta.baseOutlineWidth + 0.5, 2.5)
+                      : meta.baseOutlineWidth;
+            }
         }
     }
 
     function syncAllSelectionStyles() {
         for (const key of styledSelectionKeys) {
-            const entity = findEntityByKey(key);
-            if (entity) applyEntitySelectionStyle(entity, null);
+            for (const entity of findEntitiesByKey(key)) {
+                applyEntitySelectionStyle(entity, null);
+            }
         }
         styledSelectionKeys = new Set();
 
         const primary = layerSelection.primaryKey;
         for (const key of layerSelection.selected) {
-            const entity = findEntityByKey(key);
-            if (!entity) continue;
+            const entities = findEntitiesByKey(key);
+            if (entities.length === 0) continue;
             const kind = key === primary ? "primary" : "secondary";
-            applyEntitySelectionStyle(entity, kind);
+            for (const entity of entities) {
+                applyEntitySelectionStyle(entity, kind);
+            }
             styledSelectionKeys.add(key);
         }
 
@@ -1511,9 +1580,29 @@
         entityId: string,
         kind: EntityMeta["kind"],
         base: any,
+        extras: Partial<
+            Pick<
+                EntityMeta,
+                | "basePixelSize"
+                | "baseWidth"
+                | "baseOutlineWidth"
+                | "baseOutline"
+                | "baseAlpha"
+            >
+        > = {},
     ) {
         if (!entityId) return;
-        entityMeta.set(entity, { layerName, entityId, kind, base });
+        entityMeta.set(entity, {
+            layerName,
+            entityId,
+            kind,
+            base,
+            basePixelSize: extras.basePixelSize ?? 8,
+            baseWidth: extras.baseWidth ?? 2,
+            baseOutlineWidth: extras.baseOutlineWidth ?? 1,
+            baseOutline: extras.baseOutline ?? null,
+            baseAlpha: extras.baseAlpha ?? 0.35,
+        });
         entity.name = toSelectionKey(layerName, entityId);
         if (layerSelection.isHidden(layerName, entityId)) {
             try {
@@ -1524,118 +1613,113 @@
         }
     }
 
-    /** Lamina-style entities (czml.ts): Point + heightReference, clamped lines/polys. */
-    function addFeatureEntities(
-        ds: any,
-        feature: GeoJSON.Feature,
-        layerName: string,
-        stroke: any,
-        fill: any,
-    ) {
-        const g = feature.geometry;
-        if (!g) return;
-        const entityId = featureEntityId(feature);
-
-        const addPoint = (coordinates: GeoJSON.Position) => {
-            const useHeights = hasNonZeroHeight([coordinates]);
-            const entity = ds.entities.add({
-                position: posDegrees(coordinates),
-                point: {
-                    pixelSize: 8,
-                    color: stroke,
-                    outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
-                    outlineWidth: 1,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                    ...(useHeights
-                        ? {}
-                        : {
-                              heightReference:
-                                  Cesium.HeightReference.CLAMP_TO_GROUND,
-                          }),
-                },
-            });
-            trackEntity(entity, layerName, entityId, "point", stroke);
-        };
-
-        const addLine = (coordinates: GeoJSON.Position[]) => {
-            const useHeights = hasNonZeroHeight(coordinates);
-            const entity = ds.entities.add({
-                polyline: {
-                    positions: coordinates.map(posDegrees),
-                    width: 2,
-                    material: stroke,
-                    ...(useHeights ? {} : { clampToGround: true }),
-                },
-            });
-            trackEntity(entity, layerName, entityId, "polyline", stroke);
-        };
-
-        const addPolygon = (rings: GeoJSON.Position[][]) => {
-            const exterior = rings[0] ?? [];
-            if (exterior.length < 3) return;
-            const useHeights = hasNonZeroHeight(exterior);
-            const hierarchy = new Cesium.PolygonHierarchy(
-                exterior.map(posDegrees),
-                rings.slice(1).map(
-                    (hole) =>
-                        new Cesium.PolygonHierarchy(hole.map(posDegrees)),
-                ),
-            );
-            const entity = ds.entities.add({
-                polygon: {
-                    hierarchy,
-                    material: fill,
-                    outline: useHeights,
-                    outlineColor: stroke,
-                    outlineWidth: 2,
-                    ...(useHeights
-                        ? { perPositionHeight: true }
-                        : {
-                              // Drape on terrain + photogrammetry mesh
-                              classificationType:
-                                  Cesium.ClassificationType.BOTH,
-                          }),
-                },
-            });
-            trackEntity(entity, layerName, entityId, "polygon", stroke);
-            // Classification polygons often hide outlines — add a ground clamp edge.
-            if (!useHeights) {
-                const ring = [...exterior.map(posDegrees)];
-                const first = exterior[0]!;
-                const last = exterior[exterior.length - 1]!;
-                if (first[0] !== last[0] || first[1] !== last[1]) {
-                    ring.push(posDegrees(first));
+    function resolveEntityIdFromCzml(entity: any, layerName: string): string {
+        const time = Cesium?.JulianDate?.now?.() ?? undefined;
+        const props = entity.properties;
+        if (props) {
+            for (const key of ["source_id", "id", "fid", "entity_id"]) {
+                try {
+                    const p = props[key] ?? props.get?.(key);
+                    const v = cesiumPropValue(p, time);
+                    if (v != null && String(v).trim() !== "") return String(v);
+                } catch {
+                    /* ignore */
                 }
-                ds.entities.add({
-                    polyline: {
-                        positions: ring,
-                        width: 2,
-                        material: stroke,
-                        clampToGround: true,
-                    },
-                });
             }
-        };
+        }
+        const packetId = String(entity.id ?? "");
+        if (!packetId || packetId === "document") return "";
+        return entityIdFromPacketId(packetId, layerName);
+    }
 
-        switch (g.type) {
-            case "Point":
-                addPoint(g.coordinates);
-                break;
-            case "MultiPoint":
-                for (const c of g.coordinates) addPoint(c);
-                break;
-            case "LineString":
-                addLine(g.coordinates);
-                break;
-            case "MultiLineString":
-                for (const line of g.coordinates) addLine(line);
-                break;
-            case "Polygon":
-                addPolygon(g.coordinates);
-                break;
-            case "MultiPolygon":
-                for (const poly of g.coordinates) addPolygon(poly);
-                break;
+    function snapshotEntityStyle(
+        entity: any,
+        kind: EntityMeta["kind"],
+    ): {
+        base: any;
+        basePixelSize: number;
+        baseWidth: number;
+        baseOutlineWidth: number;
+        baseOutline: any;
+        baseAlpha: number;
+    } {
+        const time = Cesium.JulianDate.now();
+        const fallback = Cesium.Color.DODGERBLUE;
+        if (kind === "point" && entity.point) {
+            const color =
+                cesiumPropValue(entity.point.color, time) ?? fallback;
+            const pixelSize =
+                Number(cesiumPropValue(entity.point.pixelSize, time)) || 8;
+            const outlineWidth =
+                Number(cesiumPropValue(entity.point.outlineWidth, time)) || 1;
+            const outline =
+                cesiumPropValue(entity.point.outlineColor, time) ??
+                Cesium.Color.WHITE.withAlpha(0.85);
+            return {
+                base: color,
+                basePixelSize: pixelSize,
+                baseWidth: 2,
+                baseOutlineWidth: outlineWidth,
+                baseOutline: outline,
+                baseAlpha: 1,
+            };
+        }
+        if (kind === "polyline" && entity.polyline) {
+            const mat = cesiumPropValue(entity.polyline.material, time) as any;
+            let color = fallback;
+            if (mat?.color) {
+                color = cesiumPropValue(mat.color, time) ?? mat.color ?? fallback;
+            } else if (mat && typeof mat.red === "number") {
+                color = mat;
+            }
+            const width =
+                Number(cesiumPropValue(entity.polyline.width, time)) || 2;
+            return {
+                base: color,
+                basePixelSize: 8,
+                baseWidth: width,
+                baseOutlineWidth: 1,
+                baseOutline: null,
+                baseAlpha: 1,
+            };
+        }
+        // polygon
+        const mat = cesiumPropValue(entity.polygon?.material, time) as any;
+        let color = fallback;
+        let alpha = 0.35;
+        if (mat?.color) {
+            color = cesiumPropValue(mat.color, time) ?? mat.color ?? fallback;
+        } else if (mat && typeof mat.red === "number") {
+            color = mat;
+        }
+        if (color && typeof color.alpha === "number") alpha = color.alpha;
+        const outline =
+            cesiumPropValue(entity.polygon?.outlineColor, time) ?? color;
+        const outlineWidth =
+            Number(cesiumPropValue(entity.polygon?.outlineWidth, time)) || 2;
+        return {
+            base: color,
+            basePixelSize: 8,
+            baseWidth: 2,
+            baseOutlineWidth: outlineWidth,
+            baseOutline: outline,
+            baseAlpha: alpha,
+        };
+    }
+
+    function indexCzmlEntities(ds: any, layerName: string) {
+        for (const entity of ds.entities.values) {
+            const packetId = String(entity.id ?? "");
+            if (!packetId || packetId === "document") continue;
+            let kind: EntityMeta["kind"] | null = null;
+            if (entity.point) kind = "point";
+            else if (entity.polyline) kind = "polyline";
+            else if (entity.polygon) kind = "polygon";
+            if (!kind) continue;
+            const entityId = resolveEntityIdFromCzml(entity, layerName);
+            if (!entityId) continue;
+            const style = snapshotEntityStyle(entity, kind);
+            trackEntity(entity, layerName, entityId, kind, style.base, style);
         }
     }
 
@@ -1649,12 +1733,16 @@
     }
 
     function basemapTemplateUrl(): string {
-        // Classic OSM (same as Leaflet) — parks, forest, grass stay visible.
-        return "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+        // CARTO Voyager — stable single basemap (no provider swap on theme).
+        return "https://basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png";
     }
 
-    function tuneBasemapLayer(layer: { brightness: number; saturation: number; contrast: number; gamma: number }, dark: boolean) {
-        // Soft dim in dark mode — keep land-cover greens readable (no Carto dark_all).
+    function tuneBasemapLayer(layer: { brightness: number; saturation: number; contrast: number; gamma: number; minificationFilter?: unknown; magnificationFilter?: unknown }, dark: boolean) {
+        // LINEAR (no mipmaps) avoids WebGL generateMipmap lazy-init jank on zoom.
+        if (Cesium?.TextureMinificationFilter) {
+            layer.minificationFilter = Cesium.TextureMinificationFilter.LINEAR;
+            layer.magnificationFilter = Cesium.TextureMagnificationFilter.LINEAR;
+        }
         if (dark) {
             layer.brightness = 0.84;
             layer.saturation = 0.92;
@@ -1671,6 +1759,9 @@
     function applyBasemapTheme() {
         if (!viewer || !Cesium) return;
         const dark = isDark();
+        const is3d =
+            appliedDim === "3d" ||
+            viewer.scene.mode === Cesium.SceneMode.SCENE3D;
         const colors = mapColors();
         const bg =
             cesiumColorFromCss(colors.card, dark ? "#1a1a1a" : "#f5f5f5") ??
@@ -1678,11 +1769,14 @@
         viewer.scene.backgroundColor = bg;
         viewer.scene.globe.baseColor = bg;
         if (viewer.scene.skyAtmosphere) {
-            viewer.scene.skyAtmosphere.show = !dark;
+            viewer.scene.skyAtmosphere.show = is3d && !dark;
         }
-        if (viewer.scene.sun) viewer.scene.sun.show = !dark;
-        if (viewer.scene.moon) viewer.scene.moon.show = !dark;
-        if (viewer.scene.skyBox) viewer.scene.skyBox.show = !dark;
+        if (viewer.scene.sun) viewer.scene.sun.show = is3d && !dark;
+        if (viewer.scene.moon) viewer.scene.moon.show = is3d && !dark;
+        if (viewer.scene.skyBox) viewer.scene.skyBox.show = is3d && !dark;
+        if (viewer.scene.globe) {
+            viewer.scene.globe.showGroundAtmosphere = is3d;
+        }
 
         const url = basemapTemplateUrl();
         const layers = viewer.imageryLayers;
@@ -1705,6 +1799,108 @@
         tuneBasemapLayer(layer, dark);
     }
 
+    let morphRemover: (() => void) | null = null;
+    /** Bumped on each applySceneMode so stale morphComplete handlers no-op. */
+    let sceneMorphGen = 0;
+    /** Last dim applied — skip redundant morph. */
+    let appliedDim: "2d" | "3d" | null = null;
+
+    function finishSceneMode(is3d: boolean, opts: { refocus?: boolean } = {}) {
+        if (!viewer || !Cesium) return;
+        const ctrl = viewer.scene.screenSpaceCameraController;
+        ctrl.enableTilt = is3d;
+        ctrl.enableLook = is3d;
+        ctrl.enableRotate = is3d;
+        ctrl.enableTranslate = true;
+        ctrl.enableZoom = true;
+        ctrl.minimumZoomDistance = is3d ? 0.5 : 50;
+        ctrl.maximumZoomDistance = 40_000_000;
+
+        if (viewer.scene.skyAtmosphere) {
+            viewer.scene.skyAtmosphere.show = is3d && !isDark();
+        }
+        if (viewer.scene.sun) viewer.scene.sun.show = is3d && !isDark();
+        if (viewer.scene.moon) viewer.scene.moon.show = is3d && !isDark();
+        if (viewer.scene.skyBox) viewer.scene.skyBox.show = is3d && !isDark();
+        if (viewer.scene.globe) {
+            viewer.scene.globe.showGroundAtmosphere = is3d;
+        }
+
+        // Hide 3D tilesets in 2D — vectors keep baked absolute heights (NONE).
+        for (const [hash, prim] of tilesetPrims) {
+            try {
+                prim.show = is3d && isModelVisible(hash);
+            } catch {
+                /* ignore */
+            }
+        }
+
+        applyBasemapTheme();
+        try {
+            viewer.resize();
+            viewer.scene.requestRender();
+        } catch {
+            /* ignore */
+        }
+
+        // Morph drops / skews the camera — reframe after the scene settles.
+        if (opts.refocus) void refocusAfterMorph(is3d);
+    }
+
+    function applySceneMode(d: "2d" | "3d") {
+        if (!viewer || !Cesium) return;
+        const target =
+            d === "3d" ? Cesium.SceneMode.SCENE3D : Cesium.SceneMode.SCENE2D;
+        if (appliedDim === d && viewer.scene.mode === target) return;
+        appliedDim = d;
+        const is3d = d === "3d";
+
+        if (morphRemover) {
+            try {
+                morphRemover();
+            } catch {
+                /* ignore */
+            }
+            morphRemover = null;
+            // Dropped an in-flight morphComplete — sync tileset/sky to the
+            // new destination now so rapid toggles don't leave 3D chrome in 2D.
+            finishSceneMode(is3d, { refocus: false });
+        }
+
+        try {
+            viewer.camera.cancelFlight();
+        } catch {
+            /* ignore */
+        }
+
+        if (viewer.scene.mode === target) {
+            finishSceneMode(is3d, { refocus: true });
+            return;
+        }
+
+        const morphGen = ++sceneMorphGen;
+        morphRemover = viewer.scene.morphComplete.addEventListener(() => {
+            if (morphGen !== sceneMorphGen) return;
+            if (morphRemover) {
+                try {
+                    morphRemover();
+                } catch {
+                    /* ignore */
+                }
+                morphRemover = null;
+            }
+            finishSceneMode(is3d, { refocus: true });
+        });
+
+        try {
+            if (is3d) viewer.scene.morphTo3D(0.45);
+            else viewer.scene.morphTo2D(0.45);
+        } catch {
+            viewer.scene.mode = target;
+            finishSceneMode(is3d, { refocus: true });
+        }
+    }
+
     async function boot() {
         if (!browser || !el || !creditSink) return;
         Cesium = await loadCesium();
@@ -1712,6 +1908,9 @@
         const token = publicEnv.PUBLIC_CESIUM_ION_ACCESS_TOKEN ?? "";
         if (token) Cesium.Ion.defaultAccessToken = token;
 
+        // Viewer first on ellipsoid — same as injalak. Do NOT pass
+        // Terrain.fromWorldTerrain() here: that helper swaps the provider
+        // asynchronously after ready, so early height samples land at Z≈0.
         viewer = new Cesium.Viewer(el, {
             animation: false,
             timeline: false,
@@ -1731,16 +1930,22 @@
                     credit: "",
                 }),
             ),
-            ...(token && Cesium.Terrain?.fromWorldTerrain
-                ? { terrain: Cesium.Terrain.fromWorldTerrain() }
-                : {}),
         });
+        try {
+            viewer.resize();
+        } catch {
+            /* ignore */
+        }
         applyBasemapTheme();
         viewer.scene.globe.depthTestAgainstTerrain = false;
-        // Allow getting close to photogrammetry / context polygons.
-        viewer.scene.screenSpaceCameraController.minimumZoomDistance = 0.5;
-        viewer.scene.screenSpaceCameraController.maximumZoomDistance =
-            40_000_000;
+
+        // Terrain must be live before syncLayers / sampleTerrainMostDetailed.
+        await attachWorldTerrain(token);
+        // Start in requested dim without morph flash on first paint.
+        appliedDim = dim;
+        viewer.scene.mode =
+            dim === "3d" ? Cesium.SceneMode.SCENE3D : Cesium.SceneMode.SCENE2D;
+        finishSceneMode(dim === "3d");
 
         clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         viewer.scene.canvas.addEventListener("pointerdown", (ev: PointerEvent) => {
@@ -1812,14 +2017,8 @@
         });
 
         ready = true;
-        await syncModels(false);
-        await syncLayers();
         started = true;
-        await frameScene();
-        syncAllSelectionStyles();
-        if (layerSelection.size > 0) {
-            void flyToSelection(false);
-        }
+        // Effects load layers/models once — do not sync here (avoids empty→full remount).
     }
 
     async function syncModels(fly = false) {
@@ -1833,16 +2032,17 @@
             if (!readyHashes.has(hash)) destroyTileset(hash);
         }
 
-        // enableCollision: required for CLAMP_TO_GROUND against 3D Tiles.
         // Toggle with .show — never destroy on hide.
         for (const m of models) {
             const want = isModelVisible(m.hash);
             const existing = tilesetPrims.get(m.hash);
             if (existing) {
-                existing.show = want;
+                existing.show = dim === "3d" && want;
                 applyTilesetHeightOffset(existing, m.height_offset_m);
                 continue;
             }
+            // Always load while wanted — hide via .show in 2D so a later
+            // morph to 3D does not miss tilesets that arrived mid-2D.
             if (!want || !m.root_url) continue;
             try {
                 const resource = new Cesium.Resource({
@@ -1853,15 +2053,14 @@
                         : {},
                 });
                 const prim = await Cesium.Cesium3DTileset.fromUrl(resource, {
-                    enableCollision: true,
-                    // Sharper mesh when zoomed in on trench-scale models.
+                    enableCollision: false,
                     maximumScreenSpaceError: 4,
                 });
                 if (gen !== modelLoadGen || !readyHashes.has(m.hash)) {
                     if (!prim.isDestroyed?.()) prim.destroy();
                     continue;
                 }
-                prim.show = isModelVisible(m.hash);
+                prim.show = dim === "3d" && isModelVisible(m.hash);
                 viewer.scene.primitives.add(prim);
                 tilesetPrims.set(m.hash, prim);
                 applyTilesetHeightOffset(prim, m.height_offset_m);
@@ -1881,7 +2080,7 @@
 
         if (gen !== modelLoadGen) return;
 
-        if (fly) await frameScene();
+        if (fly || !hasFramed) await frameScene();
     }
 
     function toggleModel(hash: string) {
@@ -1889,7 +2088,7 @@
         modelVis = { ...modelVis, [hash]: next };
         const prim = tilesetPrims.get(hash);
         if (prim) {
-            prim.show = next;
+            prim.show = next && dim === "3d";
             if (next) onSelectTileset?.(hash);
             return;
         }
@@ -1912,29 +2111,25 @@
             if (gen !== layerLoadGen) return;
             const layer = layers[i]!;
             let ds = layerSources.get(layer.name);
-            const featureCount = layer.geojson?.features?.length ?? 0;
+            const packetCount = layer.packets?.length ?? 0;
             const needsLoad =
                 !ds ||
-                (ds.__featureCount !== undefined &&
-                    ds.__featureCount !== featureCount);
+                (ds.__packetCount !== undefined &&
+                    ds.__packetCount !== packetCount);
 
-            if (needsLoad && featureCount > 0) {
+            if (needsLoad && packetCount > 0) {
                 if (ds) destroyLayerSource(layer.name);
-                const c = color(palette[i % palette.length]!);
                 try {
-                    ds = new Cesium.CustomDataSource(layer.name);
-                    for (const feature of layer.geojson.features) {
-                        addFeatureEntities(
-                            ds,
-                            feature,
-                            layer.name,
-                            c,
-                            c.withAlpha(0.35),
-                        );
-                    }
+                    ds = await customDataSourceFromCzml(
+                        Cesium,
+                        viewer,
+                        layer.packets,
+                        layer.name,
+                    );
                     if (gen !== layerLoadGen) return;
-                    ds.__featureCount = featureCount;
+                    ds.__packetCount = packetCount;
                     ds.show = layer.visible;
+                    indexCzmlEntities(ds, layer.name);
                     await viewer.dataSources.add(ds);
                     layerSources.set(layer.name, ds);
                 } catch (e) {
@@ -1945,10 +2140,13 @@
             }
         }
 
-        if (started) {
-            if (!hasFramed) void frameScene();
-            applyHiddenVisibility();
-            syncAllSelectionStyles();
+        if (gen !== layerLoadGen) return;
+
+        if (!hasFramed) await frameScene();
+        applyHiddenVisibility();
+        syncAllSelectionStyles();
+        if (layerSelection.size > 0) {
+            void flyToSelection(false);
         }
     }
 
@@ -1965,6 +2163,8 @@
         if (!browser) return;
         void boot().catch((e) => {
             error = e instanceof Error ? e.message : "Failed to start 3D";
+            // Release the preparing overlay so the error banner is visible.
+            hasFramed = true;
         });
     });
 
@@ -1973,9 +2173,8 @@
     );
     let layerContentKey = $derived(
         layers
-            .map((l) => `${l.name}:${l.geojson?.features?.length ?? 0}`)
-            .join("|") +
-            `|hue:${themePrefs.accentHue}`,
+            .map((l) => `${l.name}:${l.packets?.length ?? 0}`)
+            .join("|"),
     );
 
     $effect(() => {
@@ -1988,6 +2187,29 @@
         layerContentKey;
         if (!ready || !started) return;
         void syncLayers();
+    });
+
+    // CZML fetch finished — frame now if we skipped while loading=true.
+    $effect(() => {
+        if (!ready || !started || loading) return;
+        if (!hasFramed || !framedEntityHome) void frameScene();
+    });
+
+    $effect(() => {
+        const d = dim;
+        if (!ready || !viewer) return;
+        if (appliedDim === d) return;
+        applySceneMode(d);
+    });
+
+    $effect(() => {
+        if (!ready || !viewer || !active) return;
+        try {
+            viewer.resize();
+            viewer.scene.requestRender();
+        } catch {
+            /* ignore */
+        }
     });
 
     $effect(() => {
@@ -2029,7 +2251,15 @@
             clearTimeout(inViewThrottle);
             inViewThrottle = null;
         }
-        // Do not clear shared layerSelection — table / 2D may still use it.
+        if (morphRemover) {
+            try {
+                morphRemover();
+            } catch {
+                /* ignore */
+            }
+            morphRemover = null;
+        }
+        // Do not clear shared layerSelection — table view may still use it.
         clearSelectionUi();
         styledSelectionKeys = new Set();
         postRenderRemover?.();
@@ -2070,7 +2300,7 @@
         if (action.type === "escape") {
             if (measureEnabled) {
                 clearDraftMeasure();
-                measureStatus = measureHint(measureMode, "3d");
+                measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
                 return;
             }
             if (ctxOpen) return;
@@ -2357,7 +2587,7 @@
     $effect(() => {
         if (!ready || !viewer) return;
         if (measureEnabled) {
-            measureStatus = measureHint(measureMode, "3d");
+            measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
             if (measureClickTimer) {
                 clearTimeout(measureClickTimer);
                 measureClickTimer = null;
@@ -2387,11 +2617,11 @@
             measureClickTimer = null;
         }
         clearDraftMeasure();
-        measureStatus = measureHint(measureMode, "3d");
+        measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
     });
 </script>
 
-<div class="relative flex h-full min-h-0 flex-col">
+<div class="relative h-full w-full min-h-0 overflow-hidden">
     <div class="absolute top-2 left-2 z-20">
         <MapToolsRail
             bind:enabled={measureEnabled}
@@ -2400,12 +2630,13 @@
             status={measureStatus}
             records={measureRecords}
             {canFinish}
-            dim="3d"
+            {dim}
             {fullscreen}
             {selectionCount}
             {isolating}
             onZoomIn={zoomIn3d}
             onZoomOut={zoomOut3d}
+            onSetDim={onDimChange}
             onToggleFullscreen={onToggleFullscreen}
             onFlyToSelection={() => flyToSelection(true)}
             onFlyHome={() => {
@@ -2510,18 +2741,11 @@
         </button>
     {/if}
 
-    {#if loading || !ready}
-        <div
-            class="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-md border border-border bg-background/95 px-2 py-1.5 text-xs shadow-sm backdrop-blur-sm"
-        >
-            <LoaderIcon class="size-3.5 animate-spin text-muted-foreground" />
-            <span class="text-muted-foreground"
-                >{loading ? "Loading…" : "Starting 3D…"}</span
-            >
-        </div>
+    {#if !hasFramed && !error}
+        <CesiumLoading />
     {/if}
 
-    {#if ready && !loading && (models.length > 0 || layers.length > 0)}
+    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0)}
         <div class="absolute top-2 right-2 z-10">
             <SceneGraphPanel
                 {layers}
@@ -2617,34 +2841,11 @@
 
     <div
         bind:this={el}
-        class="cesium-scene min-h-0 flex-1 w-full bg-neutral-900"
+        class="cesium-scene absolute inset-0 bg-neutral-900"
     ></div>
     <div bind:this={creditSink} class="sr-only" aria-hidden="true"></div>
 
-    <div
-        class="absolute bottom-2 right-2 z-20 flex items-center gap-1.5 rounded bg-background/90 px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-sm ring-1 ring-border/60 backdrop-blur-sm"
-    >
-        <a
-            class="hover:text-foreground hover:underline"
-            href="https://www.openstreetmap.org/copyright"
-            target="_blank"
-            rel="noopener noreferrer">© OpenStreetMap</a
-        >
-        <span class="opacity-40">·</span>
-        <a
-            class="inline-flex items-center gap-1 hover:text-foreground hover:underline"
-            href="https://cesium.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-        >
-            <img
-                src="/cesium/Assets/Images/cesium_credit.png"
-                alt=""
-                class="h-3.5 w-auto"
-            />
-            Cesium
-        </a>
-    </div>
+    <CesiumAttribution ion={hasIonTerrain} />
 </div>
 
 <style>
