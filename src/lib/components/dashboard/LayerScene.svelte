@@ -362,10 +362,30 @@
             duration,
             offset: new Cesium.HeadingPitchRange(
                 0,
-                is3d ? -0.45 : Cesium.Math.toRadians(-90),
+                is3d ? Cesium.Math.toRadians(-45) : Cesium.Math.toRadians(-90),
                 Math.max(sphere.radius * (is3d ? 2.5 : 2.2), is3d ? 40 : 800),
             ),
         });
+    }
+
+    /** After 2D↔3D morph, reset camera frame and reframe to project data. */
+    async function refocusAfterMorph(is3d: boolean) {
+        if (!viewer || !Cesium) return;
+        try {
+            viewer.camera.cancelFlight();
+        } catch {
+            /* ignore */
+        }
+        // Morph from SCENE2D can leave a non-identity transform; 3D flies then miss.
+        try {
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        } catch {
+            /* ignore */
+        }
+        // Let the scene settle one frame after morphComplete.
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        if (!viewer || viewer.isDestroyed?.()) return;
+        await flyHome(is3d ? 0.85 : 0.5);
     }
 
     async function flyToSphere(sphere: any, duration = 1.2) {
@@ -1799,8 +1819,8 @@
             /* ignore */
         }
 
-        // Morph drops the camera — reframe to project data.
-        if (opts.refocus) void flyHome(0.7);
+        // Morph drops / skews the camera — reframe after the scene settles.
+        if (opts.refocus) void refocusAfterMorph(is3d);
     }
 
     function applySceneMode(d: "2d" | "3d") {
@@ -1818,6 +1838,12 @@
                 /* ignore */
             }
             morphRemover = null;
+        }
+
+        try {
+            viewer.camera.cancelFlight();
+        } catch {
+            /* ignore */
         }
 
         if (viewer.scene.mode === target) {
@@ -1838,8 +1864,8 @@
         });
 
         try {
-            if (is3d) viewer.scene.morphTo3D(0.4);
-            else viewer.scene.morphTo2D(0.4);
+            if (is3d) viewer.scene.morphTo3D(0.45);
+            else viewer.scene.morphTo2D(0.45);
         } catch {
             viewer.scene.mode = target;
             finishSceneMode(is3d, { refocus: true });
