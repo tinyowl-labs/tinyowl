@@ -152,6 +152,8 @@
     let started = false;
     /** Frame the project/tileset extent once on boot. Reactive — gates loading overlay. */
     let hasFramed = $state(false);
+    /** True once we framed to entity layers (allows upgrade from tileset/empty home). */
+    let framedEntityHome = false;
     let lastFlownKey = "";
     let filterToView = $state(false);
     let inViewEntityKeys = $state<string[]>([]);
@@ -589,13 +591,16 @@
 
         const spheres: any[] = [];
         for (const key of keys) {
-            const entity = findEntityByKey(key);
-            if (!entity) continue;
-            const s = entityBoundingSphere(entity);
-            if (s?.center && s.radius >= 0) {
-                spheres.push(
-                    new Cesium.BoundingSphere(s.center, Math.max(s.radius, 2)),
-                );
+            for (const entity of findEntitiesByKey(key)) {
+                const s = entityBoundingSphere(entity);
+                if (s?.center && s.radius >= 0) {
+                    spheres.push(
+                        new Cesium.BoundingSphere(
+                            s.center,
+                            Math.max(s.radius, 2),
+                        ),
+                    );
+                }
             }
         }
         if (spheres.length === 0) return;
@@ -608,21 +613,13 @@
     }
 
     /**
-     * Initial camera once: entity-layer home (instant). Do not zoom to tilesets
-     * when layers exist — mesh is backdrop. Tileset-only projects still frame mesh.
+     * Initial camera: prefer entity-layer home. Do not lock hasFramed while CZML
+     * is still loading — otherwise syncLayers cannot reframe to the data.
      */
     async function frameScene(attempt = 0) {
-        if (!viewer || !Cesium || hasFramed) return;
-        const m = selected ?? models[0] ?? null;
-        const prim = m ? tilesetPrims.get(m.hash) : undefined;
-        if (prim) {
-            try {
-                await prim.readyPromise;
-            } catch {
-                /* continue */
-            }
-            applyTilesetHeightOffset(prim, m?.height_offset_m);
-        }
+        if (!viewer || !Cesium) return;
+        // Parent still fetching CZML — keep the prepare overlay and retry later.
+        if (loading) return;
 
         const entitySpheres: any[] = [];
         try {
@@ -646,20 +643,28 @@
         }
 
         if (entitySpheres.length > 0) {
+            // Upgrade tileset/empty home once entities are ready.
+            if (hasFramed && framedEntityHome) return;
             const combined =
                 entitySpheres.length === 1
                     ? entitySpheres[0]
                     : Cesium.BoundingSphere.fromBoundingSpheres(entitySpheres);
             await flyToSphere(combined, 1.0);
+            framedEntityHome = true;
             return;
         }
 
+        if (hasFramed) return;
+
         const expectEntities = layers.some(
-            (l) => l.visible && (l.entityIds?.length ?? 0) > 0,
+            (l) =>
+                l.visible &&
+                ((l.packets?.length ?? 0) > 0 ||
+                    (l.entityIds?.length ?? 0) > 0),
         );
         // Wait for entity visualizers — never fall through to tileset while layers load.
         if (expectEntities) {
-            if (attempt < 24) {
+            if (attempt < 40) {
                 await new Promise<void>((r) =>
                     requestAnimationFrame(() => r()),
                 );
@@ -669,6 +674,17 @@
             // Layers exist but spheres never became ready — don't zoom to mesh.
             hasFramed = true;
             return;
+        }
+
+        const m = selected ?? models[0] ?? null;
+        const prim = m ? tilesetPrims.get(m.hash) : undefined;
+        if (prim) {
+            try {
+                await prim.readyPromise;
+            } catch {
+                /* continue */
+            }
+            applyTilesetHeightOffset(prim, m?.height_offset_m);
         }
 
         // No entity layers: tileset-only home.
@@ -1743,6 +1759,9 @@
     function applyBasemapTheme() {
         if (!viewer || !Cesium) return;
         const dark = isDark();
+        const is3d =
+            appliedDim === "3d" ||
+            viewer.scene.mode === Cesium.SceneMode.SCENE3D;
         const colors = mapColors();
         const bg =
             cesiumColorFromCss(colors.card, dark ? "#1a1a1a" : "#f5f5f5") ??
@@ -1750,11 +1769,14 @@
         viewer.scene.backgroundColor = bg;
         viewer.scene.globe.baseColor = bg;
         if (viewer.scene.skyAtmosphere) {
-            viewer.scene.skyAtmosphere.show = !dark;
+            viewer.scene.skyAtmosphere.show = is3d && !dark;
         }
-        if (viewer.scene.sun) viewer.scene.sun.show = !dark;
-        if (viewer.scene.moon) viewer.scene.moon.show = !dark;
-        if (viewer.scene.skyBox) viewer.scene.skyBox.show = !dark;
+        if (viewer.scene.sun) viewer.scene.sun.show = is3d && !dark;
+        if (viewer.scene.moon) viewer.scene.moon.show = is3d && !dark;
+        if (viewer.scene.skyBox) viewer.scene.skyBox.show = is3d && !dark;
+        if (viewer.scene.globe) {
+            viewer.scene.globe.showGroundAtmosphere = is3d;
+        }
 
         const url = basemapTemplateUrl();
         const layers = viewer.imageryLayers;
@@ -2057,7 +2079,7 @@
         modelVis = { ...modelVis, [hash]: next };
         const prim = tilesetPrims.get(hash);
         if (prim) {
-            prim.show = next;
+            prim.show = next && dim === "3d";
             if (next) onSelectTileset?.(hash);
             return;
         }
@@ -2154,6 +2176,12 @@
         layerContentKey;
         if (!ready || !started) return;
         void syncLayers();
+    });
+
+    // CZML fetch finished — frame now if we skipped while loading=true.
+    $effect(() => {
+        if (!ready || !started || loading) return;
+        if (!hasFramed || !framedEntityHome) void frameScene();
     });
 
     $effect(() => {
