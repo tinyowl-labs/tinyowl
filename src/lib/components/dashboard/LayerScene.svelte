@@ -1800,6 +1800,8 @@
     }
 
     let morphRemover: (() => void) | null = null;
+    /** Bumped on each applySceneMode so stale morphComplete handlers no-op. */
+    let sceneMorphGen = 0;
     /** Last dim applied — skip redundant morph. */
     let appliedDim: "2d" | "3d" | null = null;
 
@@ -1860,6 +1862,9 @@
                 /* ignore */
             }
             morphRemover = null;
+            // Dropped an in-flight morphComplete — sync tileset/sky to the
+            // new destination now so rapid toggles don't leave 3D chrome in 2D.
+            finishSceneMode(is3d, { refocus: false });
         }
 
         try {
@@ -1873,7 +1878,9 @@
             return;
         }
 
+        const morphGen = ++sceneMorphGen;
         morphRemover = viewer.scene.morphComplete.addEventListener(() => {
+            if (morphGen !== sceneMorphGen) return;
             if (morphRemover) {
                 try {
                     morphRemover();
@@ -2156,6 +2163,8 @@
         if (!browser) return;
         void boot().catch((e) => {
             error = e instanceof Error ? e.message : "Failed to start 3D";
+            // Release the preparing overlay so the error banner is visible.
+            hasFramed = true;
         });
     });
 
@@ -2732,7 +2741,7 @@
         </button>
     {/if}
 
-    {#if !hasFramed}
+    {#if !hasFramed && !error}
         <CesiumLoading />
     {/if}
 

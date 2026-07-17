@@ -132,6 +132,8 @@
                 cleanup = () => destroyCesiumViewer(viewer);
             } catch (e) {
                 console.warn("BboxMap Cesium failed", e);
+                // Release the loading overlay even on failure.
+                if (!cancelled) mapReady = true;
             }
         })();
 

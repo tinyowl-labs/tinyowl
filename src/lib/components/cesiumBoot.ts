@@ -23,25 +23,76 @@ export function loadCesiumGlobal(): Promise<any> {
                 document.head.appendChild(link);
             }
             await new Promise<void>((resolve, reject) => {
-                const existing = document.querySelector(
-                    'script[src="/cesium/Cesium.js"]',
-                );
-                if (existing && (window as any).Cesium) {
+                if ((window as any).Cesium) {
                     resolve();
                     return;
                 }
+                const existing = document.querySelector(
+                    'script[src="/cesium/Cesium.js"]',
+                ) as HTMLScriptElement | null;
+
+                const settle = (ok: boolean, err?: Error) => {
+                    if (ok) resolve();
+                    else reject(err ?? new Error("Failed to load Cesium.js"));
+                };
+
+                const watch = (el: HTMLScriptElement) => {
+                    let done = false;
+                    let poll: ReturnType<typeof setInterval> | undefined;
+                    const finish = (ok: boolean, err?: Error) => {
+                        if (done) return;
+                        done = true;
+                        if (poll != null) clearInterval(poll);
+                        el.removeEventListener("load", onLoad);
+                        el.removeEventListener("error", onError);
+                        settle(ok, err);
+                    };
+                    const onLoad = () => {
+                        if ((window as any).Cesium) finish(true);
+                        else
+                            finish(
+                                false,
+                                new Error(
+                                    "Cesium.js loaded but Cesium global missing",
+                                ),
+                            );
+                    };
+                    const onError = () =>
+                        finish(false, new Error("Failed to load Cesium.js"));
+                    el.addEventListener("load", onLoad);
+                    el.addEventListener("error", onError);
+                    // load may have already fired before listeners attached.
+                    poll = setInterval(() => {
+                        if ((window as any).Cesium) finish(true);
+                    }, 50);
+                    setTimeout(() => {
+                        if ((window as any).Cesium) finish(true);
+                        else if (!done)
+                            finish(
+                                false,
+                                new Error("Timed out loading Cesium.js"),
+                            );
+                    }, 15_000);
+                };
+
                 if (existing) {
-                    existing.addEventListener("load", () => resolve());
-                    existing.addEventListener("error", () =>
-                        reject(new Error("Failed to load Cesium.js")),
-                    );
+                    watch(existing);
                     return;
                 }
                 const s = document.createElement("script");
                 s.src = "/cesium/Cesium.js";
-                s.onload = () => resolve();
+                s.onload = () => {
+                    if ((window as any).Cesium) settle(true);
+                    else
+                        settle(
+                            false,
+                            new Error(
+                                "Cesium.js loaded but Cesium global missing",
+                            ),
+                        );
+                };
                 s.onerror = () =>
-                    reject(new Error("Failed to load Cesium.js"));
+                    settle(false, new Error("Failed to load Cesium.js"));
                 document.head.appendChild(s);
             });
             return (window as any).Cesium;

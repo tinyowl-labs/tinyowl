@@ -73,8 +73,12 @@
         themePrefs.accentHue;
         themePrefs.bgBase;
         const list = centroids.filter(hasCoord);
-        if (!mounted || !container || !creditSink || !browser || list.length === 0)
+        if (!mounted || !container || !creditSink || !browser) return;
+        // No plottable points — clear the preparing overlay (empty map shell).
+        if (list.length === 0) {
+            mapReady = true;
             return;
+        }
 
         let cancelled = false;
         let cleanup: (() => void) | undefined;
@@ -228,7 +232,7 @@
         {#if !mapReady && !error}
             <CesiumLoading />
         {/if}
-        {#if mapReady}
+        {#if mapReady && !error}
             <CesiumAttribution />
         {/if}
         {#if error}
