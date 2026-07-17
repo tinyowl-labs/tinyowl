@@ -33,8 +33,19 @@
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
     import type { ProjectCoverage } from "./coverageTypes";
-    import { loadableRasters } from "./coverageTypes";
-    import { loadCoverageImagery } from "./coverageImagery";
+    import {
+        loadableRasters,
+        coveragePreviewUrl,
+    } from "./coverageTypes";
+    import {
+        loadCoverageImagery,
+        resolveCoverageRectangle,
+        rectangleFromMeta,
+    } from "./coverageImagery";
+    import {
+        createCogImageryProvider,
+        shouldUseCogProvider,
+    } from "./cogImageryProvider";
     import {
         cesiumPropValue,
         entityIdFromPacketId,
@@ -153,7 +164,8 @@
     let measureHandler: any;
     let postRenderRemover: (() => void) | null = null;
     const tilesetPrims = new Map<string, any>();
-    const coverageLayers = new Map<string, any>();
+    const coverageLayers = new Map<string, any[]>();
+    const coverageCogDestroy = new Map<string, () => void>();
     const layerSources = new Map<string, any>();
     const entityMeta = new WeakMap<object, EntityMeta>();
     let selectedEntity: any = null;
@@ -204,6 +216,9 @@
         tilesets.filter((t) => t.ingest_status === "ready" && t.root_url),
     );
     const rasters = $derived(loadableRasters(coverages));
+    const coverageRows = $derived(
+        coverages.filter((c) => c.role !== "tileset"),
+    );
     const selected = $derived(
         models.find((t) => t.hash === selectedHash) ?? models[0] ?? null,
     );
@@ -2121,14 +2136,26 @@
     }
 
     function destroyCoverageLayer(hash: string) {
-        const layer = coverageLayers.get(hash);
-        if (!layer || !viewer) return;
-        try {
-            viewer.imageryLayers.remove(layer, true);
-        } catch {
-            /* ignore */
+        const layers = coverageLayers.get(hash);
+        if (layers && viewer) {
+            for (const layer of layers) {
+                try {
+                    viewer.imageryLayers.remove(layer, true);
+                } catch {
+                    /* ignore */
+                }
+            }
         }
         coverageLayers.delete(hash);
+        const destroy = coverageCogDestroy.get(hash);
+        if (destroy) {
+            try {
+                destroy();
+            } catch {
+                /* ignore */
+            }
+            coverageCogDestroy.delete(hash);
+        }
     }
 
     async function syncCoverageImagery() {
@@ -2145,27 +2172,100 @@
             if (gen !== coverageLoadGen) return;
             const existing = coverageLayers.get(cov.hash);
             if (existing) {
-                existing.show = isCoverageVisible(cov.hash);
+                const show = isCoverageVisible(cov.hash);
+                for (const layer of existing) layer.show = show;
                 continue;
             }
             if (!isCoverageVisible(cov.hash)) continue;
             try {
-                const loaded = await loadCoverageImagery(cov, accessToken || null);
-                if (gen !== coverageLoadGen) return;
-                const rect = Cesium.Rectangle.fromDegrees(
-                    loaded.rectangle.west,
-                    loaded.rectangle.south,
-                    loaded.rectangle.east,
-                    loaded.rectangle.north,
+                const added: any[] = [];
+                let rect = rectangleFromMeta(cov);
+                if (!rect) {
+                    rect = await resolveCoverageRectangle(
+                        cov,
+                        accessToken || null,
+                    );
+                }
+
+                const previewUrl = coveragePreviewUrl(
+                    cov,
+                    accessToken || null,
                 );
-                const provider = await Cesium.SingleTileImageryProvider.fromUrl(
-                    loaded.dataUrl,
-                    { rectangle: rect },
-                );
-                if (gen !== coverageLoadGen) return;
-                const layer = viewer.imageryLayers.addImageryProvider(provider);
-                layer.show = isCoverageVisible(cov.hash);
-                coverageLayers.set(cov.hash, layer);
+                // Baked low-res overview: instant base (also used for artefact thumbs).
+                if (previewUrl && rect) {
+                    const previewProvider =
+                        await Cesium.SingleTileImageryProvider.fromUrl(
+                            previewUrl,
+                            {
+                                rectangle: Cesium.Rectangle.fromDegrees(
+                                    rect.west,
+                                    rect.south,
+                                    rect.east,
+                                    rect.north,
+                                ),
+                            },
+                        );
+                    if (gen !== coverageLoadGen) return;
+                    const previewLayer =
+                        viewer.imageryLayers.addImageryProvider(
+                            previewProvider,
+                        );
+                    previewLayer.show = isCoverageVisible(cov.hash);
+                    added.push(previewLayer);
+                }
+
+                if (shouldUseCogProvider(cov)) {
+                    if (!rect) {
+                        throw new Error(
+                            `Coverage ${cov.label || cov.hash.slice(0, 8)} has no geographic bbox`,
+                        );
+                    }
+                    // When preview exists, only request COG tiles after zooming in.
+                    const handle = await createCogImageryProvider(
+                        Cesium,
+                        cov,
+                        accessToken || null,
+                        rect,
+                        { minimumLevel: previewUrl ? 2 : 0 },
+                    );
+                    if (gen !== coverageLoadGen) {
+                        handle.destroy();
+                        return;
+                    }
+                    const cogLayer = viewer.imageryLayers.addImageryProvider(
+                        handle.provider,
+                    );
+                    cogLayer.show = isCoverageVisible(cov.hash);
+                    added.push(cogLayer);
+                    coverageCogDestroy.set(cov.hash, handle.destroy);
+                } else if (!previewUrl) {
+                    const loaded = await loadCoverageImagery(
+                        cov,
+                        accessToken || null,
+                    );
+                    if (gen !== coverageLoadGen) return;
+                    const provider =
+                        await Cesium.SingleTileImageryProvider.fromUrl(
+                            loaded.dataUrl,
+                            {
+                                rectangle: Cesium.Rectangle.fromDegrees(
+                                    loaded.rectangle.west,
+                                    loaded.rectangle.south,
+                                    loaded.rectangle.east,
+                                    loaded.rectangle.north,
+                                ),
+                            },
+                        );
+                    if (gen !== coverageLoadGen) return;
+                    const layer =
+                        viewer.imageryLayers.addImageryProvider(provider);
+                    layer.show = isCoverageVisible(cov.hash);
+                    added.push(layer);
+                }
+
+                if (added.length > 0) {
+                    coverageLayers.set(cov.hash, added);
+                }
             } catch (e) {
                 if (gen === coverageLoadGen) {
                     const msg =
@@ -2184,9 +2284,9 @@
     function toggleCoverage(hash: string) {
         const next = !isCoverageVisible(hash);
         coverageVis = { ...coverageVis, [hash]: next };
-        const layer = coverageLayers.get(hash);
-        if (layer) {
-            layer.show = next;
+        const layers = coverageLayers.get(hash);
+        if (layers) {
+            for (const layer of layers) layer.show = next;
             return;
         }
         if (next) void syncCoverageImagery();
@@ -2865,12 +2965,12 @@
         <CesiumLoading />
     {/if}
 
-    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || rasters.length > 0)}
+    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
         <div class="absolute top-2 right-2 z-10">
             <SceneGraphPanel
                 {layers}
                 {models}
-                coverages={rasters}
+                coverages={coverageRows}
                 {rows}
                 {palette}
                 pendingModels={pending}
@@ -2903,7 +3003,7 @@
         </div>
     {/if}
 
-    {#if ready && !loading && models.length === 0 && layers.length === 0 && rasters.length === 0}
+    {#if ready && !loading && models.length === 0 && layers.length === 0 && coverageRows.length === 0}
         <div
             class="absolute inset-0 z-5 flex flex-col items-center justify-center gap-2 bg-background/70 px-6 text-center"
         >

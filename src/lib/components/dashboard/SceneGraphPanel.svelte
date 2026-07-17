@@ -487,9 +487,16 @@
                 <div class="mb-1 space-y-0.5 {childIndent}">
                     {#each filteredCoverages as c, idx}
                         {@const visible = coverageVisible(c.hash)}
+                        {@const status = (c.ingest_status || "").toLowerCase()}
                         {@const canFly =
                             Array.isArray(c.bbox_wgs84) &&
                             c.bbox_wgs84.length === 4}
+                        {@const statusHint =
+                            status === "pending" || status === "processing"
+                                ? "processing…"
+                                : status === "failed"
+                                  ? "failed"
+                                  : ""}
                         <div
                             class="flex w-full items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary"
                         >
@@ -508,7 +515,7 @@
                                         : '0.25'}"
                                 ></span>
                                 <span
-                                    class="truncate {visible
+                                    class="min-w-0 truncate {visible
                                         ? ''
                                         : 'opacity-40'}"
                                 >
@@ -516,6 +523,13 @@
                                         c.entity_id ||
                                         c.hash.slice(0, 12)}
                                 </span>
+                                {#if statusHint}
+                                    <span
+                                        class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                    >
+                                        {statusHint}
+                                    </span>
+                                {/if}
                             </button>
                             {#if canFly}
                                 <button

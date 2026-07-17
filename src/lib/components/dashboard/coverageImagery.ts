@@ -25,7 +25,7 @@ function mediaUrl(
     return `${base}${sep}token=${encodeURIComponent(accessToken)}`;
 }
 
-function looksGeographic(
+export function looksGeographic(
     west: number,
     south: number,
     east: number,
@@ -41,9 +41,8 @@ function looksGeographic(
     );
 }
 
-function rectangleFromCoverage(
+export function rectangleFromMeta(
     cov: ProjectCoverage,
-    image: GeoTIFFImage,
 ): { west: number; south: number; east: number; north: number } | null {
     if (cov.bbox_wgs84 && cov.bbox_wgs84.length === 4) {
         const [west, south, east, north] = cov.bbox_wgs84;
@@ -51,6 +50,15 @@ function rectangleFromCoverage(
             return { west, south, east, north };
         }
     }
+    return null;
+}
+
+function rectangleFromCoverage(
+    cov: ProjectCoverage,
+    image: GeoTIFFImage,
+): { west: number; south: number; east: number; north: number } | null {
+    const fromMeta = rectangleFromMeta(cov);
+    if (fromMeta) return fromMeta;
     try {
         const bb = image.getBoundingBox();
         if (bb && bb.length >= 4) {
@@ -66,6 +74,26 @@ function rectangleFromCoverage(
         /* ignore */
     }
     return null;
+}
+
+/** Resolve WGS84 rectangle without decoding full rasters (meta or TIFF tags). */
+export async function resolveCoverageRectangle(
+    cov: ProjectCoverage,
+    accessToken: string | null | undefined,
+): Promise<{ west: number; south: number; east: number; north: number } | null> {
+    const fromMeta = rectangleFromMeta(cov);
+    if (fromMeta) return fromMeta;
+    const url = mediaUrl(cov, accessToken);
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+    }
+    const tiff = await fromUrl(url, {
+        allowFullFile: false,
+        headers,
+    });
+    const image = await tiff.getImage();
+    return rectangleFromCoverage(cov, image);
 }
 
 function stretchBand(
