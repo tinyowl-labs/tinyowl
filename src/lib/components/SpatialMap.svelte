@@ -23,6 +23,8 @@
         tuneCesiumBasemap,
         viewRectangle,
     } from "./cesiumBoot";
+    import CesiumLoading from "./CesiumLoading.svelte";
+    import CesiumAttribution from "./CesiumAttribution.svelte";
 
     type ResultMarker = {
         slug: string;
@@ -57,6 +59,7 @@
     let container = $state<HTMLDivElement>();
     let creditSink = $state<HTMLDivElement>();
     let mounted = $state(false);
+    let mapReady = $state(false);
     let viewer: any = null;
     let Cesium: any = null;
     let overlayDs: any = null;
@@ -409,6 +412,7 @@
         if (!mounted || !container || !creditSink || !browser) return;
         let cancelled = false;
         let cleanup: (() => void) | undefined;
+        mapReady = false;
 
         void (async () => {
             try {
@@ -424,25 +428,28 @@
                 await viewer.dataSources.add(resultsDs);
 
                 if (centerLat != null && centerLng != null) {
-                    viewer.camera.setView({
+                    await viewer.camera.flyTo({
                         destination: Cesium.Cartesian3.fromDegrees(
                             centerLng,
                             centerLat,
                             500_000,
                         ),
+                        duration: 0.6,
                     });
                 } else if (searchBBox) {
-                    viewer.camera.setView({
+                    await viewer.camera.flyTo({
                         destination: Cesium.Rectangle.fromDegrees(
                             searchBBox.west,
                             searchBBox.south,
                             searchBBox.east,
                             searchBBox.north,
                         ),
+                        duration: 0.6,
                     });
                 } else {
-                    viewer.camera.setView({
+                    await viewer.camera.flyTo({
                         destination: Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000),
+                        duration: 0.6,
                     });
                 }
 
@@ -465,6 +472,7 @@
                 syncResultMarkers();
                 syncSpatialGraphics();
                 fitToContent();
+                if (!cancelled) mapReady = true;
 
                 cleanup = () => {
                     try {
@@ -584,6 +592,12 @@
     >
         <div bind:this={container} class="w-full h-full"></div>
         <div bind:this={creditSink} class="hidden"></div>
+        {#if !mapReady}
+            <CesiumLoading />
+        {/if}
+        {#if mapReady}
+            <CesiumAttribution />
+        {/if}
         {#if mode === "none" || drafting}
             <div
                 class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-background/90 to-transparent px-3 pb-3 pt-8"

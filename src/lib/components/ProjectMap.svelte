@@ -13,6 +13,8 @@
         tuneCesiumBasemap,
         viewRectangle,
     } from "./cesiumBoot";
+    import CesiumLoading from "./CesiumLoading.svelte";
+    import CesiumAttribution from "./CesiumAttribution.svelte";
 
     type Props = {
         centroids: Centroid[];
@@ -34,6 +36,7 @@
     let Cesium: any = null;
     let clickHandler: any = null;
     let error = $state("");
+    let mapReady = $state(false);
 
     onMount(() => {
         mounted = true;
@@ -76,6 +79,7 @@
         let cancelled = false;
         let cleanup: (() => void) | undefined;
         let resizeObs: ResizeObserver | undefined;
+        mapReady = false;
 
         void (async () => {
             try {
@@ -155,17 +159,18 @@
 
                 if (positions.length === 1) {
                     const only = list[0]!;
-                    viewer.camera.setView({
+                    await viewer.camera.flyTo({
                         destination: Cesium.Cartesian3.fromDegrees(
                             only.lng,
                             only.lat,
                             1_500_000,
                         ),
+                        duration: 0.8,
                     });
                 } else if (positions.length > 1) {
                     const bs = Cesium.BoundingSphere.fromPoints(positions);
-                    viewer.camera.flyToBoundingSphere(bs, {
-                        duration: 0,
+                    await viewer.camera.flyToBoundingSphere(bs, {
+                        duration: 0.8,
                         offset: new Cesium.HeadingPitchRange(
                             0,
                             Cesium.Math.toRadians(-90),
@@ -173,6 +178,8 @@
                         ),
                     });
                 }
+
+                if (!cancelled) mapReady = true;
 
                 resizeObs = new ResizeObserver(() => {
                     try {
@@ -214,10 +221,16 @@
 
 <div class="relative {klass}">
     <div
-        class="rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
+        class="relative rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
     >
         <div bind:this={container} class="w-full h-full min-h-70"></div>
         <div bind:this={creditSink} class="hidden"></div>
+        {#if !mapReady && !error}
+            <CesiumLoading />
+        {/if}
+        {#if mapReady}
+            <CesiumAttribution />
+        {/if}
         {#if error}
             <div
                 class="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground"

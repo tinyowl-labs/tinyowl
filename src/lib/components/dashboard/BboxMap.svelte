@@ -9,6 +9,8 @@
         loadCesiumGlobal,
         tuneCesiumBasemap,
     } from "../cesiumBoot";
+    import CesiumLoading from "../CesiumLoading.svelte";
+    import CesiumAttribution from "../CesiumAttribution.svelte";
 
     type Props = {
         bbox: string;
@@ -21,6 +23,7 @@
     let container = $state<HTMLDivElement>();
     let creditSink = $state<HTMLDivElement>();
     let mounted = $state(false);
+    let mapReady = $state(false);
 
     onMount(() => {
         mounted = true;
@@ -69,6 +72,7 @@
 
         let cancelled = false;
         let cleanup: (() => void) | undefined;
+        mapReady = false;
 
         void (async () => {
             try {
@@ -113,8 +117,9 @@
                         });
                         const tight =
                             Cesium.Rectangle.fromCartesianArray(positions);
-                        viewer.camera.setView({
+                        await viewer.camera.flyTo({
                             destination: paddedViewRectangle(Cesium, tight),
+                            duration: 0.6,
                         });
                     }
                 } catch {
@@ -123,6 +128,7 @@
 
                 viewer.resize();
                 viewer.scene.requestRender();
+                if (!cancelled) mapReady = true;
                 cleanup = () => destroyCesiumViewer(viewer);
             } catch (e) {
                 console.warn("BboxMap Cesium failed", e);
@@ -139,17 +145,29 @@
 {#if href}
     <a
         {href}
-        class="block rounded-lg border border-border overflow-hidden hover:border-primary/50 transition-colors {klass}"
+        class="relative block rounded-lg border border-border overflow-hidden hover:border-primary/50 transition-colors {klass}"
         aria-label="Project boundary map"
     >
         <div bind:this={container} class="w-full h-full bg-secondary/20"></div>
         <div bind:this={creditSink} class="hidden"></div>
+        {#if !mapReady}
+            <CesiumLoading />
+        {/if}
+        {#if mapReady}
+            <CesiumAttribution />
+        {/if}
     </a>
 {:else}
     <div
-        class="rounded-lg border border-border overflow-hidden bg-secondary/20 {klass}"
+        class="relative rounded-lg border border-border overflow-hidden bg-secondary/20 {klass}"
     >
         <div bind:this={container} class="w-full h-full"></div>
         <div bind:this={creditSink} class="hidden"></div>
+        {#if !mapReady}
+            <CesiumLoading />
+        {/if}
+        {#if mapReady}
+            <CesiumAttribution />
+        {/if}
     </div>
 {/if}

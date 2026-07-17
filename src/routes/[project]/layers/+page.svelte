@@ -58,6 +58,7 @@
     const highlightId = $derived((data?.highlight as string) ?? "");
     const highlightPage = $derived((data?.highlightPage as number) ?? 0);
     const viewParam = $derived((data?.view as string) ?? "");
+    const dimParam = $derived((data?.dim as string) ?? "");
     const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
 
@@ -184,14 +185,27 @@
         }
     });
 
+    type ViewMode = "schema" | "table" | "map";
+    type MapDim = "2d" | "3d";
+
     /** Compact layers URL — interactive selection stays in client state. */
     function layersSearch(opts: {
         mode: ViewMode;
+        dim?: MapDim;
         layer?: string;
         highlight?: string;
     }): string {
         const params = new URLSearchParams();
-        params.set("view", opts.mode);
+        if (opts.mode === "map" && opts.dim === "3d") {
+            params.set("view", "3d");
+        } else if (opts.mode === "map" && opts.dim === "2d") {
+            params.set("view", "map");
+            params.set("dim", "2d");
+        } else if (opts.mode === "map") {
+            params.set("view", "map");
+        } else {
+            params.set("view", opts.mode);
+        }
         // highlight only when explicitly passed (media/search deep links keep it in the URL)
         if (opts.highlight) {
             params.set("highlight", opts.highlight);
@@ -209,6 +223,7 @@
         goto(
             `/${$page.params.project}/layers${layersSearch({
                 mode: viewMode === "schema" ? "table" : viewMode,
+                dim: mapDim,
                 layer: value,
             })}`,
             { replaceState: true, noScroll: true },
@@ -250,7 +265,6 @@
         return "bg-accent/40";
     }
 
-    type ViewMode = "schema" | "table" | "map";
     let viewMode = $state<ViewMode>(
         untrack(() => {
             if (
@@ -282,12 +296,17 @@
         goto(
             `/${$page.params.project}/layers${layersSearch({
                 mode,
+                dim: mapDim,
                 layer: activeTab,
             })}`,
             { replaceState: true, noScroll: true },
         );
     }
 
+    // Default 3D — matches the working terrain-sampled load path.
+    let mapDim = $state<MapDim>(
+        untrack(() => (dimParam === "2d" ? "2d" : "3d")),
+    );
     let selectedTilesetHash = $state("");
     let tilesets = $state<ProjectTileset[]>([]);
     let tilesetsLoading = $state(false);
@@ -306,6 +325,24 @@
             /* ignore */
         }
     });
+
+    $effect(() => {
+        if (dimParam === "2d" || dimParam === "3d") {
+            mapDim = dimParam;
+        }
+    });
+
+    function setMapDim(dim: MapDim) {
+        mapDim = dim;
+        viewMode = "map";
+        goto(
+            `/${$page.params.project}/layers${layersSearch({
+                mode: "map",
+                dim,
+            })}`,
+            { replaceState: true, noScroll: true },
+        );
+    }
 
     function selectTileset(hash: string) {
         selectedTilesetHash = hash;
@@ -476,6 +513,8 @@
     $effect(() => {
         const mode = viewMode;
         const namesKey = tableNamesKey;
+        // Do NOT depend on mapDim — refetching CZML on 2D/3D toggle remounts
+        // datasources and looks like a full reload.
         if (mode === "map" && namesKey) {
             void loadAllCzml();
         }
@@ -485,7 +524,7 @@
     });
 
     $effect(() => {
-        if (viewMode === "map") {
+        if (viewMode === "map" && mapDim === "3d") {
             void loadTilesets();
         }
     });
@@ -577,7 +616,7 @@
                 · {entityCount} entities{/if}
             {#if viewMode === "schema" && schemaEdges.length > 0}
                 · {schemaEdges.length} relations{/if}
-            {#if viewMode === "map" && tilesets.length > 0}
+            {#if viewMode === "map" && mapDim === "3d" && tilesets.length > 0}
                 · {tilesets.filter((t) => t.ingest_status === "ready").length}
                 3D model{tilesets.filter((t) => t.ingest_status === "ready")
                     .length === 1
@@ -606,10 +645,12 @@
                     loading={mapLoading}
                     layers={mapLayers}
                     {rows}
+                    dim={mapDim}
                     active={viewMode === "map"}
                     fullscreen={mapFullscreen}
                     onSelectTileset={selectTileset}
                     onToggleFullscreen={toggleMapFullscreen}
+                    onDimChange={setMapDim}
                 />
             {/if}
         </div>
