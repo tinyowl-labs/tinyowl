@@ -28,6 +28,7 @@
     import {
         dedupePickCandidates,
         pickCandidateLabel,
+        attrsFromEntity,
         type PickCandidate,
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
@@ -1347,6 +1348,22 @@
         );
     }
 
+    function makePickCandidate(
+        entity: any,
+        layerName: string,
+        entityId: string,
+    ): PickCandidate {
+        const time = Cesium?.JulianDate?.now?.();
+        const attributes = attrsFromEntity(entity?.properties, time);
+        return {
+            key: toSelectionKey(layerName, entityId),
+            layerName,
+            entityId,
+            label: pickCandidateLabel(entityId, attributes),
+            attributes,
+        };
+    }
+
     /** Show pick pager for an entity (store selection already updated). */
     function selectEntity(
         entity: any,
@@ -1359,14 +1376,7 @@
             pickCandidates.length === 0 ||
             !pickCandidates.some((c) => c.key === key)
         ) {
-            pickCandidates = [
-                {
-                    key,
-                    layerName,
-                    entityId,
-                    label: pickCandidateLabel(layerName, entityId, rows),
-                },
-            ];
+            pickCandidates = [makePickCandidate(entity, layerName, entityId)];
             pickIndex = 0;
         }
         pickOpen = true;
@@ -1462,12 +1472,7 @@
             const meta = entityMeta.get(entity);
             if (!meta) continue;
             if (layerSelection.isHidden(meta.layerName, meta.entityId)) continue;
-            out.push({
-                key: toSelectionKey(meta.layerName, meta.entityId),
-                layerName: meta.layerName,
-                entityId: meta.entityId,
-                label: pickCandidateLabel(meta.layerName, meta.entityId, rows),
-            });
+            out.push(makePickCandidate(entity, meta.layerName, meta.entityId));
         }
         return dedupePickCandidates(out);
     }
@@ -1617,7 +1622,8 @@
         const time = Cesium?.JulianDate?.now?.() ?? undefined;
         const props = entity.properties;
         if (props) {
-            for (const key of ["source_id", "id", "fid", "entity_id"]) {
+            // Only TinyOwl ids — not import natural keys named id/fid.
+            for (const key of ["source_id", "entity_id"]) {
                 try {
                     const p = props[key] ?? props.get?.(key);
                     const v = cesiumPropValue(p, time);
@@ -2804,7 +2810,6 @@
             open={pickOpen}
             candidates={pickCandidates}
             bind:index={pickIndex}
-            {rows}
             placement="floating"
             x={pickPanelX}
             y={pickPanelY}

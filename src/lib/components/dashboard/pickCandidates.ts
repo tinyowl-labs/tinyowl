@@ -5,6 +5,8 @@ export type PickCandidate = {
 	layerName: string;
 	entityId: string;
 	label: string;
+	/** CZML properties for the popup. */
+	attributes?: Record<string, string>;
 };
 
 export function dedupePickCandidates(
@@ -20,23 +22,29 @@ export function dedupePickCandidates(
 	return out;
 }
 
+/** Read Cesium PropertyBag / plain props bag into string map. */
+export function attrsFromEntity(props: any, time?: unknown): Record<string, string> {
+	if (!props) return {};
+	const names: string[] = props.propertyNames ?? Object.keys(props);
+	const out: Record<string, string> = {};
+	for (const key of names) {
+		if (!key || key.startsWith("_") || key === "geom" || key === "geometry") continue;
+		try {
+			const p = props[key] ?? props.get?.(key);
+			const v =
+				p && typeof p.getValue === "function" ? p.getValue(time) : p;
+			if (v != null && v !== "") out[key] = String(v);
+		} catch {
+			/* ignore */
+		}
+	}
+	return out;
+}
+
 export function pickCandidateLabel(
-	layerName: string,
 	entityId: string,
-	rows: Record<string, Record<string, unknown>[]>,
+	attrs?: Record<string, string>,
 ): string {
-	const table = rows[layerName] ?? [];
-	const row = table.find((r) => {
-		const id = String(r.source_id ?? r.SOURCE_ID ?? "");
-		return id.trim() === entityId.trim();
-	});
-	if (!row) return entityId;
-	const name =
-		row.name ??
-		row.NAME ??
-		row.label ??
-		row.LABEL ??
-		row.title ??
-		row.TITLE;
-	return name != null && String(name).trim() ? String(name) : entityId;
+	const name = attrs?.name ?? attrs?.NAME ?? attrs?.label ?? attrs?.LABEL;
+	return name?.trim() ? name : entityId;
 }

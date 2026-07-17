@@ -91,6 +91,11 @@
             >Docs</a
         >
         {#if hasSession}
+            <a
+                href="/digitize"
+                class="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                >Digitize</a
+            >
             <DropdownMenu.Root>
                 <DropdownMenu.Trigger
                     class={cn(

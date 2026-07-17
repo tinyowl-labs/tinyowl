@@ -13,6 +13,8 @@
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import ClockIcon from "@lucide/svelte/icons/clock";
     import GaugeIcon from "@lucide/svelte/icons/gauge";
+    import FileUpIcon from "@lucide/svelte/icons/file-up";
+    import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
 
     let { data } = $props();
@@ -94,7 +96,7 @@
 </script>
 
 <svelte:head>
-    <title>Dashboard — {project?.title ?? "Project"} — TinyOwl</title>
+    <title>Manage — {project?.title ?? "Project"} — TinyOwl</title>
 </svelte:head>
 
 <!-- Close dropdown on outside click -->
@@ -106,11 +108,12 @@
             <div class="flex items-center gap-3">
                 <GaugeIcon class="size-6 text-muted-foreground" />
                 <h1 class="text-2xl font-bold tracking-tight text-foreground">
-                    Dashboard
+                    Manage
                 </h1>
             </div>
             <p class="mt-1 text-sm text-muted-foreground">
-                {project?.title ?? ""}
+                Tables, import, foreign keys, and clone for {project?.title ??
+                    ""}
             </p>
             {#if updated}
                 <div
@@ -183,6 +186,52 @@
         </div>
     </div>
 
+    <!-- Quick actions -->
+    <div class="grid gap-2 sm:grid-cols-3 mb-8">
+        <a
+            href={`/${slug}/import`}
+            class="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
+        >
+            <FileUpIcon class="size-4 mt-0.5 text-primary shrink-0" />
+            <span>
+                <span class="block text-sm font-medium text-foreground"
+                    >Import table</span
+                >
+                <span class="block text-xs text-muted-foreground"
+                    >CSV or GeoJSON</span
+                >
+            </span>
+        </a>
+        <a
+            href={`/${slug}/layers?view=schema`}
+            class="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
+        >
+            <WaypointsIcon class="size-4 mt-0.5 text-primary shrink-0" />
+            <span>
+                <span class="block text-sm font-medium text-foreground"
+                    >Schema &amp; FKs</span
+                >
+                <span class="block text-xs text-muted-foreground"
+                    >Graph + link tables</span
+                >
+            </span>
+        </a>
+        <a
+            href={`/${slug}/layers?view=table`}
+            class="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
+        >
+            <LayersIcon class="size-4 mt-0.5 text-primary shrink-0" />
+            <span>
+                <span class="block text-sm font-medium text-foreground"
+                    >Table view</span
+                >
+                <span class="block text-xs text-muted-foreground"
+                    >Browse entity rows</span
+                >
+            </span>
+        </a>
+    </div>
+
     <!-- Summary bar -->
     <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
         <div class="rounded-lg border border-border bg-card p-4">
@@ -228,12 +277,12 @@
         <h2
             class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3"
         >
-            Entity types
+            Tables
         </h2>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mb-8">
             {#each tables as tbl}
                 <a
-                    href={`/${slug}/layers?layer=${encodeURIComponent(tbl.name)}`}
+                    href={`/${slug}/layers?layer=${encodeURIComponent(tbl.name)}&view=table`}
                     class="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5 hover:bg-accent/50 transition-colors no-underline"
                 >
                     <span class="text-sm font-medium text-foreground truncate"
@@ -245,6 +294,22 @@
                     >
                 </a>
             {/each}
+        </div>
+    {:else}
+        <div
+            class="mb-8 rounded-xl border border-dashed border-border px-6 py-10 text-center"
+        >
+            <p class="text-sm text-foreground font-medium">No tables yet</p>
+            <p class="text-xs text-muted-foreground mt-1 mb-4">
+                Import a CSV or GeoJSON to create this project’s schema.
+            </p>
+            <a
+                href={`/${slug}/import`}
+                class="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground no-underline"
+            >
+                <FileUpIcon class="size-4" />
+                Import data
+            </a>
         </div>
     {/if}
 

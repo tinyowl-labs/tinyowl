@@ -8,6 +8,10 @@
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
     import MappingWorkbench from "$lib/components/settings/MappingWorkbench.svelte";
+    import {
+        LICENCES,
+        LOCATION_PRECISIONS,
+    } from "$lib/project/licences";
 
     let { data, form: rawForm } = $props();
     const form = $derived(rawForm as any);
@@ -198,70 +202,6 @@
     const currentLocationPrecision = $derived(
         ((project as any)?.location_precision as string | undefined) ?? "exact",
     );
-
-    const LOCATION_PRECISIONS = [
-        { key: "exact", label: "Exact", desc: "Full coordinates" },
-        {
-            key: "approx_100m",
-            label: "~100 m",
-            desc: "Snap to ~100 m grid",
-        },
-        {
-            key: "approx_1km",
-            label: "~1 km",
-            desc: "Snap to ~1 km grid",
-        },
-        {
-            key: "bbox_only",
-            label: "Bbox only",
-            desc: "Project extent only",
-        },
-        {
-            key: "hidden",
-            label: "Hidden",
-            desc: "No public locations",
-        },
-    ];
-
-    const LICENCES = [
-        {
-            key: "CC0",
-            label: "CC0",
-            desc: "Public Domain",
-            url: "https://creativecommons.org/publicdomain/zero/1.0/",
-        },
-        {
-            key: "CC_BY_4",
-            label: "CC BY 4.0",
-            desc: "Attribution",
-            url: "https://creativecommons.org/licenses/by/4.0/",
-        },
-        {
-            key: "CC_BY_SA_4",
-            label: "CC BY-SA 4.0",
-            desc: "Attribution-ShareAlike",
-            url: "https://creativecommons.org/licenses/by-sa/4.0/",
-        },
-        {
-            key: "CC_BY_NC_4",
-            label: "CC BY-NC 4.0",
-            desc: "Attribution-NonCommercial",
-            url: "https://creativecommons.org/licenses/by-nc/4.0/",
-        },
-        {
-            key: "CC_BY_NC_SA_4",
-            label: "CC BY-NC-SA 4.0",
-            desc: "Attribution-NonCommercial-ShareAlike",
-            url: "https://creativecommons.org/licenses/by-nc-sa/4.0/",
-        },
-        {
-            key: "ODbL",
-            label: "ODbL",
-            desc: "Open Database Licence",
-            url: "https://opendatacommons.org/licenses/odbl/",
-        },
-        { key: "ALL_RIGHTS", label: "All Rights Reserved", desc: "", url: "" },
-    ];
 
     const selectClass =
         "h-8 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";

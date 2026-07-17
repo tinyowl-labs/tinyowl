@@ -26,10 +26,15 @@ export function entityIdFromPacketId(
     return rest.replace(/:\d+$/, "");
 }
 
-function propId(props: unknown): string | null {
+/**
+ * Prefer TinyOwl packet identity (`layer:source_id`) over data columns named
+ * `id` / `fid` — those are often natural keys from import and break popup joins
+ * that look up rows by source_id.
+ */
+function propSourceId(props: unknown): string | null {
     if (!props || typeof props !== "object") return null;
     const p = props as Record<string, unknown>;
-    for (const key of ["source_id", "id", "fid", "entity_id"]) {
+    for (const key of ["source_id", "entity_id"]) {
         const v = p[key];
         if (v != null && String(v).trim() !== "") return String(v);
     }
@@ -42,7 +47,7 @@ export function entityIdFromPacket(
 ): string | null {
     const id = packet.id;
     if (typeof id !== "string" || id === "document") return null;
-    return propId(packet.properties) ?? entityIdFromPacketId(id, layerName);
+    return propSourceId(packet.properties) ?? entityIdFromPacketId(id, layerName);
 }
 
 /** Unique entity ids in packet order (for SceneGraphPanel). */
