@@ -21,16 +21,22 @@ export function buildEntityPopupHtml(
     rows: Record<string, Record<string, unknown>[]>,
 ): string {
     const tableRows = rows[layerName] ?? [];
-    const entity = tableRows.find((r) => {
-        const id = String(r.source_id ?? r.SOURCE_ID ?? "");
-        return id.trim() === entityId.trim();
-    });
+    const want = entityId.trim();
+    const entity = tableRows.find((r) =>
+        [r.source_id, r.SOURCE_ID, r.id, r.fid, r.entity_id].some(
+            (v) => v != null && String(v).trim() === want,
+        ),
+    );
     if (!entity) {
         return `<div class="text-sm"><strong>${escapeHtml(layerName.replace(/_/g, " "))}</strong><br /><span class="font-mono text-xs opacity-60">${escapeHtml(entityId)}</span></div>`;
     }
 
     const fields = Object.entries(entity).filter(
-        ([k]) => !k.startsWith("_") && k !== "geom" && k !== "entity_type",
+        ([k]) =>
+            !k.startsWith("_") &&
+            k !== "geom" &&
+            k !== "geometry" &&
+            k !== "entity_type",
     );
 
     let html = `<div class="text-sm max-w-xs max-h-64 overflow-y-auto">`;

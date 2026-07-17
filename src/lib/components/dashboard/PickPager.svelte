@@ -8,7 +8,6 @@
         open?: boolean;
         candidates?: PickCandidate[];
         index?: number;
-        rows?: Record<string, Record<string, unknown>[]>;
         /**
          * `pinned` — fixed UI chrome (3D).
          * `floating` — click-relative overlay (2D map).
@@ -27,7 +26,6 @@
         open = false,
         candidates = [],
         index = $bindable(0),
-        rows = {},
         placement = "floating",
         x = 16,
         y = 16,
@@ -43,25 +41,11 @@
     );
 
     const fields = $derived.by(() => {
-        if (!current) return [] as Array<{ key: string; value: string }>;
-        const table = rows[current.layerName] ?? [];
-        const entity = table.find((r) => {
-            const id = String(r.source_id ?? r.SOURCE_ID ?? "");
-            return id.trim() === current.entityId.trim();
-        });
-        if (!entity) return [];
-        return Object.entries(entity)
-            .filter(
-                ([k]) =>
-                    !k.startsWith("_") && k !== "geom" && k !== "entity_type",
-            )
-            .map(([key, val]) => ({
-                key: key.replace(/_/g, " "),
-                value:
-                    val === null || val === undefined || val === ""
-                        ? ""
-                        : String(val),
-            }));
+        if (!current?.attributes) return [] as Array<{ key: string; value: string }>;
+        return Object.entries(current.attributes).map(([key, value]) => ({
+            key: key.replace(/_/g, " "),
+            value,
+        }));
     });
 
     function setIndex(next: number) {

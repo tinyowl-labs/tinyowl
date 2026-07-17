@@ -9,6 +9,7 @@
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
+    import FileUpIcon from "@lucide/svelte/icons/file-up";
     import Header from "$lib/components/ui/header.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
 
@@ -50,9 +51,14 @@
                   ...(canWrite
                       ? [
                             {
-                                label: "Dashboard",
+                                label: "Manage",
                                 href: `/${data?.slug}/dashboard`,
                                 icon: GaugeIcon,
+                            },
+                            {
+                                label: "Import",
+                                href: `/${data?.slug}/import`,
+                                icon: FileUpIcon,
                             },
                         ]
                       : []),
