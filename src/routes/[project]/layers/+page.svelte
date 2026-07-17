@@ -22,6 +22,7 @@
         type SchemaTable,
         type SchemaEdge,
     } from "$lib/components/dashboard/SchemaGraph.svelte";
+    import EntityRelationsPanel from "$lib/components/dashboard/EntityRelationsPanel.svelte";
     import FkLinker from "$lib/components/digitize/FkLinker.svelte";
     import RowNum from "$lib/components/ui/row-num.svelte";
     import { browser } from "$app/environment";
@@ -72,7 +73,7 @@
 
     const columnHelper = createColumnHelper<Record<string, unknown>>();
 
-    /** Format arch_date JSON (or leave plain strings) for table display. */
+    /** Format span / arch_date JSON (or leave plain strings) for table display. */
     function formatArchDateCell(raw: string): string | null {
         const s = raw.trim();
         if (!s.startsWith("{")) return null;
@@ -760,8 +761,13 @@
                     </div>
                     {#if canWrite && accessToken}
                         <div
-                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[40%] overflow-y-auto"
+                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[40%] overflow-y-auto space-y-6"
                         >
+                            <EntityRelationsPanel
+                                slug={$page.params.project ?? ""}
+                                {accessToken}
+                                {canWrite}
+                            />
                             <FkLinker
                                 {accessToken}
                                 slug={$page.params.project ?? ""}
@@ -771,6 +777,16 @@
                                     schemaLoaded = false;
                                     void loadSchema();
                                 }}
+                            />
+                        </div>
+                    {:else}
+                        <div
+                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[30%] overflow-y-auto"
+                        >
+                            <EntityRelationsPanel
+                                slug={$page.params.project ?? ""}
+                                {accessToken}
+                                canWrite={false}
                             />
                         </div>
                     {/if}

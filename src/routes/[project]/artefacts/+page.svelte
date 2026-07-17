@@ -65,6 +65,7 @@
         media_type: string;
         file_size: number;
         url: string;
+        profile?: string;
         entities: Array<{ entity_type: string; entity_id: string }>;
         care_allow_public_view?: boolean;
         care_allow_embed?: boolean;
@@ -78,6 +79,7 @@
         | "audio"
         | "pdf"
         | "model"
+        | "coverage"
         | "other";
 
     let items = $state<MediaItem[]>([]);
@@ -251,6 +253,14 @@
         );
     }
 
+    function isCoverage(item: MediaItem): boolean {
+        if (item.profile === "coverage") return true;
+        return (
+            isTileset(item) ||
+            item.entities?.some((e) => e.entity_type === "coverage") === true
+        );
+    }
+
     function openIn3D(hash: string) {
         const slug = $page.params.project;
         try {
@@ -267,7 +277,8 @@
                 e.entity_id.trim() !== "" &&
                 e.entity_type.trim() !== "" &&
                 e.entity_type !== "unknown" &&
-                e.entity_type !== "tileset",
+                e.entity_type !== "tileset" &&
+                e.entity_type !== "coverage",
         );
     }
 
@@ -464,9 +475,13 @@
         try {
             const slug = $page.params.project;
             const typeParam =
-                filter !== "all" ? `&type=${encodeURIComponent(filter)}` : "";
+                filter !== "all" && filter !== "coverage"
+                    ? `&type=${encodeURIComponent(filter)}`
+                    : "";
+            const profileParam =
+                filter === "coverage" ? `&profile=coverage` : "";
             const res = await fetch(
-                `/api/v1/projects/${slug}/media?offset=${at}&limit=${LIMIT}${typeParam}`,
+                `/api/v1/projects/${slug}/media?offset=${at}&limit=${LIMIT}${typeParam}${profileParam}`,
                 accessToken
                     ? { headers: { Authorization: `Bearer ${accessToken}` } }
                     : {},
@@ -478,7 +493,7 @@
                 const total = contentRange.split("/")[1];
                 if (total && total !== "*") {
                     // All-tab total stays global via counts when filtered.
-                    if (filter === "all") {
+                    if (filter === "all" || filter === "coverage") {
                         totalItems = parseInt(total, 10);
                     }
                 }
@@ -543,6 +558,7 @@
         { id: "image", label: "Photos" },
         { id: "pdf", label: "Reports" },
         { id: "model", label: "3D" },
+        { id: "coverage", label: "Coverage" },
         { id: "video", label: "Videos" },
         { id: "audio", label: "Audio" },
         { id: "other", label: "Other" },
@@ -550,6 +566,12 @@
 
     function filterCount(id: TypeFilter): number | null {
         if (id === "all") return totalItems || items.length || null;
+        if (id === "coverage") {
+            // Server list with profile=coverage sets Content-Range; no global count yet.
+            return typeFilter === "coverage"
+                ? totalItems || items.length || null
+                : null;
+        }
         if (id === "pdf") {
             return typeCounts.pdf != null ? typeCounts.pdf : null;
         }
@@ -691,14 +713,18 @@
                                   ? "No reports yet"
                                   : typeFilter === "image"
                                     ? "No photos yet"
-                                    : `No ${typeFilter} yet`}
+                                    : typeFilter === "coverage"
+                                      ? "No coverage layers yet"
+                                      : `No ${typeFilter} yet`}
                         </h2>
                         <p class="text-sm text-muted-foreground">
                             {typeFilter === "all"
                                 ? "Push data with photos or grey literature PDFs to see them here, linked to the entities they document."
                                 : typeFilter === "model"
                                   ? "Upload a georeferenced .3tz (collaborator+) to view it in Layers → 3D."
-                                  : "Try another filter, or upload files that match this type."}
+                                  : typeFilter === "coverage"
+                                    ? "Register GeoTIFF or tileset media with profile=coverage (entity_type coverage or tileset)."
+                                    : "Try another filter, or upload files that match this type."}
                         </p>
                     </div>
                 </div>
@@ -791,6 +817,13 @@
                                         : ''}"
                                 >
                                     {entityLabel(item.entities[0].entity_type)}
+                                </span>
+                            {/if}
+                            {#if isCoverage(item) && !tileset}
+                                <span
+                                    class="pointer-events-none absolute top-1 left-1 z-20 rounded bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground"
+                                >
+                                    coverage
                                 </span>
                             {/if}
                         </button>

@@ -45,6 +45,9 @@
         "boolean",
         "geometry",
         "arch_date",
+        "span",
+        "json",
+        "quantity",
     ];
 
     const phaseLabel = $derived.by(() => {
