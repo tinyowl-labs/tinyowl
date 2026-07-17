@@ -10,35 +10,46 @@ export function loadCesiumGlobal(): Promise<any> {
     if (loadPromise) return loadPromise;
 
     loadPromise = (async () => {
-        (window as any).CESIUM_BASE_URL = "/cesium/";
-        if (!document.querySelector('link[href="/cesium/Widgets/widgets.css"]')) {
-            const link = document.createElement("link");
-            link.rel = "stylesheet";
-            link.href = "/cesium/Widgets/widgets.css";
-            document.head.appendChild(link);
-        }
-        await new Promise<void>((resolve, reject) => {
-            const existing = document.querySelector(
-                'script[src="/cesium/Cesium.js"]',
-            );
-            if (existing && (window as any).Cesium) {
-                resolve();
-                return;
+        try {
+            (window as any).CESIUM_BASE_URL = "/cesium/";
+            if (
+                !document.querySelector(
+                    'link[href="/cesium/Widgets/widgets.css"]',
+                )
+            ) {
+                const link = document.createElement("link");
+                link.rel = "stylesheet";
+                link.href = "/cesium/Widgets/widgets.css";
+                document.head.appendChild(link);
             }
-            if (existing) {
-                existing.addEventListener("load", () => resolve());
-                existing.addEventListener("error", () =>
-                    reject(new Error("Failed to load Cesium.js")),
+            await new Promise<void>((resolve, reject) => {
+                const existing = document.querySelector(
+                    'script[src="/cesium/Cesium.js"]',
                 );
-                return;
-            }
-            const s = document.createElement("script");
-            s.src = "/cesium/Cesium.js";
-            s.onload = () => resolve();
-            s.onerror = () => reject(new Error("Failed to load Cesium.js"));
-            document.head.appendChild(s);
-        });
-        return (window as any).Cesium;
+                if (existing && (window as any).Cesium) {
+                    resolve();
+                    return;
+                }
+                if (existing) {
+                    existing.addEventListener("load", () => resolve());
+                    existing.addEventListener("error", () =>
+                        reject(new Error("Failed to load Cesium.js")),
+                    );
+                    return;
+                }
+                const s = document.createElement("script");
+                s.src = "/cesium/Cesium.js";
+                s.onload = () => resolve();
+                s.onerror = () =>
+                    reject(new Error("Failed to load Cesium.js"));
+                document.head.appendChild(s);
+            });
+            return (window as any).Cesium;
+        } catch (e) {
+            // Allow a later caller to retry after a transient failure.
+            loadPromise = null;
+            throw e;
+        }
     })();
 
     return loadPromise;

@@ -2034,7 +2034,9 @@
                 applyTilesetHeightOffset(existing, m.height_offset_m);
                 continue;
             }
-            if (!want || !m.root_url || dim !== "3d") continue;
+            // Always load while wanted — hide via .show in 2D so a later
+            // morph to 3D does not miss tilesets that arrived mid-2D.
+            if (!want || !m.root_url) continue;
             try {
                 const resource = new Cesium.Resource({
                     url: m.root_url,

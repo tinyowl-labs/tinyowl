@@ -489,6 +489,8 @@
                 };
             } catch (e) {
                 console.warn("SpatialMap Cesium failed", e);
+                // Release the loading overlay even on failure.
+                if (!cancelled) mapReady = true;
             }
         })();
 
