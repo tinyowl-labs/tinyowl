@@ -21,6 +21,7 @@
     import { onMount } from "svelte";
     import { entityLayersHref } from "$lib/project/entityLink";
     import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
+    import ArtefactMicroViewer from "$lib/components/artefacts/ArtefactMicroViewer.svelte";
     import { goto } from "$app/navigation";
     import {
         bboxFromGeoJSON,
@@ -167,6 +168,8 @@
 
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
+    /** Hashes that fell back from ?variant=preview to the full blob. */
+    let fullThumbHashes = $state<Set<string>>(new Set());
     let missingCount = $state(0);
     let storageChecked = $state(false);
     let integrityChecked = $state(false);
@@ -175,6 +178,10 @@
         loadedImages = new Set([...loadedImages, hash]);
     }
     function onImageError(hash: string) {
+        if (!fullThumbHashes.has(hash)) {
+            fullThumbHashes = new Set([...fullThumbHashes, hash]);
+            return;
+        }
         failedImages = new Set([...failedImages, hash]);
     }
 
@@ -230,10 +237,15 @@
         }
     }
 
-    function mediaUrl(item: MediaItem, opts?: { pdfFit?: boolean }): string {
-        const base =
-            item.url +
-            (accessToken ? `?token=${encodeURIComponent(accessToken)}` : "");
+    function mediaUrl(
+        item: MediaItem,
+        opts?: { pdfFit?: boolean; variant?: "preview" | "full" },
+    ): string {
+        const params = new URLSearchParams();
+        if (accessToken) params.set("token", accessToken);
+        if (opts?.variant === "preview") params.set("variant", "preview");
+        const qs = params.toString();
+        const base = qs ? `${item.url}?${qs}` : item.url;
         if (opts?.pdfFit && item.media_type === "application/pdf") {
             // Fit page width in the embedded viewer; hide chrome where supported.
             return `${base}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`;
@@ -241,8 +253,35 @@
         return base;
     }
 
+    /** Grid / panel thumb: prefer baked JPEG when likely, else full blob. */
+    function thumbUrl(item: MediaItem): string {
+        if (fullThumbHashes.has(item.hash)) return mediaUrl(item);
+        if (
+            isTiff(item) ||
+            item.profile === "coverage" ||
+            item.file_size > 1_500_000
+        ) {
+            return mediaUrl(item, { variant: "preview" });
+        }
+        return mediaUrl(item);
+    }
+
     function isPdf(item: MediaItem): boolean {
         return item.media_type === "application/pdf";
+    }
+
+    function isTiff(item: MediaItem): boolean {
+        const t = item.media_type.toLowerCase();
+        return t.includes("tiff") || t.includes("geotiff");
+    }
+
+    function isGltf(item: MediaItem): boolean {
+        const t = item.media_type.toLowerCase();
+        return (
+            t.startsWith("model/gltf") ||
+            t === "model/gltf-binary" ||
+            t === "model/gltf+json"
+        );
     }
 
     function isTileset(item: MediaItem): boolean {
@@ -251,6 +290,27 @@
             item.media_type === "application/vnd.3dtiles+zip" ||
             item.entities?.some((e) => e.entity_type === "tileset")
         );
+    }
+
+    function isModel3D(item: MediaItem): boolean {
+        return isTileset(item) || isGltf(item);
+    }
+
+    function tilesetRootUrl(hash: string): string {
+        return `/api/v1/projects/${$page.params.project}/tilesets/${hash}/tileset.json`;
+    }
+
+    /** Micro-viewer source for the selected 3D artefact (no auth query — Resource adds it). */
+    function modelPreviewSource(
+        item: MediaItem,
+    ): { kind: "tileset" | "gltf"; url: string } | null {
+        if (isGltf(item) && !isTileset(item)) {
+            return { kind: "gltf", url: item.url };
+        }
+        if (isTileset(item) || isGltf(item)) {
+            return { kind: "tileset", url: tilesetRootUrl(item.hash) };
+        }
+        return null;
     }
 
     function isCoverage(item: MediaItem): boolean {
@@ -436,7 +496,8 @@
         if (!selected) return;
         if (
             !selected.media_type.startsWith("image/") &&
-            !isPdf(selected)
+            !isPdf(selected) &&
+            !isModel3D(selected)
         )
             return;
         viewerOpen = true;
@@ -721,7 +782,7 @@
                             {typeFilter === "all"
                                 ? "Push data with photos or grey literature PDFs to see them here, linked to the entities they document."
                                 : typeFilter === "model"
-                                  ? "Upload a georeferenced .3tz (collaborator+) to view it in Layers → 3D."
+                                  ? "Upload a .3tz or .glb (collaborator+) — preview here, or open georeferenced models in Layers → 3D."
                                   : typeFilter === "coverage"
                                     ? "Register GeoTIFF or tileset media with profile=coverage (entity_type coverage or tileset)."
                                     : "Try another filter, or upload files that match this type."}
@@ -745,9 +806,15 @@
                             type="button"
                             onclick={() => selectItem(item)}
                             ondblclick={() => {
-                                selectItem(item);
-                                if (isImage) openViewer();
-                                else if (tileset) openIn3D(item.hash);
+                                selectedHash = item.hash;
+                                if (
+                                    isImage ||
+                                    tileset ||
+                                    isGltf(item) ||
+                                    isPdf(item)
+                                ) {
+                                    viewerOpen = true;
+                                }
                             }}
                             class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 outline-none transition-[box-shadow] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {active
                                 ? ''
@@ -774,7 +841,7 @@
                                     </div>
                                 {/if}
                                 <img
-                                    src={mediaUrl(item)}
+                                    src={thumbUrl(item)}
                                     alt=""
                                     class="h-full w-full object-cover {imgLoaded
                                         ? 'opacity-100'
@@ -783,6 +850,16 @@
                                     onload={() => onImageLoad(item.hash)}
                                     onerror={() => onImageError(item.hash)}
                                 />
+                            {:else if tileset || isGltf(item)}
+                                <div
+                                    class="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-neutral-800 to-neutral-950 text-muted-foreground"
+                                >
+                                    <BoxIcon class="size-6 opacity-70" />
+                                    <span
+                                        class="text-[10px] uppercase tracking-wide opacity-70"
+                                        >3D</span
+                                    >
+                                </div>
                             {:else}
                                 <div
                                     class="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground"
@@ -794,9 +871,6 @@
                                     {:else if pdf}
                                         <FileTextIcon class="size-6 opacity-70" />
                                         <span class="text-[10px] uppercase tracking-wide opacity-70">PDF</span>
-                                    {:else if tileset}
-                                        <BoxIcon class="size-6 opacity-70" />
-                                        <span class="text-[10px] uppercase tracking-wide opacity-70">3D</span>
                                     {:else}
                                         <FileWarningIcon
                                             class="size-6 opacity-70"
@@ -863,6 +937,10 @@
                 {@const isAudio = selected.media_type.startsWith("audio/")}
                 {@const pdf = isPdf(selected)}
                 {@const tileset = isTileset(selected)}
+                {@const model3d = isModel3D(selected)}
+                {@const modelSrc = model3d
+                    ? modelPreviewSource(selected)
+                    : null}
                 {@const links = linkedEntities(selected)}
 
                 <div
@@ -872,10 +950,12 @@
                         <p class="text-xs font-medium text-foreground truncate">
                             {pdf
                                 ? "Report"
-                                : tileset
+                                : model3d
                                   ? "3D model"
                                   : isImage
-                                    ? "Photo"
+                                    ? isTiff(selected)
+                                        ? "Raster"
+                                        : "Photo"
                                     : isVideo
                                       ? "Video"
                                       : isAudio
@@ -887,16 +967,27 @@
                         </p>
                     </div>
                     <div class="flex items-center gap-1.5 shrink-0">
-                        {#if tileset}
+                        {#if model3d}
                             <button
                                 type="button"
-                                onclick={() => openIn3D(selected.hash)}
+                                onclick={openViewer}
                                 class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                                title="Open in Layers 3D"
+                                title="Expand preview"
                             >
-                                <BoxIcon class="size-3" />
-                                Open in 3D
+                                <Maximize2Icon class="size-3" />
+                                Expand
                             </button>
+                            {#if tileset}
+                                <button
+                                    type="button"
+                                    onclick={() => openIn3D(selected.hash)}
+                                    class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                                    title="Open in Layers 3D"
+                                >
+                                    <BoxIcon class="size-3" />
+                                    Layers
+                                </button>
+                            {/if}
                         {/if}
                         {#if pdf}
                             <a
@@ -913,21 +1004,27 @@
                     </div>
                 </div>
 
-                <!-- Preview: click / hover expands images & PDFs -->
+                <!-- Preview: click / hover expands images, PDFs, and 3D -->
                 {#if isImage || pdf}
                     <button
                         type="button"
                         onclick={openViewer}
                         class="group/preview relative min-h-0 {pdf
                             ? 'flex-1'
-                            : 'aspect-[4/3] shrink-0'} bg-neutral-900/90 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                            : 'aspect-[4/3] shrink-0'} bg-neutral-950 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         title="Expand"
                     >
                         {#if isImage}
+                            <div
+                                class="pointer-events-none absolute inset-0 opacity-[0.07]"
+                                style="background-image: linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #fff 75%), linear-gradient(-45deg, transparent 75%, #fff 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0;"
+                            ></div>
                             <img
-                                src={mediaUrl(selected)}
+                                src={isTiff(selected)
+                                    ? mediaUrl(selected, { variant: "preview" })
+                                    : thumbUrl(selected)}
                                 alt=""
-                                class="h-full w-full object-contain"
+                                class="relative h-full w-full object-contain"
                             />
                         {:else}
                             <iframe
@@ -946,9 +1043,39 @@
                             Expand
                         </span>
                     </button>
+                {:else if model3d && modelSrc}
+                    <div
+                        class="group/preview relative aspect-[4/3] shrink-0 bg-neutral-950"
+                    >
+                        {#if !viewerOpen}
+                            {#key `${selected.hash}:${modelSrc.kind}`}
+                                <ArtefactMicroViewer
+                                    url={modelSrc.url}
+                                    kind={modelSrc.kind}
+                                    accessToken={accessToken}
+                                    class="absolute inset-0"
+                                />
+                            {/key}
+                            <button
+                                type="button"
+                                onclick={openViewer}
+                                class="absolute bottom-2 right-2 z-20 inline-flex items-center gap-1 rounded-md bg-background/90 px-2 py-1 text-[11px] text-foreground shadow-sm opacity-0 transition-opacity group-hover/preview:opacity-100 hover:bg-background"
+                                title="Expand 3D preview"
+                            >
+                                <Maximize2Icon class="size-3" />
+                                Expand
+                            </button>
+                        {:else}
+                            <div
+                                class="flex h-full items-center justify-center text-xs text-muted-foreground"
+                            >
+                                Expanded preview
+                            </div>
+                        {/if}
+                    </div>
                 {:else}
                     <div
-                        class="relative aspect-[4/3] shrink-0 bg-neutral-900/90"
+                        class="relative aspect-[4/3] shrink-0 bg-neutral-950"
                     >
                         {#if isVideo}
                             <video
@@ -968,25 +1095,6 @@
                                     controls
                                     class="w-full"
                                 ></audio>
-                            </div>
-                        {:else if tileset}
-                            <div
-                                class="flex h-full flex-col items-center justify-center gap-3 px-4 bg-secondary/40"
-                            >
-                                <BoxIcon
-                                    class="size-8 text-muted-foreground/50"
-                                />
-                                <p class="text-xs text-muted-foreground text-center">
-                                    Georeferenced 3D model package
-                                </p>
-                                <button
-                                    type="button"
-                                    onclick={() => openIn3D(selected.hash)}
-                                    class="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background hover:opacity-90"
-                                >
-                                    <BoxIcon class="size-3.5" />
-                                    Open in 3D
-                                </button>
                             </div>
                         {:else}
                             <div
@@ -1395,8 +1503,11 @@
     {/if}
 
     <!-- Quiet media viewer -->
-    {#if viewerOpen && selected && (selected.media_type.startsWith("image/") || isPdf(selected))}
+    {#if viewerOpen && selected && (selected.media_type.startsWith("image/") || isPdf(selected) || isModel3D(selected))}
         {@const pdf = isPdf(selected)}
+        {@const modelSrc = isModel3D(selected)
+            ? modelPreviewSource(selected)
+            : null}
         {@const links = linkedEntities(selected)}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
@@ -1412,6 +1523,8 @@
                 <p class="text-sm text-muted-foreground tabular-nums">
                     {#if pdf}
                         Report · {formatBytes(selected.file_size)}
+                    {:else if modelSrc}
+                        3D preview · {formatBytes(selected.file_size)}
                     {:else if viewerIdx >= 0}
                         {viewerIdx + 1} / {imageItems.length}
                     {/if}
@@ -1429,7 +1542,19 @@
                             Open
                         </a>
                     {/if}
-                    {#if links[0]}
+                    {#if isTileset(selected)}
+                        <button
+                            type="button"
+                            class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-foreground hover:bg-secondary transition-colors"
+                            onclick={(e) => {
+                                e.stopPropagation();
+                                openIn3D(selected.hash);
+                            }}
+                        >
+                            <BoxIcon class="size-3.5" />
+                            Open in Layers
+                        </button>
+                    {:else if links[0]}
                         <a
                             href={entityLink(
                                 links[0].entity_type,
@@ -1457,37 +1582,56 @@
             </div>
 
             <div
-                class="relative flex-1 flex items-center justify-center min-h-0 {pdf
+                class="relative flex-1 flex items-center justify-center min-h-0 overflow-hidden {pdf ||
+                modelSrc
                     ? 'p-0'
-                    : 'p-4'}"
+                    : ''}"
                 onclick={(e) => e.stopPropagation()}
             >
                 {#if pdf}
                     <iframe
                         title="PDF viewer"
                         src={mediaUrl(selected, { pdfFit: true })}
-                        class="h-full w-full border-0 bg-neutral-900"
+                        class="h-full w-full border-0 bg-neutral-950"
                     ></iframe>
+                {:else if modelSrc}
+                    {#key `full:${selected.hash}:${modelSrc.kind}`}
+                        <ArtefactMicroViewer
+                            url={modelSrc.url}
+                            kind={modelSrc.kind}
+                            accessToken={accessToken}
+                            class="h-full w-full"
+                        />
+                    {/key}
                 {:else}
                     {#if viewerIdx > 0}
                         <button
                             type="button"
-                            class="absolute left-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
+                            class="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
                             onclick={prevImage}
                             aria-label="Previous"
                         >
                             <ChevronLeft class="size-5" />
                         </button>
                     {/if}
-                    <img
-                        src={mediaUrl(selected)}
-                        alt=""
-                        class="max-h-full max-w-full object-contain"
-                    />
+                    <!-- Absolute fill so max-h/max-w % resolve against the viewport pane, not intrinsic image size. -->
+                    <div class="absolute inset-4 flex items-center justify-center overflow-hidden">
+                        <div
+                            class="pointer-events-none absolute inset-0 opacity-[0.06]"
+                            style="background-image: linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #fff 75%), linear-gradient(-45deg, transparent 75%, #fff 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0;"
+                        ></div>
+                        <img
+                            src={isTiff(selected)
+                                ? mediaUrl(selected, { variant: "preview" })
+                                : mediaUrl(selected)}
+                            alt=""
+                            class="relative z-[1] max-h-full max-w-full h-auto w-auto object-contain shadow-2xl"
+                        />
+                    </div>
                     {#if viewerIdx >= 0 && viewerIdx < imageItems.length - 1}
                         <button
                             type="button"
-                            class="absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
+                            class="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
                             onclick={nextImage}
                             aria-label="Next"
                         >
@@ -1497,7 +1641,7 @@
                 {/if}
             </div>
 
-            {#if links.length > 0 && !pdf}
+            {#if links.length > 0 && !pdf && !modelSrc}
                 <div
                     class="border-t border-border px-4 py-3 flex flex-wrap gap-2"
                     onclick={(e) => e.stopPropagation()}

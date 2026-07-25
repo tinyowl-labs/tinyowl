@@ -5,6 +5,7 @@
     import BoxIcon from "@lucide/svelte/icons/box";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
     import CesiumAttribution from "$lib/components/CesiumAttribution.svelte";
+    import EnuCornerWidget from "./EnuCornerWidget.svelte";
     import { isDark, mapColors, mapLayerPalette, themePrefs } from "$lib/stores/theme.svelte";
     import {
         layerSelection,
@@ -3112,6 +3113,10 @@
         class="cesium-scene absolute inset-0 bg-neutral-900"
     ></div>
     <div bind:this={creditSink} class="sr-only" aria-hidden="true"></div>
+
+    {#if ready && Cesium && viewer && dim === "3d"}
+        <EnuCornerWidget {Cesium} {viewer} show={true} />
+    {/if}
 
     <CesiumAttribution ion={hasIonTerrain} />
 </div>
