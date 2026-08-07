@@ -10,6 +10,7 @@
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import FileUpIcon from "@lucide/svelte/icons/file-up";
+    import GitPullRequestIcon from "@lucide/svelte/icons/git-pull-request";
     import Header from "$lib/components/ui/header.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
 
@@ -54,6 +55,11 @@
                                 label: "Manage",
                                 href: `/${data?.slug}/dashboard`,
                                 icon: GaugeIcon,
+                            },
+                            {
+                                label: "Reviews",
+                                href: `/${data?.slug}/review`,
+                                icon: GitPullRequestIcon,
                             },
                             {
                                 label: "Import",

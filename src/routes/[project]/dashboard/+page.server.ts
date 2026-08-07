@@ -71,6 +71,19 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     }
   } catch (_) {}
 
+  // Pending changesets (S1 review gate)
+  let pendingChangesets: any[] = [];
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets?status=pending`,
+      { headers },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      pendingChangesets = Array.isArray(data) ? data : [];
+    }
+  } catch (_) {}
+
   // Mappings
   let mappings: any[] = [];
   try {
@@ -81,5 +94,12 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) mappings = await res.json();
   } catch (_) {}
 
-  return { tables, warnings, diffs, mappings, accessToken: accessToken ?? "" };
+  return {
+    tables,
+    warnings,
+    diffs,
+    pendingChangesets,
+    mappings,
+    accessToken: accessToken ?? "",
+  };
 };

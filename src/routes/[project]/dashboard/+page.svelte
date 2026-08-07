@@ -46,6 +46,9 @@
     );
     const warnings = $derived(((data as any)?.warnings as any[]) ?? []);
     const diffs = $derived(((data as any)?.diffs as any[]) ?? []);
+    const pendingChangesets = $derived(
+        ((data as any)?.pendingChangesets as any[]) ?? [],
+    );
     const mappings = $derived(((data as any)?.mappings as any[]) ?? []);
 
     const bbox = $derived(((project as any)?.bbox as string) ?? null);
@@ -357,6 +360,55 @@
                             </div>
                             <p class="text-muted-foreground">{w.message}</p>
                         </div>
+                    {/each}
+                </div>
+            {/if}
+        </div>
+
+        <div class="rounded-lg border border-border overflow-hidden">
+            <div
+                class="flex items-center gap-2 px-4 py-3 border-b border-border"
+            >
+                <GitCommitIcon class="size-4 shrink-0 text-muted-foreground" />
+                <span class="text-sm font-medium text-foreground"
+                    >Pending review</span
+                >
+                {#if pendingChangesets.length > 0}
+                    <span class="text-xs text-muted-foreground"
+                        >({pendingChangesets.length})</span
+                    >
+                {/if}
+                <a
+                    href="/{slug}/review"
+                    class="ml-auto text-xs text-primary hover:underline"
+                    >All reviews</a
+                >
+            </div>
+            {#if pendingChangesets.length === 0}
+                <div
+                    class="px-4 py-6 text-center text-sm text-muted-foreground"
+                >
+                    No pending changesets
+                </div>
+            {:else}
+                <div class="divide-y divide-border max-h-80 overflow-y-auto">
+                    {#each pendingChangesets as cs}
+                        <a
+                            href="/{slug}/review/{cs.id}"
+                            class="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-accent/40"
+                        >
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="text-foreground truncate"
+                                    >{cs.message?.trim() || "Untitled push"}</span
+                                >
+                                <span class="text-muted-foreground shrink-0"
+                                    >{formatDate(cs.created_at)}</span
+                                >
+                            </div>
+                            <span class="font-mono text-muted-foreground shrink-0"
+                                >{cs.sha256?.slice(0, 7) ?? ""}</span
+                            >
+                        </a>
                     {/each}
                 </div>
             {/if}
