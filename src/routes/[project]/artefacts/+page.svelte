@@ -171,6 +171,8 @@
     /** Hashes that fell back from ?variant=preview to the full blob. */
     let fullThumbHashes = $state<Set<string>>(new Set());
     let missingCount = $state(0);
+    let orphanCount = $state(0);
+    let integrityError = $state(false);
     let storageChecked = $state(false);
     let integrityChecked = $state(false);
 
@@ -213,6 +215,8 @@
         // with blob-cache diagnostics meant for collaborators.
         if (!isMember && !canUpload) {
             missingCount = 0;
+            orphanCount = 0;
+            integrityError = false;
             storageChecked = false;
             integrityChecked = true;
             return;
@@ -225,15 +229,28 @@
                     ? { headers: { Authorization: `Bearer ${accessToken}` } }
                     : {},
             );
-            if (!res.ok) return;
+            if (!res.ok) {
+                integrityError = true;
+                missingCount = 0;
+                orphanCount = 0;
+                integrityChecked = true;
+                return;
+            }
             const body = await res.json();
             missingCount = Array.isArray(body.missing_blobs)
                 ? body.missing_blobs.length
                 : 0;
+            orphanCount = Array.isArray(body.orphan_blobs)
+                ? body.orphan_blobs.length
+                : 0;
             storageChecked = Boolean(body.storage_checked);
+            integrityError = false;
             integrityChecked = true;
         } catch {
-            /* advisory */
+            integrityError = true;
+            missingCount = 0;
+            orphanCount = 0;
+            integrityChecked = true;
         }
     }
 
@@ -722,30 +739,43 @@
         </div>
     </div>
 
-    {#if integrityChecked && missingCount > 0 && (isMember || canUpload)}
+    {#if integrityChecked && (isMember || canUpload) && (integrityError || missingCount > 0 || orphanCount > 0)}
         <div
             class="mb-3 flex items-start gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground"
         >
             <AlertTriangleIcon class="size-4 shrink-0 text-muted-foreground mt-0.5" />
             <p>
-                {#if storageChecked}
-                    <span class="text-foreground"
-                        >{missingCount} indexed file{missingCount === 1
-                            ? ""
-                            : "s"}</span
-                    >
-                    could not be found on this server or in cloud storage. If
-                    previews fail, re-push media from a machine that has the
-                    blobs.
+                {#if integrityError}
+                    Could not check media integrity right now. Refresh or try again after signing in as a collaborator.
                 {:else}
-                    <span class="text-foreground"
-                        >{missingCount} indexed file{missingCount === 1
-                            ? ""
-                            : "s"}</span
-                    >
-                    are not in this server’s local cache. Cloud storage is not
-                    configured here — files may still load once storage is
-                    connected, or after a collaborator re-pushes media.
+                    {#if missingCount > 0}
+                        {#if storageChecked}
+                            <span class="text-foreground"
+                                >{missingCount} indexed file{missingCount === 1
+                                    ? ""
+                                    : "s"}</span
+                            >
+                            could not be found on this server or in cloud storage. If
+                            previews fail, re-push media from a machine that has the
+                            blobs.
+                        {:else}
+                            <span class="text-foreground"
+                                >{missingCount} indexed file{missingCount === 1
+                                    ? ""
+                                    : "s"}</span
+                            >
+                            are not in this server’s local cache. Cloud storage is not
+                            configured here — files may still load once storage is
+                            connected, or after a collaborator re-pushes media.
+                        {/if}
+                    {/if}
+                    {#if orphanCount > 0}
+                        {#if missingCount > 0}<span class="mx-1">·</span>{/if}
+                        <span class="text-foreground"
+                            >{orphanCount} orphan blob{orphanCount === 1 ? "" : "s"}</span
+                        >
+                        on disk are not in the media index (safe to ignore, or clean up later).
+                    {/if}
                 {/if}
             </p>
         </div>
