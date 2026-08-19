@@ -171,6 +171,8 @@ export function createCesiumMap(
         creditContainer: creditSink,
         requestRenderMode,
         maximumRenderTimeChange: Infinity,
+        // Default true renders at 1× CSS px — blurry on HiDPI. Prefer devicePixelRatio.
+        useBrowserRecommendedResolution: false,
         baseLayer: new Cesium.ImageryLayer(
             new Cesium.UrlTemplateImageryProvider({
                 // CARTO light (no labels) — cleaner than OSM for map chrome.
@@ -189,6 +191,11 @@ export function createCesiumMap(
     if (viewer.scene.sun) viewer.scene.sun.show = false;
     if (viewer.scene.moon) viewer.scene.moon.show = false;
     if (viewer.scene.skyBox) viewer.scene.skyBox.show = false;
+    try {
+        viewer.scene.postProcessStages.fxaa.enabled = true;
+    } catch {
+        /* older builds */
+    }
     // Flat map controls — no tilt/roll in 2D shells.
     const ctrl = viewer.scene.screenSpaceCameraController;
     ctrl.enableTilt = false;

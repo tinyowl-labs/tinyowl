@@ -1011,7 +1011,7 @@
                 position: mid,
                 label: {
                     text: formatMeasureValue(measureMode, value, draftVertices),
-                    font: "12px sans-serif",
+                    font: "13px sans-serif",
                     fillColor: Cesium.Color.WHITE,
                     outlineColor: Cesium.Color.BLACK,
                     outlineWidth: 3,
@@ -1083,7 +1083,7 @@
             position: mid,
             label: {
                 text: label,
-                font: "12px sans-serif",
+                font: "13px sans-serif",
                 fillColor: Cesium.Color.WHITE,
                 outlineColor: Cesium.Color.BLACK,
                 outlineWidth: 3,
@@ -1972,6 +1972,9 @@
             fullscreenButton: false,
             infoBox: false,
             creditContainer: creditSink,
+            // Default true → 1× CSS pixels (soft/aliased on HiDPI).
+            useBrowserRecommendedResolution: false,
+            msaaSamples: 4,
             baseLayer: new Cesium.ImageryLayer(
                 new Cesium.UrlTemplateImageryProvider({
                     url: basemapTemplateUrl(),
@@ -1982,6 +1985,7 @@
         });
         try {
             viewer.resize();
+            viewer.scene.postProcessStages.fxaa.enabled = true;
         } catch {
             /* ignore */
         }

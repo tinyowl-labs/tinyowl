@@ -61,7 +61,7 @@ tinyowl import survey.gpkg ./my-survey
 
 ## Review gaps
 
-After import, edit `tables/*.toml` if needed, then push. In the web app: **Settings → Mappings** for value→concept cleanup and column annotation review.
+After import, edit `tables/*.toml` if needed, then push. In the web app: **Mappings** for value→concept cleanup and column annotation review.
 
 ## Flags
 

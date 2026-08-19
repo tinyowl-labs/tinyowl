@@ -1,13 +1,13 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
     import UsersIcon from "@lucide/svelte/icons/users";
+    import SettingsIcon from "@lucide/svelte/icons/settings";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import Trash2Icon from "@lucide/svelte/icons/trash-2";
     import CheckIcon from "@lucide/svelte/icons/check";
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
-    import MappingWorkbench from "$lib/components/settings/MappingWorkbench.svelte";
     import {
         LICENCES,
         LOCATION_PRECISIONS,
@@ -17,14 +17,6 @@
     const form = $derived(rawForm as any);
 
     const members = $derived(data?.members ?? []);
-    const mappings = $derived(data?.mappings ?? []);
-    const annotations = $derived(((data as any)?.annotations ?? []) as {
-        entity_type: string;
-        column_name: string;
-        vocabulary: string | null;
-        crm_property: string | null;
-        crm_range: string | null;
-    }[]);
     const currentUserId = $derived(data?.currentUserId ?? "");
     const userRole = $derived(data?.role ?? "viewer");
     const projectTitle = $derived(data?.project?.title ?? "Project");
@@ -119,58 +111,10 @@
     );
     const tableNames = $derived(Object.keys(tables));
 
-    // Merge schema columns with annotations so every column is mappable.
-    const columnRows = $derived.by(() => {
-        const byKey = new Map(
-            annotations.map((a) => [`${a.entity_type}|${a.column_name}`, a]),
-        );
-        const rows: {
-            entity_type: string;
-            column_name: string;
-            vocabulary: string | null;
-            crm_property: string | null;
-            crm_range: string | null;
-        }[] = [];
-        const seen = new Set<string>();
-
-        for (const [table, cols] of Object.entries(tables)) {
-            for (const col of cols ?? []) {
-                const key = `${table}|${col}`;
-                seen.add(key);
-                const a = byKey.get(key);
-                rows.push({
-                    entity_type: table,
-                    column_name: col,
-                    vocabulary: a?.vocabulary ?? null,
-                    crm_property: a?.crm_property ?? null,
-                    crm_range: a?.crm_range ?? null,
-                });
-            }
-        }
-        for (const a of annotations) {
-            const key = `${a.entity_type}|${a.column_name}`;
-            if (seen.has(key)) continue;
-            rows.push({
-                entity_type: a.entity_type,
-                column_name: a.column_name,
-                vocabulary: a.vocabulary ?? null,
-                crm_property: a.crm_property ?? null,
-                crm_range: a.crm_range ?? null,
-            });
-        }
-        return rows.sort(
-            (a, b) =>
-                a.entity_type.localeCompare(b.entity_type) ||
-                a.column_name.localeCompare(b.column_name),
-        );
-    });
-
     const tabs = $derived([
         { value: "general", label: "General" },
         { value: "qfieldcloud", label: "QFieldCloud" },
         { value: "members", label: "Members", count: members.length },
-        { value: "columns", label: "Columns", count: columnRows.length },
-        { value: "values", label: "Values", count: mappings.length },
     ]);
 
     const ROLE_LABELS: Record<string, string> = {
@@ -210,16 +154,21 @@
 </script>
 
 <svelte:head>
-    <title>{projectTitle} Settings — TinyOwl</title>
+    <title>Settings — {projectTitle} — TinyOwl</title>
 </svelte:head>
 
-<div class="mx-auto w-full max-w-4xl px-6 py-8">
-    <header class="mb-6">
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-            Settings
-        </h1>
-        <p class="mt-1 text-sm text-muted-foreground">{projectTitle}</p>
-    </header>
+<article class="mx-auto max-w-4xl px-6 py-12">
+    <div class="mb-8">
+        <div class="flex items-center gap-3">
+            <SettingsIcon class="size-6 text-muted-foreground" />
+            <h1 class="text-2xl font-bold tracking-tight text-foreground">
+                Settings
+            </h1>
+        </div>
+        <p class="mt-1 text-sm text-muted-foreground">
+            Visibility, QFieldCloud link, and members for {projectTitle}
+        </p>
+    </div>
 
     <Tabs bind:value={activeTab} {tabs}>
         {#snippet children(tabValue: string)}
@@ -954,30 +903,7 @@
                         </div>
                     {/if}
                 </div>
-            {:else if tabValue === "columns"}
-                <MappingWorkbench
-                    mode="columns"
-                    rows={columnRows}
-                    {form}
-                    description="Assign a CRM property to each column (e.g. crm:P2_has_type). Vocabulary is separate — usually set from TOML."
-                />
-            {:else if tabValue === "values"}
-                <div class="mb-3 flex justify-end">
-                    <a
-                        href="/{slug}/mappings.toml"
-                        class="text-xs font-medium text-primary hover:underline"
-                        download="{slug}-mappings.toml"
-                    >
-                        Export mappings.toml
-                    </a>
-                </div>
-                <MappingWorkbench
-                    mode="values"
-                    rows={mappings}
-                    {form}
-                    description="Map distinct values to external concepts. Multi-value (array) cells are exploded into one row per element — FK lists show the related label when available. Manual UI mappings are preserved on TOML push."
-                />
             {/if}
         {/snippet}
     </Tabs>
-</div>
+</article>

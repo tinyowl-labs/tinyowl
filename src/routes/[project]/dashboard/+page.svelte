@@ -466,7 +466,10 @@
 
     <!-- Mappings summary -->
     {#if mappings.length > 0}
-        <div class="rounded-lg border border-border bg-card px-4 py-3 mb-8">
+        <a
+            href="/{slug}/mappings"
+            class="rounded-lg border border-border bg-card px-4 py-3 mb-8 block hover:bg-accent/40"
+        >
             <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
                     <TagIcon class="size-4 shrink-0 text-muted-foreground" />
@@ -484,6 +487,6 @@
                     >
                 </div>
             </div>
-        </div>
+        </a>
     {/if}
 </article>

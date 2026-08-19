@@ -94,6 +94,8 @@ export default defineConfig({
   },
   server: {
     host: true,
+    // Allow Tailscale MagicDNS / Funnel hosts (leading-dot match is flaky across Vite versions).
+    allowedHosts: true,
     proxy: {
       "/media": "http://localhost:8080",
       // Long timeout: reverse-image POST embeds via OpenCLIP / embed-worker.
@@ -124,8 +126,8 @@ export default defineConfig({
   },
   preview: {
     host: true,
-    // Tailscale Funnel serves https://<machine>.<tailnet>.ts.net
-    allowedHosts: [".ts.net"],
+    // Tailscale Funnel / MagicDNS
+    allowedHosts: true,
     proxy: {
       "/media": "http://localhost:8080",
       "/api/v1": {

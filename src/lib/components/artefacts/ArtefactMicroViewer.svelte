@@ -695,11 +695,18 @@
                     creditContainer: creditSink,
                     requestRenderMode: true,
                     maximumRenderTimeChange: Infinity,
+                    useBrowserRecommendedResolution: false,
+                    msaaSamples: 4,
                     baseLayer: false,
                     skyBox: false,
                     skyAtmosphere: false,
                     globe: false,
                 });
+                try {
+                    viewer.scene.postProcessStages.fxaa.enabled = true;
+                } catch {
+                    /* ignore */
+                }
                 stripEarthChrome(viewer, Cesium);
                 viewer.scene.mode = Cesium.SceneMode.SCENE3D;
                 setupOrbitInput();
