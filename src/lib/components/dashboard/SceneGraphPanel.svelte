@@ -17,18 +17,24 @@
     } from "$lib/stores/layerSelection.svelte";
     import type { LayerData } from "./layerTypes";
     import type { ProjectTileset } from "./tilesetTypes";
+    import { isLocalTileset } from "./tilesetTypes";
+    import type { ProjectCoverage } from "./coverageTypes";
 
     type Props = {
         layers?: LayerData[];
         models?: ProjectTileset[];
+        coverages?: ProjectCoverage[];
         rows?: Record<string, Record<string, unknown>[]>;
         modelVisible?: (hash: string) => boolean;
+        coverageVisible?: (hash: string) => boolean;
         onToggleModel?: (hash: string) => void;
+        onToggleCoverage?: (hash: string) => void;
         onToggleLayer?: (idx: number) => void;
         onApplyHidden?: () => void;
         onFlyTo?: () => void;
         /** Fly camera to a whole layer's extent without requiring selection. */
         onFlyToLayer?: (layerName: string) => void;
+        onFlyToCoverage?: (hash: string) => void;
         pendingModels?: number;
         palette?: string[];
         inViewEntityKeys?: string[];
@@ -39,13 +45,17 @@
     let {
         layers = [],
         models = [],
+        coverages = [],
         rows = {},
         modelVisible = () => true,
+        coverageVisible = () => true,
         onToggleModel,
+        onToggleCoverage,
         onToggleLayer,
         onApplyHidden,
         onFlyTo,
         onFlyToLayer,
+        onFlyToCoverage,
         pendingModels = 0,
         palette = [],
         inViewEntityKeys = [],
@@ -55,6 +65,7 @@
 
     let query = $state("");
     let modelsOpen = $state(false);
+    let coveragesOpen = $state(true);
     let layerOpen = $state<Record<string, boolean>>({});
     let rangeAnchorKey = $state<string | null>(null);
     let layerMenu = $state<{
@@ -124,6 +135,7 @@
 
     function expandAll() {
         modelsOpen = true;
+        coveragesOpen = true;
         const next: Record<string, boolean> = {};
         for (const l of layers) next[l.name] = true;
         layerOpen = next;
@@ -131,6 +143,7 @@
 
     function collapseAll() {
         modelsOpen = false;
+        coveragesOpen = false;
         const next: Record<string, boolean> = {};
         for (const l of layers) next[l.name] = false;
         layerOpen = next;
@@ -272,6 +285,18 @@
             ),
     );
 
+    const filteredCoverages = $derived(
+        coverages
+            .filter((c) => matchesQuery(c.label || c.entity_id || c.hash))
+            .slice()
+            .sort((a, b) =>
+                byDisplayName(
+                    a.label || a.entity_id || a.hash,
+                    b.label || b.entity_id || b.hash,
+                ),
+            ),
+    );
+
     const sortedLayers = $derived(
         layers
             .map((layer, idx) => ({ layer, idx }))
@@ -390,6 +415,7 @@
                 <div class="mb-1 space-y-0.5 {childIndent}">
                     {#each filteredModels as m, idx}
                         {@const visible = modelVisible(m.hash)}
+                        {@const local = isLocalTileset(m)}
                         <div
                             class="flex w-full items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary"
                         >
@@ -397,7 +423,9 @@
                                 type="button"
                                 class="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-0.5 text-left"
                                 onclick={() => onToggleModel?.(m.hash)}
-                                title={m.label || m.hash}
+                                title={local
+                                    ? `${m.label || m.hash} (not georeferenced)`
+                                    : m.label || m.hash}
                             >
                                 <span
                                     class="size-2 shrink-0 rounded-full"
@@ -414,6 +442,12 @@
                                 >
                                     {m.label || m.hash.slice(0, 12)}
                                 </span>
+                                {#if local}
+                                    <span
+                                        class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                        >unplaced</span
+                                    >
+                                {/if}
                             </button>
                             <button
                                 type="button"
@@ -438,6 +472,105 @@
                             {pendingModels} processing…
                         </p>
                     {/if}
+                </div>
+            {/if}
+        {/if}
+
+        {#if coverages.length > 0}
+            <button
+                type="button"
+                class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-secondary"
+                onclick={() => (coveragesOpen = !coveragesOpen)}
+            >
+                <ChevronDownIcon
+                    class="size-3.5 shrink-0 transition-transform {coveragesOpen
+                        ? ''
+                        : '-rotate-90'}"
+                />
+                <LayersIcon class="size-3.5 shrink-0" />
+                <span class="truncate">Coverage</span>
+                <span class="ml-auto tabular-nums opacity-60"
+                    >{filteredCoverages.length}</span
+                >
+            </button>
+            {#if coveragesOpen}
+                <div class="mb-1 space-y-0.5 {childIndent}">
+                    {#each filteredCoverages as c, idx}
+                        {@const visible = coverageVisible(c.hash)}
+                        {@const status = (c.ingest_status || "").toLowerCase()}
+                        {@const canFly =
+                            Array.isArray(c.bbox_wgs84) &&
+                            c.bbox_wgs84.length === 4}
+                        {@const statusHint =
+                            status === "pending" || status === "processing"
+                                ? "processing…"
+                                : status === "failed"
+                                  ? "failed"
+                                  : ""}
+                        <div
+                            class="flex w-full items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary"
+                        >
+                            <button
+                                type="button"
+                                class="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-0.5 text-left"
+                                onclick={() => onToggleCoverage?.(c.hash)}
+                                title={c.label || c.entity_id || c.hash}
+                            >
+                                <span
+                                    class="size-2 shrink-0 rounded-sm"
+                                    style="background: {palette[
+                                        (idx + 3) % Math.max(palette.length, 1)
+                                    ] ?? '#6a8'}; opacity: {visible
+                                        ? '1'
+                                        : '0.25'}"
+                                ></span>
+                                <span
+                                    class="min-w-0 truncate {visible
+                                        ? ''
+                                        : 'opacity-40'}"
+                                >
+                                    {c.label ||
+                                        c.entity_id ||
+                                        c.hash.slice(0, 12)}
+                                </span>
+                                {#if statusHint}
+                                    <span
+                                        class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                    >
+                                        {statusHint}
+                                    </span>
+                                {/if}
+                            </button>
+                            {#if canFly}
+                                <button
+                                    type="button"
+                                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                                    title="Fly to coverage"
+                                    onclick={() => onFlyToCoverage?.(c.hash)}
+                                >
+                                    <CrosshairIcon class="size-3" />
+                                </button>
+                            {/if}
+                            <button
+                                type="button"
+                                class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                                title={visible
+                                    ? "Hide coverage"
+                                    : "Show coverage"}
+                                onclick={() => onToggleCoverage?.(c.hash)}
+                            >
+                                {#if visible}
+                                    <EyeIcon class="size-3" />
+                                {:else}
+                                    <EyeOffIcon class="size-3" />
+                                {/if}
+                            </button>
+                        </div>
+                    {:else}
+                        <p class="px-1 py-1 text-[10px] text-muted-foreground">
+                            No coverage
+                        </p>
+                    {/each}
                 </div>
             {/if}
         {/if}

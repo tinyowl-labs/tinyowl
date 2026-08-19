@@ -6,11 +6,11 @@ Endpoints for syncing project data via a diff-based protocol. The canonical data
 
 The sync model works as follows:
 
-1. **First push** — The client sends a DDL header to seed the GeoPackage schema, then applies the initial diff.
-2. **Subsequent pushes** — Each push applies a geodiff changeset to the canonical GeoPackage and saves the diff file with an incrementing sequence number.
-3. **Pull** — Clients request all diffs since a given `server_head`, allowing them to catch up.
+1. **First push** — The client sends a DDL header to seed the GeoPackage schema, then applies the initial diff (immediate).
+2. **Subsequent pushes** — Each incremental push creates a **pending changeset** (optional `X-TinyOwl-Message`). On **approve**, the server applies the geodiff, saves `NNNN.diff`, and advances `server_head`.
+3. **Pull** — Clients request all **approved** diffs since a given `server_head`.
 
-Each push triggers re-indexing: column mappings, entity spatial data, media references, and project metadata are all updated.
+Approve triggers re-indexing: column mappings, entity spatial data, media references, and project metadata.
 
 ## Get Server Head
 
@@ -98,9 +98,9 @@ curl -H "Authorization: Bearer <token>" \
 POST /api/v1/{org}/{project}/push
 ```
 
-Push a diff changeset to apply to the canonical GeoPackage.
+Push a diff changeset. **Incremental** pushes (existing canonical, not meta-only, not first-seed) become a **pending changeset** for review (S1). First-seed DDL, meta-only, and `push-full` still apply immediately.
 
-**Authenticated** — requires Bearer token and project membership.
+**Authenticated** — requires Bearer token and project membership (collaborator+).
 
 ### Request
 
@@ -111,6 +111,7 @@ The diff data is sent as the raw request body. Additional metadata is passed via
 | `X-TinyOwl-DDL` | Yes (first push) | Base64-encoded DDL to seed the GeoPackage schema |
 | `X-TinyOwl-Meta-Only` | No | If `"true"`, skip diff application and only re-index (requires existing canonical) |
 | `X-TinyOwl-Toml` | No | Base64-encoded JSON array of table TOML annotations |
+| `X-TinyOwl-Message` | No | Review message stored on the pending changeset (`tinyowl push -m`) |
 
 #### First Push (Schema Creation)
 
@@ -127,16 +128,28 @@ curl -X POST http://localhost:8090/api/v1/my-org/my-project/push \
   --data-binary @diff.bin
 ```
 
-#### Subsequent Pushes
+#### Subsequent (incremental) pushes
 
-After the initial push, subsequent pushes just need the diff body:
+After the initial push, incremental diffs land as **pending** (HTTP 202) until approve:
 
 ```bash
 curl -X POST http://localhost:8090/api/v1/my-org/my-project/push \
   -H "Authorization: Bearer <token>" \
+  -H "X-TinyOwl-Message: field edits from transect A" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @diff.bin
 ```
+
+```json
+{
+  "status": "pending",
+  "changeset_id": "<uuid>",
+  "server_head": "42",
+  "message": "field edits from transect A"
+}
+```
+
+One open pending changeset per project; a newer push supersedes the prior open row.
 
 #### Meta-Only Push
 
@@ -150,7 +163,7 @@ curl -X POST http://localhost:8090/api/v1/my-org/my-project/push \
   -d ''
 ```
 
-### Response
+### Immediate-apply response (first-seed / meta-only / no Postgres)
 
 ```json
 {
@@ -159,14 +172,24 @@ curl -X POST http://localhost:8090/api/v1/my-org/my-project/push \
 }
 ```
 
-| Field | Type | Description |
+---
+
+## Pending changesets (S1 review)
+
+| Method | Path | Notes |
 |---|---|---|
-| `server_head` | int | New HEAD sequence number after the push |
-| `status` | string | Always `"indexed"` on success |
+| `GET` | `/api/v1/projects/{slug}/changesets?status=pending` | List for members |
+| `GET` | `/api/v1/projects/{slug}/changesets/{id}` | Metadata + message |
+| `GET` | `/api/v1/projects/{slug}/changesets/{id}/changes` | `ListChanges` + summary; geometry enriched as GeoJSON |
+| `POST` | `/api/v1/projects/{slug}/changesets/{id}/approve` | Collaborator+: ApplyDiff → SaveDiff → index |
+| `POST` | `/api/v1/projects/{slug}/changesets/{id}/reject` | Optional JSON `{ "note": "..." }` |
+| `POST` | `/api/v1/projects/{slug}/changesets/{id}/request-changes` | Requires note |
 
-### What Happens on Push
+Pull continues to serve only **approved** `diffs` (unchanged). Review UI: `/{slug}/review` and `/{slug}/review/{id}`.
 
-After applying the diff, the server asynchronously:
+### What Happens on Approve
+
+After applying the pending diff, the server asynchronously:
 
 1. **Indexes mappings** — Upserts `column_annotations` from TOML; scans distinct values into `value_mappings`
 2. **Applies TOML annotations** — Vocabulary / CRM property / range on columns (`source: "toml"`, skips manual annotations)

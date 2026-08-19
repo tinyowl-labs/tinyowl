@@ -276,7 +276,7 @@ Column mappings connect your local data values to external standard vocabularies
 
 1. **You declare** a column with `vocabulary = "periodo"` in the TOML
 2. **On push**, the server scans distinct values in that column and creates `value_mappings` rows
-3. **In the web UI** (Settings → Values tab), you link local values to concept URIs:
+3. **In the web UI** (Mappings → Values), you link local values to concept URIs:
    - `"Iron Age"` → `periodo:p0v8k4r`
    - `"Roman"` → `periodo:roman`
 4. **Bulk-apply** — map the same value across multiple tables at once

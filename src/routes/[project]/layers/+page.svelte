@@ -13,6 +13,7 @@
     import { page } from "$app/stores";
     import { untrack } from "svelte";
     import type { ProjectTileset } from "$lib/components/dashboard/tilesetTypes";
+    import type { ProjectCoverage } from "$lib/components/dashboard/coverageTypes";
     import type { LayerData } from "$lib/components/dashboard/layerTypes";
     import {
         entityIdsFromPackets,
@@ -22,6 +23,7 @@
         type SchemaTable,
         type SchemaEdge,
     } from "$lib/components/dashboard/SchemaGraph.svelte";
+    import EntityRelationsPanel from "$lib/components/dashboard/EntityRelationsPanel.svelte";
     import FkLinker from "$lib/components/digitize/FkLinker.svelte";
     import RowNum from "$lib/components/ui/row-num.svelte";
     import { browser } from "$app/environment";
@@ -72,7 +74,7 @@
 
     const columnHelper = createColumnHelper<Record<string, unknown>>();
 
-    /** Format arch_date JSON (or leave plain strings) for table display. */
+    /** Format span / arch_date JSON (or leave plain strings) for table display. */
     function formatArchDateCell(raw: string): string | null {
         const s = raw.trim();
         if (!s.startsWith("{")) return null;
@@ -310,6 +312,7 @@
     let selectedTilesetHash = $state("");
     let tilesets = $state<ProjectTileset[]>([]);
     let tilesetsLoading = $state(false);
+    let coverages = $state<ProjectCoverage[]>([]);
     let mapChrome = $state<HTMLDivElement>();
     let mapFullscreen = $state(false);
 
@@ -507,6 +510,28 @@
         }
     }
 
+    async function loadCoverages() {
+        try {
+            const slug = $page.params.project;
+            const res = await fetch(`/api/v1/projects/${slug}/coverages`, {
+                headers: authHeaders(),
+            });
+            if (!res.ok) {
+                coverages = [];
+                return;
+            }
+            const body = await res.json();
+            const list = Array.isArray(body)
+                ? body
+                : Array.isArray(body?.coverages)
+                  ? body.coverages
+                  : [];
+            coverages = list as ProjectCoverage[];
+        } catch (_) {
+            coverages = [];
+        }
+    }
+
     // Stable key so ?highlight= URL updates (which re-run page load) don't refetch.
     const tableNamesKey = $derived(tableNames.join("\0"));
 
@@ -526,6 +551,12 @@
     $effect(() => {
         if (viewMode === "map" && mapDim === "3d") {
             void loadTilesets();
+        }
+    });
+
+    $effect(() => {
+        if (viewMode === "map") {
+            void loadCoverages();
         }
     });
 
@@ -622,6 +653,12 @@
                     .length === 1
                     ? ""
                     : "s"}{/if}
+            {#if viewMode === "map" && coverages.filter((c) => c.role !== "tileset").length > 0}
+                · {coverages.filter((c) => c.role !== "tileset").length}
+                coverage{coverages.filter((c) => c.role !== "tileset")
+                    .length === 1
+                    ? ""
+                    : "s"}{/if}
         </p>
     </div>
 
@@ -641,6 +678,7 @@
                     projectSlug={$page.params.project ?? ""}
                     {accessToken}
                     {tilesets}
+                    {coverages}
                     selectedHash={selectedTilesetHash}
                     loading={mapLoading}
                     layers={mapLayers}
@@ -760,8 +798,13 @@
                     </div>
                     {#if canWrite && accessToken}
                         <div
-                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[40%] overflow-y-auto"
+                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[40%] overflow-y-auto space-y-6"
                         >
+                            <EntityRelationsPanel
+                                slug={$page.params.project ?? ""}
+                                {accessToken}
+                                {canWrite}
+                            />
                             <FkLinker
                                 {accessToken}
                                 slug={$page.params.project ?? ""}
@@ -771,6 +814,16 @@
                                     schemaLoaded = false;
                                     void loadSchema();
                                 }}
+                            />
+                        </div>
+                    {:else}
+                        <div
+                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[30%] overflow-y-auto"
+                        >
+                            <EntityRelationsPanel
+                                slug={$page.params.project ?? ""}
+                                {accessToken}
+                                canWrite={false}
                             />
                         </div>
                     {/if}

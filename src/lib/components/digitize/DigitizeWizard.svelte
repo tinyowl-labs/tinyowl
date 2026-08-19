@@ -4,6 +4,7 @@
     import MediaStep from "./MediaStep.svelte";
     import DoneStep from "./DoneStep.svelte";
     import CheckIcon from "@lucide/svelte/icons/check";
+    import FileInputIcon from "@lucide/svelte/icons/file-input";
 
     type Props = {
         accessToken: string;
@@ -46,26 +47,30 @@
     function stepIndex(s: Step) {
         return steps.findIndex((x) => x.id === s);
     }
+
+    const inProject = $derived(Boolean(existingSlug));
 </script>
 
-<div class="mx-auto w-full max-w-4xl px-4 py-8 sm:py-10">
-    <header class="mb-8 max-w-2xl">
-        <p
-            class="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground mb-2"
-        >
-            Digitize
+<article class="mx-auto max-w-4xl px-6 py-12">
+    <div class="mb-8">
+        <div class="flex items-center gap-3">
+            <FileInputIcon class="size-6 text-muted-foreground" />
+            <h1 class="text-2xl font-bold tracking-tight text-foreground">
+                {inProject ? "Import" : "Start from a file"}
+            </h1>
+        </div>
+        <p class="mt-1 text-sm text-muted-foreground">
+            {#if inProject}
+                Add CSV or GeoJSON into {existingTitle || existingSlug}. Tables
+                stay project-owned — map values when you’re ready.
+            {:else}
+                Every site keeps its own tables. Import what you have, then link
+                foreign keys and map values when you’re ready.
+            {/if}
         </p>
-        <h1 class="text-3xl font-semibold tracking-tight text-foreground">
-            {existingSlug ? "Import into this project" : "Start from a file"}
-        </h1>
-        <p class="mt-2 text-sm text-muted-foreground leading-relaxed">
-            Every site keeps its own tables. Import what you have, then link
-            foreign keys and map values when you’re ready — no shared recording
-            template.
-        </p>
-    </header>
+    </div>
 
-    <nav class="mb-8" aria-label="Progress">
+    <nav class="mb-6" aria-label="Progress">
         <ol
             class="grid gap-2 {steps.length === 3
                 ? 'sm:grid-cols-3'
@@ -107,37 +112,37 @@
         </ol>
     </nav>
 
-    <div
-        class="rounded-xl border border-border bg-card/50 p-5 shadow-sm sm:p-7"
-    >
-        {#if step === "create"}
-            <CreateProjectStep
-                {accessToken}
-                onCreated={(info) => {
-                    slug = info.slug;
-                    title = info.title;
-                    step = "import";
-                }}
-            />
-        {:else if step === "import"}
-            <ImportDataStep
-                {accessToken}
-                {slug}
-                onImported={(info) => {
-                    tableKey = info.tableKey;
-                    rowCount = info.rows;
-                    step = "media";
-                }}
-            />
-        {:else if step === "media"}
-            <MediaStep
-                {accessToken}
-                projectSlug={slug}
-                onContinue={() => (step = "done")}
-                onSkip={() => (step = "done")}
-            />
-        {:else}
-            <DoneStep {slug} {title} {tableKey} {rowCount} />
-        {/if}
+    <div class="rounded-lg border border-border overflow-hidden">
+        <div class="p-5 sm:p-6">
+            {#if step === "create"}
+                <CreateProjectStep
+                    {accessToken}
+                    onCreated={(info) => {
+                        slug = info.slug;
+                        title = info.title;
+                        step = "import";
+                    }}
+                />
+            {:else if step === "import"}
+                <ImportDataStep
+                    {accessToken}
+                    {slug}
+                    onImported={(info) => {
+                        tableKey = info.tableKey;
+                        rowCount = info.rows;
+                        step = "media";
+                    }}
+                />
+            {:else if step === "media"}
+                <MediaStep
+                    {accessToken}
+                    projectSlug={slug}
+                    onContinue={() => (step = "done")}
+                    onSkip={() => (step = "done")}
+                />
+            {:else}
+                <DoneStep {slug} {title} {tableKey} {rowCount} />
+            {/if}
+        </div>
     </div>
-</div>
+</article>

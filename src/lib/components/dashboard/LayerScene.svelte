@@ -3,9 +3,9 @@
     import { env as publicEnv } from "$env/dynamic/public";
     import { onDestroy, onMount } from "svelte";
     import BoxIcon from "@lucide/svelte/icons/box";
-    import type { ProjectTileset } from "./tilesetTypes";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
     import CesiumAttribution from "$lib/components/CesiumAttribution.svelte";
+    import EnuCornerWidget from "./EnuCornerWidget.svelte";
     import { isDark, mapColors, mapLayerPalette, themePrefs } from "$lib/stores/theme.svelte";
     import {
         layerSelection,
@@ -32,6 +32,23 @@
         type PickCandidate,
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
+    import type { ProjectTileset } from "./tilesetTypes";
+    import { isLocalTileset } from "./tilesetTypes";
+    import type { ProjectCoverage } from "./coverageTypes";
+    import {
+        loadableRasters,
+        coveragePreviewUrl,
+        coverageTilesUrlTemplate,
+    } from "./coverageTypes";
+    import {
+        loadCoverageImagery,
+        resolveCoverageRectangle,
+        rectangleFromMeta,
+    } from "./coverageImagery";
+    import {
+        createCogImageryProvider,
+        shouldUseCogProvider,
+    } from "./cogImageryProvider";
     import {
         cesiumPropValue,
         entityIdFromPacketId,
@@ -64,6 +81,8 @@
         projectSlug: string;
         accessToken?: string;
         tilesets?: ProjectTileset[];
+        /** Raster + tileset coverage rows from GET …/coverages */
+        coverages?: ProjectCoverage[];
         selectedHash?: string;
         loading?: boolean;
         layers?: LayerData[];
@@ -82,6 +101,7 @@
         projectSlug,
         accessToken = "",
         tilesets = [],
+        coverages = [],
         selectedHash = "",
         loading = false,
         layers = [],
@@ -101,6 +121,8 @@
     /** True when World Terrain was attached (Ion attribution). */
     let hasIonTerrain = $state(false);
     let modelVis = $state<Record<string, boolean>>({});
+    let coverageVis = $state<Record<string, boolean>>({});
+    let coverageError = $state("");
     let popupHtml = $state("");
     let popupX = $state(0);
     let popupY = $state(0);
@@ -145,11 +167,14 @@
     let measureHandler: any;
     let postRenderRemover: (() => void) | null = null;
     const tilesetPrims = new Map<string, any>();
+    const coverageLayers = new Map<string, any[]>();
+    const coverageCogDestroy = new Map<string, () => void>();
     const layerSources = new Map<string, any>();
     const entityMeta = new WeakMap<object, EntityMeta>();
     let selectedEntity: any = null;
     let layerLoadGen = 0;
     let modelLoadGen = 0;
+    let coverageLoadGen = 0;
     let started = false;
     /** Frame the project/tileset extent once on boot. Reactive — gates loading overlay. */
     let hasFramed = $state(false);
@@ -193,6 +218,10 @@
     const models = $derived(
         tilesets.filter((t) => t.ingest_status === "ready" && t.root_url),
     );
+    const rasters = $derived(loadableRasters(coverages));
+    const coverageRows = $derived(
+        coverages.filter((c) => c.role !== "tileset"),
+    );
     const selected = $derived(
         models.find((t) => t.hash === selectedHash) ?? models[0] ?? null,
     );
@@ -207,6 +236,11 @@
     function isModelVisible(hash: string) {
         if (hash in modelVis) return modelVis[hash]!;
         return selected?.hash === hash;
+    }
+
+    function isCoverageVisible(hash: string) {
+        if (hash in coverageVis) return coverageVis[hash]!;
+        return true;
     }
 
     async function loadCesium() {
@@ -688,6 +722,15 @@
             applyTilesetHeightOffset(prim, m?.height_offset_m);
         }
 
+        // Non-georeferenced models: orbit the mesh locally; do not treat as site truth.
+        if (m && isLocalTileset(m) && prim?.boundingSphere?.radius > 0) {
+            await flyToSphere(
+                Cesium.BoundingSphere.clone(prim.boundingSphere),
+                1.0,
+            );
+            return;
+        }
+
         // No entity layers: tileset-only home.
         const bbox = m?.bbox_wgs84;
         if (Array.isArray(bbox)) {
@@ -968,7 +1011,7 @@
                 position: mid,
                 label: {
                     text: formatMeasureValue(measureMode, value, draftVertices),
-                    font: "12px sans-serif",
+                    font: "13px sans-serif",
                     fillColor: Cesium.Color.WHITE,
                     outlineColor: Cesium.Color.BLACK,
                     outlineWidth: 3,
@@ -1040,7 +1083,7 @@
             position: mid,
             label: {
                 text: label,
-                font: "12px sans-serif",
+                font: "13px sans-serif",
                 fillColor: Cesium.Color.WHITE,
                 outlineColor: Cesium.Color.BLACK,
                 outlineWidth: 3,
@@ -1929,6 +1972,9 @@
             fullscreenButton: false,
             infoBox: false,
             creditContainer: creditSink,
+            // Default true → 1× CSS pixels (soft/aliased on HiDPI).
+            useBrowserRecommendedResolution: false,
+            msaaSamples: 4,
             baseLayer: new Cesium.ImageryLayer(
                 new Cesium.UrlTemplateImageryProvider({
                     url: basemapTemplateUrl(),
@@ -1939,6 +1985,7 @@
         });
         try {
             viewer.resize();
+            viewer.scene.postProcessStages.fxaa.enabled = true;
         } catch {
             /* ignore */
         }
@@ -2104,6 +2151,201 @@
         }
     }
 
+    function destroyCoverageLayer(hash: string) {
+        const layers = coverageLayers.get(hash);
+        if (layers && viewer) {
+            for (const layer of layers) {
+                try {
+                    viewer.imageryLayers.remove(layer, true);
+                } catch {
+                    /* ignore */
+                }
+            }
+        }
+        coverageLayers.delete(hash);
+        const destroy = coverageCogDestroy.get(hash);
+        if (destroy) {
+            try {
+                destroy();
+            } catch {
+                /* ignore */
+            }
+            coverageCogDestroy.delete(hash);
+        }
+    }
+
+    async function syncCoverageImagery() {
+        if (!viewer || !Cesium) return;
+        const gen = ++coverageLoadGen;
+        coverageError = "";
+        const want = new Set(rasters.map((c) => c.hash));
+
+        for (const hash of [...coverageLayers.keys()]) {
+            if (!want.has(hash)) destroyCoverageLayer(hash);
+        }
+
+        for (const cov of rasters) {
+            if (gen !== coverageLoadGen) return;
+            const existing = coverageLayers.get(cov.hash);
+            if (existing) {
+                const show = isCoverageVisible(cov.hash);
+                for (const layer of existing) layer.show = show;
+                continue;
+            }
+            if (!isCoverageVisible(cov.hash)) continue;
+            try {
+                const added: any[] = [];
+                let rect = rectangleFromMeta(cov);
+                if (!rect) {
+                    rect = await resolveCoverageRectangle(
+                        cov,
+                        accessToken || null,
+                    );
+                }
+
+                const previewUrl = coveragePreviewUrl(
+                    cov,
+                    accessToken || null,
+                );
+                const tilesTpl = coverageTilesUrlTemplate(
+                    cov,
+                    accessToken || null,
+                );
+
+                // Static XYZ archive (PMTiles/MBTiles proxy) — preferred when ready.
+                if (tilesTpl && rect) {
+                    const tileProvider = new Cesium.UrlTemplateImageryProvider({
+                        url: tilesTpl,
+                        rectangle: Cesium.Rectangle.fromDegrees(
+                            rect.west,
+                            rect.south,
+                            rect.east,
+                            rect.north,
+                        ),
+                        // Credit omitted — project coverage
+                    });
+                    if (gen !== coverageLoadGen) return;
+                    const tileLayer =
+                        viewer.imageryLayers.addImageryProvider(tileProvider);
+                    tileLayer.show = isCoverageVisible(cov.hash);
+                    added.push(tileLayer);
+                    coverageLayers.set(cov.hash, added);
+                    continue;
+                }
+
+                // Baked low-res overview: instant base (also used for artefact thumbs).
+                if (previewUrl && rect) {
+                    const previewProvider =
+                        await Cesium.SingleTileImageryProvider.fromUrl(
+                            previewUrl,
+                            {
+                                rectangle: Cesium.Rectangle.fromDegrees(
+                                    rect.west,
+                                    rect.south,
+                                    rect.east,
+                                    rect.north,
+                                ),
+                            },
+                        );
+                    if (gen !== coverageLoadGen) return;
+                    const previewLayer =
+                        viewer.imageryLayers.addImageryProvider(
+                            previewProvider,
+                        );
+                    previewLayer.show = isCoverageVisible(cov.hash);
+                    added.push(previewLayer);
+                }
+
+                if (shouldUseCogProvider(cov)) {
+                    if (!rect) {
+                        throw new Error(
+                            `Coverage ${cov.label || cov.hash.slice(0, 8)} has no geographic bbox`,
+                        );
+                    }
+                    // When preview exists, only request COG tiles after zooming in.
+                    const handle = await createCogImageryProvider(
+                        Cesium,
+                        cov,
+                        accessToken || null,
+                        rect,
+                        { minimumLevel: previewUrl ? 2 : 0 },
+                    );
+                    if (gen !== coverageLoadGen) {
+                        handle.destroy();
+                        return;
+                    }
+                    const cogLayer = viewer.imageryLayers.addImageryProvider(
+                        handle.provider,
+                    );
+                    cogLayer.show = isCoverageVisible(cov.hash);
+                    added.push(cogLayer);
+                    coverageCogDestroy.set(cov.hash, handle.destroy);
+                } else if (!previewUrl) {
+                    const loaded = await loadCoverageImagery(
+                        cov,
+                        accessToken || null,
+                    );
+                    if (gen !== coverageLoadGen) return;
+                    const provider =
+                        await Cesium.SingleTileImageryProvider.fromUrl(
+                            loaded.dataUrl,
+                            {
+                                rectangle: Cesium.Rectangle.fromDegrees(
+                                    loaded.rectangle.west,
+                                    loaded.rectangle.south,
+                                    loaded.rectangle.east,
+                                    loaded.rectangle.north,
+                                ),
+                            },
+                        );
+                    if (gen !== coverageLoadGen) return;
+                    const layer =
+                        viewer.imageryLayers.addImageryProvider(provider);
+                    layer.show = isCoverageVisible(cov.hash);
+                    added.push(layer);
+                }
+
+                if (added.length > 0) {
+                    coverageLayers.set(cov.hash, added);
+                }
+            } catch (e) {
+                if (gen === coverageLoadGen) {
+                    const msg =
+                        e instanceof Error
+                            ? e.message
+                            : "Failed to load coverage imagery";
+                    coverageError = coverageError
+                        ? `${coverageError}; ${msg}`
+                        : msg;
+                    console.warn("coverage imagery", cov.hash, e);
+                }
+            }
+        }
+    }
+
+    function toggleCoverage(hash: string) {
+        const next = !isCoverageVisible(hash);
+        coverageVis = { ...coverageVis, [hash]: next };
+        const layers = coverageLayers.get(hash);
+        if (layers) {
+            for (const layer of layers) layer.show = next;
+            return;
+        }
+        if (next) void syncCoverageImagery();
+    }
+
+    function flyToCoverage(hash: string) {
+        if (!viewer || !Cesium) return;
+        const cov = rasters.find((c) => c.hash === hash);
+        const bb = cov?.bbox_wgs84;
+        if (!bb || bb.length !== 4) return;
+        const rect = Cesium.Rectangle.fromDegrees(bb[0], bb[1], bb[2], bb[3]);
+        void viewer.camera.flyTo({
+            destination: rect,
+            duration: 0.8,
+        });
+    }
+
     async function syncLayers() {
         if (!viewer || !Cesium) return;
         const gen = ++layerLoadGen;
@@ -2177,6 +2419,13 @@
     let modelKey = $derived(
         models.map((m) => m.hash).join("|") + "|" + accessToken,
     );
+    let coverageKey = $derived(
+        rasters.map((c) => c.hash).join("|") +
+            "|" +
+            accessToken +
+            "|" +
+            rasters.map((c) => (c.bbox_wgs84 ?? []).join(",")).join(";"),
+    );
     let layerContentKey = $derived(
         layers
             .map((l) => `${l.name}:${l.packets?.length ?? 0}`)
@@ -2187,6 +2436,12 @@
         modelKey;
         if (!ready || !started) return;
         void syncModels(false);
+    });
+
+    $effect(() => {
+        coverageKey;
+        if (!ready || !started) return;
+        void syncCoverageImagery();
     });
 
     $effect(() => {
@@ -2283,6 +2538,7 @@
         }
         dragHandler = null;
         for (const hash of [...tilesetPrims.keys()]) destroyTileset(hash);
+        for (const hash of [...coverageLayers.keys()]) destroyCoverageLayer(hash);
         for (const name of [...layerSources.keys()]) destroyLayerSource(name);
         try {
             viewer?.destroy?.();
@@ -2751,16 +3007,19 @@
         <CesiumLoading />
     {/if}
 
-    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0)}
+    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
         <div class="absolute top-2 right-2 z-10">
             <SceneGraphPanel
                 {layers}
                 {models}
+                coverages={coverageRows}
                 {rows}
                 {palette}
                 pendingModels={pending}
                 modelVisible={isModelVisible}
+                coverageVisible={isCoverageVisible}
                 onToggleModel={toggleModel}
+                onToggleCoverage={toggleCoverage}
                 onToggleLayer={toggleLayer}
                 onApplyHidden={applyHiddenVisibility}
                 onFlyTo={() => {
@@ -2770,6 +3029,7 @@
                 onFlyToLayer={(name) => {
                     void flyToLayerExtent(name);
                 }}
+                onFlyToCoverage={flyToCoverage}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
@@ -2777,7 +3037,15 @@
         </div>
     {/if}
 
-    {#if ready && !loading && models.length === 0 && layers.length === 0}
+    {#if coverageError}
+        <div
+            class="absolute bottom-10 left-2 right-2 z-10 rounded-md border border-border bg-background/95 px-2 py-1.5 text-[11px] text-muted-foreground"
+        >
+            Coverage: {coverageError}
+        </div>
+    {/if}
+
+    {#if ready && !loading && models.length === 0 && layers.length === 0 && coverageRows.length === 0}
         <div
             class="absolute inset-0 z-5 flex flex-col items-center justify-center gap-2 bg-background/70 px-6 text-center"
         >
@@ -2849,6 +3117,10 @@
         class="cesium-scene absolute inset-0 bg-neutral-900"
     ></div>
     <div bind:this={creditSink} class="sr-only" aria-hidden="true"></div>
+
+    {#if ready && Cesium && viewer && dim === "3d"}
+        <EnuCornerWidget {Cesium} {viewer} show={true} />
+    {/if}
 
     <CesiumAttribution ion={hasIonTerrain} />
 </div>
