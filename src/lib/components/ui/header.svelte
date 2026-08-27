@@ -1,5 +1,4 @@
 <script lang="ts">
-    import redthreadSvg from "$lib/assets/redthread.svg?raw";
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
     import {
@@ -16,6 +15,7 @@
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
     import { buttonVariants } from "$lib/components/ui/button/button.svelte";
     import { cn } from "$lib/utils.js";
+    import EchidnaLogo from "$lib/components/ui/echidna-logo.svelte";
 
     let {
         subtitle = "",
@@ -24,15 +24,6 @@
     }: { subtitle?: string; hasSession?: boolean; fixed?: boolean } = $props();
 
     const dark = $derived(isDark());
-    const owlSvg = $derived(
-        dark
-            ? redthreadSvg
-                  .replace(/fill:#000000/g, "fill:currentColor")
-                  .replace(/stroke:#000000/g, "stroke:currentColor")
-                  .replace(/fill:#ffffff/g, "fill:#000000")
-                  .replace(/stroke:#ffffff/g, "stroke:#000000")
-            : redthreadSvg,
-    );
 
     let isMounted = $state(false);
     onMount(() => (isMounted = true));
@@ -53,15 +44,15 @@
     <div class="flex items-center gap-2.5">
         <a
             href="/"
-            aria-label="tinyowl"
-            class="text-sm font-semibold text-foreground"
+            aria-label="echidna"
+            class="inline-flex items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground"
         >
             <span
-                class="size-5 shrink-0 inline-block [&>svg]:w-full [&>svg]:h-full mr-1.5 align-middle"
+                class="size-6 shrink-0 inline-block [&>svg]:w-full [&>svg]:h-full"
             >
-                {#if isMounted}{@html owlSvg}{/if}
+                {#if isMounted}<EchidnaLogo />{/if}
             </span>
-            tinyowl
+            echidna
         </a>
         {#if subtitle}
             <span class="w-px h-4 shrink-0 bg-border"></span>

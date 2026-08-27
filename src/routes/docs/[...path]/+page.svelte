@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-    <title>{data?.title ?? "Documentation"} — TinyOwl Docs</title>
+    <title>{data?.title ?? "Documentation"} — echidna Docs</title>
 </svelte:head>
 
 <article class="mx-auto max-w-4xl px-6 py-12">

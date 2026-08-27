@@ -258,6 +258,38 @@ export function destroyCesiumViewer(viewer: any) {
     }
 }
 
+/**
+ * High-contrast entity/measure labels for light (and dimmed-light) basemaps.
+ * Outline alone washes out on CARTO — use a dark pill background.
+ */
+export function cesiumMapLabel(
+    Cesium: any,
+    text: string,
+    opts: {
+        font?: string;
+        pixelOffsetY?: number;
+        verticalOrigin?: unknown;
+    } = {},
+) {
+    return {
+        text,
+        font: opts.font ?? "600 13px ui-sans-serif, system-ui, sans-serif",
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        showBackground: true,
+        backgroundColor: Cesium.Color.fromCssColorString("#0b0b0b").withAlpha(
+            0.78,
+        ),
+        backgroundPadding: new Cesium.Cartesian2(8, 5),
+        verticalOrigin:
+            opts.verticalOrigin ?? Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, opts.pixelOffsetY ?? -14),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    };
+}
+
 /** Haversine distance in metres. */
 export function haversineMetres(
     lat1: number,

@@ -432,7 +432,7 @@
 </script>
 
 <svelte:head>
-    <title>{data.query ? `${data.query} — Search` : "Search"} — TinyOwl</title>
+    <title>{data.query ? `${data.query} — Search` : "Search"} — echidna</title>
 </svelte:head>
 
 <div class="flex min-h-screen flex-col bg-background">
@@ -499,7 +499,7 @@
                 {#if !activeQuery}
                     <div class="py-8 text-muted-foreground">
                         <SearchIcon class="size-8 mb-3 opacity-30" />
-                        <p class="text-lg text-foreground">Search TinyOwl</p>
+                        <p class="text-lg text-foreground">Search echidna</p>
                         <p class="text-sm mt-2 max-w-md">
                             Find projects by title, vocabulary, period, or place —
                             or attach an image to find visually similar photos.

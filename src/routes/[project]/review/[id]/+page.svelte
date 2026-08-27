@@ -227,7 +227,7 @@
 </script>
 
 <svelte:head>
-    <title>Review — {slug} — TinyOwl</title>
+    <title>Review — {slug} — echidna</title>
 </svelte:head>
 
 <article class="flex flex-col h-full min-h-0">

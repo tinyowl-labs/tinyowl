@@ -585,7 +585,7 @@
 </script>
 
 <svelte:head>
-    <title>Layers — TinyOwl</title>
+    <title>Layers — echidna</title>
 </svelte:head>
 
 <div class="flex flex-col h-full px-6 py-4">

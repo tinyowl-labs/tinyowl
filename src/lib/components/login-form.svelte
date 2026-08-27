@@ -40,7 +40,7 @@
 <form onsubmit={handleSubmit} class="flex flex-col gap-6">
     <FieldGroup>
         <div class="flex flex-col items-center gap-1 text-center">
-            <h1 class="text-2xl font-bold">Sign in to TinyOwl</h1>
+            <h1 class="text-2xl font-bold">Sign in to echidna</h1>
             <p class="text-muted-foreground text-sm text-balance">
                 {#if inviteOnly}
                     Use the credentials you were given for this private demo

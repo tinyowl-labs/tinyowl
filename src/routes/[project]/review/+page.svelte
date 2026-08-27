@@ -24,7 +24,7 @@
 </script>
 
 <svelte:head>
-    <title>Reviews — {slug} — TinyOwl</title>
+    <title>Reviews — {slug} — echidna</title>
 </svelte:head>
 
 <article class="mx-auto max-w-4xl px-6 py-12">

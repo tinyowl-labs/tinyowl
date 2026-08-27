@@ -47,6 +47,8 @@
         autofocus?: boolean;
         placeholder?: string;
         examples?: string[];
+        /** Show ⌘K / Ctrl K cue and focus the input on that shortcut. */
+        shortcutHint?: boolean;
         class?: string;
     };
 
@@ -67,6 +69,7 @@
         autofocus = false,
         placeholder = "Search projects…  Type @ for filters",
         examples = [],
+        shortcutHint = false,
         class: klass = "",
     }: Props = $props();
 
@@ -185,6 +188,8 @@
         }));
     });
 
+    let isMac = $state(false);
+
     onMount(() => {
         const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
         const syncMotion = () => {
@@ -192,7 +197,37 @@
         };
         syncMotion();
         mq.addEventListener("change", syncMotion);
-        return () => mq.removeEventListener("change", syncMotion);
+
+        isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+
+        const onGlobalKey = (e: KeyboardEvent) => {
+            if (!shortcutHint) return;
+            const key = e.key.toLowerCase();
+            if (key !== "k") return;
+            if (!(e.metaKey || e.ctrlKey)) return;
+            // Don't steal from editable fields elsewhere.
+            const t = e.target as HTMLElement | null;
+            const tag = t?.tagName;
+            if (
+                t &&
+                t !== inputEl &&
+                (tag === "INPUT" ||
+                    tag === "TEXTAREA" ||
+                    tag === "SELECT" ||
+                    t.isContentEditable)
+            ) {
+                return;
+            }
+            e.preventDefault();
+            inputEl?.focus();
+            inputEl?.select();
+        };
+        window.addEventListener("keydown", onGlobalKey);
+
+        return () => {
+            mq.removeEventListener("change", syncMotion);
+            window.removeEventListener("keydown", onGlobalKey);
+        };
     });
 
     $effect(() => {
@@ -662,7 +697,9 @@
         />
         {#if cycling && !paused}
             <span
-                class="pointer-events-none absolute left-10 right-12 top-1/2 z-10 -translate-y-1/2 truncate text-sm text-muted-foreground transition-opacity duration-200 {exampleVisible
+                class="pointer-events-none absolute left-10 top-1/2 z-10 -translate-y-1/2 truncate text-sm text-muted-foreground transition-opacity duration-200 {shortcutHint
+                    ? 'right-28'
+                    : 'right-12'} {exampleVisible
                     ? 'opacity-100'
                     : 'opacity-0'}"
                 aria-hidden="true">{activePlaceholder}</span
@@ -684,7 +721,9 @@
             onkeydown={onKeydown}
             onfocus={() => (focused = true)}
             onblur={onBlur}
-            class="w-full rounded-xl border border-border bg-background py-3 pl-10 pr-12 text-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none shadow-sm {klass}"
+            class="w-full rounded-xl border border-border bg-background py-3 pl-10 text-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none shadow-sm dark:bg-muted dark:shadow-none {shortcutHint
+                ? 'pr-28'
+                : 'pr-12'} {klass}"
         />
         <input
             bind:this={fileInputEl}
@@ -695,6 +734,21 @@
             aria-hidden="true"
             onchange={onFilePicked}
         />
+        {#if shortcutHint && !focused}
+            <span
+                class="pointer-events-none absolute right-11 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 text-[10px] text-muted-foreground/80"
+                aria-hidden="true"
+            >
+                <kbd
+                    class="rounded border border-border bg-background/80 px-1.5 py-0.5 font-sans dark:bg-background/40"
+                    >{isMac ? "⌘" : "Ctrl"}</kbd
+                >
+                <kbd
+                    class="rounded border border-border bg-background/80 px-1.5 py-0.5 font-sans dark:bg-background/40"
+                    >K</kbd
+                >
+            </span>
+        {/if}
         <button
             type="button"
             class="absolute right-2.5 top-1/2 z-10 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"

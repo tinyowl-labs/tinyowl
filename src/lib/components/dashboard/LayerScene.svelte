@@ -64,6 +64,7 @@
         type MeasureRecord,
         type MeasureVertex,
     } from "$lib/measure";
+    import { cesiumMapLabel } from "$lib/components/cesiumBoot";
 
     type EntityMeta = {
         layerName: string;
@@ -1010,15 +1011,11 @@
                 id: "draft:label",
                 position: mid,
                 label: {
-                    text: formatMeasureValue(measureMode, value, draftVertices),
-                    font: "13px sans-serif",
-                    fillColor: Cesium.Color.WHITE,
-                    outlineColor: Cesium.Color.BLACK,
-                    outlineWidth: 3,
-                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                    pixelOffset: new Cesium.Cartesian2(0, -12),
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    ...cesiumMapLabel(
+                        Cesium,
+                        formatMeasureValue(measureMode, value, draftVertices),
+                        { pixelOffsetY: -12 },
+                    ),
                 },
             });
         }
@@ -1082,15 +1079,7 @@
             id: `${id}:label`,
             position: mid,
             label: {
-                text: label,
-                font: "13px sans-serif",
-                fillColor: Cesium.Color.WHITE,
-                outlineColor: Cesium.Color.BLACK,
-                outlineWidth: 3,
-                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                pixelOffset: new Cesium.Cartesian2(0, -12),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                ...cesiumMapLabel(Cesium, label, { pixelOffsetY: -12 }),
             },
         });
 

@@ -70,7 +70,7 @@
 </script>
 
 <svelte:head>
-    <title>Mappings — {slug} — TinyOwl</title>
+    <title>Mappings — {slug} — echidna</title>
 </svelte:head>
 
 <article class="mx-auto max-w-4xl px-6 py-12">

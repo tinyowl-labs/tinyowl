@@ -322,7 +322,7 @@
     });
 </script>
 
-<svelte:head><title>Settings — TinyOwl</title></svelte:head>
+<svelte:head><title>Settings — echidna</title></svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
     <Header subtitle="Settings" {hasSession} />

@@ -99,7 +99,7 @@
 </script>
 
 <svelte:head>
-    <title>Manage — {project?.title ?? "Project"} — TinyOwl</title>
+    <title>Manage — {project?.title ?? "Project"} — echidna</title>
 </svelte:head>
 
 <!-- Close dropdown on outside click -->

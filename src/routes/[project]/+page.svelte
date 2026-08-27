@@ -237,7 +237,7 @@
 </script>
 
 <svelte:head>
-    <title>{project?.title ?? "Project"} — TinyOwl</title>
+    <title>{project?.title ?? "Project"} — echidna</title>
 </svelte:head>
 
 <article class="mx-auto max-w-5xl px-6 py-12">

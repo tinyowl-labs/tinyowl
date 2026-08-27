@@ -3,6 +3,7 @@
     import LoaderIcon from "@lucide/svelte/icons/loader";
     import XIcon from "@lucide/svelte/icons/x";
     import { entityLayersHref } from "$lib/project/entityLink";
+    import { sha256Hex } from "$lib/crypto/sha256";
 
     type Props = {
         projectSlug: string;
@@ -23,13 +24,6 @@
     >([]);
     let dragOver = $state(false);
     let open = $state(false);
-
-    async function sha256Hex(buf: ArrayBuffer): Promise<string> {
-        const hash = await crypto.subtle.digest("SHA-256", buf);
-        return [...new Uint8Array(hash)]
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("");
-    }
 
     async function searchEntities(q: string) {
         entityQuery = q;

@@ -154,7 +154,7 @@
 </script>
 
 <svelte:head>
-    <title>Settings — {projectTitle} — TinyOwl</title>
+    <title>Settings — {projectTitle} — echidna</title>
 </svelte:head>
 
 <article class="mx-auto max-w-4xl px-6 py-12">

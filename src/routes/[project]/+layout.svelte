@@ -109,7 +109,7 @@
 </script>
 
 <svelte:head>
-    <title>{project?.title ?? "Project"} — TinyOwl</title>
+    <title>{project?.title ?? "Project"} — echidna</title>
 </svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">

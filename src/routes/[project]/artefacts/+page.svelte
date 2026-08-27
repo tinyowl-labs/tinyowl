@@ -270,14 +270,11 @@
         return base;
     }
 
-    /** Grid / panel thumb: prefer baked JPEG when likely, else full blob. */
+    /** Grid / panel thumb: baked JPEG only for coverage/TIFF (raster-worker).
+     *  Plain photos rarely have preview_path — requesting ?variant=preview 404s. */
     function thumbUrl(item: MediaItem): string {
         if (fullThumbHashes.has(item.hash)) return mediaUrl(item);
-        if (
-            isTiff(item) ||
-            item.profile === "coverage" ||
-            item.file_size > 1_500_000
-        ) {
+        if (isTiff(item) || item.profile === "coverage") {
             return mediaUrl(item, { variant: "preview" });
         }
         return mediaUrl(item);
@@ -668,7 +665,7 @@
 </script>
 
 <svelte:head>
-    <title>Artefacts — {$page.data?.project?.title ?? "Project"} — TinyOwl</title>
+    <title>Artefacts — {$page.data?.project?.title ?? "Project"} — echidna</title>
 </svelte:head>
 
 <svelte:window onkeydown={onKeydown} />

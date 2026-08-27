@@ -45,7 +45,7 @@
 </script>
 
 <svelte:head>
-    <title>Docs — TinyOwl</title>
+    <title>Docs — echidna</title>
 </svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">

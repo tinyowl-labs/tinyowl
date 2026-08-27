@@ -49,7 +49,7 @@
     });
 </script>
 
-<svelte:head><title>Profile — TinyOwl</title></svelte:head>
+<svelte:head><title>Profile — echidna</title></svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
     <Header subtitle="Profile" {hasSession} />

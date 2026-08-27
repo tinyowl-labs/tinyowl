@@ -1,19 +1,19 @@
 <script lang="ts">
 	import SignupForm from '$lib/components/signup-form.svelte';
-	import redthreadSvg from '$lib/assets/redthread.svg?raw';
+	import EchidnaLogo from '$lib/components/ui/echidna-logo.svelte';
 	import labyrinthSvg from '$lib/assets/labyrinth.svg?raw';
 </script>
 
-<svelte:head><title>Create account — TinyOwl</title></svelte:head>
+<svelte:head><title>Create account — echidna</title></svelte:head>
 
 <div class="grid min-h-svh lg:grid-cols-2">
 	<div class="flex flex-col gap-4 p-6 md:p-10">
 		<div class="flex justify-center gap-2 md:justify-start">
 			<a href="/" class="flex items-center gap-2 font-medium no-underline">
-				<span class="size-5 shrink-0 inline-block [&>svg]:h-full [&>svg]:w-full text-foreground">
-					{@html redthreadSvg}
+				<span class="size-6 shrink-0 inline-block [&>svg]:h-full [&>svg]:w-full text-foreground">
+					<EchidnaLogo />
 				</span>
-				TinyOwl
+				echidna
 			</a>
 		</div>
 		<div class="flex flex-1 items-center justify-center">

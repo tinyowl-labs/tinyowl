@@ -6,7 +6,7 @@
     const accessToken = $derived(data.accessToken as string);
 </script>
 
-<svelte:head><title>Digitize — TinyOwl</title></svelte:head>
+<svelte:head><title>Digitize — echidna</title></svelte:head>
 
 <div class="min-h-screen bg-background text-foreground">
     <Header hasSession={true} fixed />

@@ -7,8 +7,6 @@
         themePrefs,
         pullThemeFromSupabase,
     } from "$lib/stores/theme.svelte";
-    import favicon from "$lib/assets/redthread.svg";
-
     let { children } = $props();
 
     $effect(() => {
@@ -50,6 +48,21 @@
     });
 </script>
 
-<svelte:head><link rel="icon" href={favicon} /></svelte:head>
+<svelte:head>
+    <!-- OS/browser chrome: dark tab → light mark; light tab → dark mark -->
+    <link
+        rel="icon"
+        href="/favicon-light.svg"
+        type="image/svg+xml"
+        media="(prefers-color-scheme: dark)"
+    />
+    <link
+        rel="icon"
+        href="/favicon.svg"
+        type="image/svg+xml"
+        media="(prefers-color-scheme: light)"
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+</svelte:head>
 
 {@render children()}

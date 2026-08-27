@@ -33,12 +33,12 @@
     }
 </script>
 
-<svelte:head><title>Authorise CLI — TinyOwl</title></svelte:head>
+<svelte:head><title>Authorise CLI — echidna</title></svelte:head>
 
 <div class="flex min-h-screen items-center justify-center px-4">
     <div class="w-full max-w-sm text-center">
         <h1 class="mb-4 text-lg font-semibold text-foreground">
-            TinyOwl CLI
+            echidna CLI
         </h1>
 
         {#if !data.user}

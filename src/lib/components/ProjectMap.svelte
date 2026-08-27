@@ -7,6 +7,7 @@
     import type { Centroid } from "../../routes/+page.server";
     import {
         cesiumColorFromCss,
+        cesiumMapLabel,
         createCesiumMap,
         destroyCesiumViewer,
         loadCesiumGlobal,
@@ -127,15 +128,10 @@
                             disableDepthTestDistance: Number.POSITIVE_INFINITY,
                         },
                         label: {
-                            text: c.title,
-                            font: "12px sans-serif",
-                            fillColor: Cesium.Color.WHITE,
-                            outlineColor: Cesium.Color.BLACK,
-                            outlineWidth: 3,
-                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                            pixelOffset: new Cesium.Cartesian2(0, -14),
-                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                            ...cesiumMapLabel(Cesium, c.title, {
+                                font: "600 12px ui-sans-serif, system-ui, sans-serif",
+                                pixelOffsetY: -14,
+                            }),
                             show: list.length <= 40,
                         },
                         description: `<div class="text-[13px]">
