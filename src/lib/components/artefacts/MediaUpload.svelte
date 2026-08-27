@@ -3,7 +3,7 @@
     import LoaderIcon from "@lucide/svelte/icons/loader";
     import XIcon from "@lucide/svelte/icons/x";
     import { entityLayersHref } from "$lib/project/entityLink";
-    import { sha256Hex } from "$lib/crypto/sha256";
+    import { sha256HexStream } from "$lib/crypto/sha256";
 
     type Props = {
         projectSlug: string;
@@ -90,13 +90,24 @@
         );
     }
 
+    const GZIP_THRESHOLD = 32 * 1024 * 1024;
+
     function mediaTypeForUpload(file: File): string {
+        const name = file.name.toLowerCase();
         if (isTilesetFile(file)) return "model/vnd.3dtiles";
-        if (file.name.toLowerCase().endsWith(".glb")) return "model/gltf-binary";
-        if (file.name.toLowerCase().endsWith(".gltf")) return "model/gltf+json";
+        if (name.endsWith(".glb")) return "model/gltf-binary";
+        if (name.endsWith(".gltf")) return "model/gltf+json";
+        if (name.endsWith(".tif") || name.endsWith(".tiff")) return "image/tiff";
         if (file.type) return file.type;
-        if (file.name.toLowerCase().endsWith(".pdf")) return "application/pdf";
+        if (name.endsWith(".pdf")) return "application/pdf";
         return "application/octet-stream";
+    }
+
+    function shouldGzip(mediaType: string, size: number): boolean {
+        if (size < GZIP_THRESHOLD) return false;
+        if (typeof CompressionStream === "undefined") return false;
+        const mt = mediaType.toLowerCase();
+        return mt.includes("tiff") || mt.includes("geotiff");
     }
 
     async function uploadFile(file: File) {
@@ -108,14 +119,16 @@
         error = "";
         status = `Hashing ${file.name}…`;
         try {
-            const buf = await file.arrayBuffer();
-            const hash = await sha256Hex(buf);
+            const hash = await sha256HexStream(file.stream());
             status = `Uploading ${file.name}…`;
             const mediaType = mediaTypeForUpload(file);
+            const gzipOn = shouldGzip(mediaType, file.size);
             const headers: Record<string, string> = {
                 Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/octet-stream",
                 "X-TinyOwl-Media-Hash": hash,
                 "X-TinyOwl-Media-Type": mediaType,
+                "X-TinyOwl-Raw-Size": String(file.size),
             };
             if (entityType.trim() && !isTilesetFile(file) && !isModelFile(file)) {
                 headers["X-TinyOwl-Entity-Type"] = entityType.trim();
@@ -129,22 +142,28 @@
                     "",
                 );
             }
-            // Optional georef for GLB: set via headers when provided later; default local.
-            if (isModelFile(file)) {
-                headers["X-TinyOwl-Media-Profile"] = "coverage";
+            let body: BodyInit = file;
+            if (gzipOn) {
+                headers["Content-Encoding"] = "gzip";
+                body = file.stream().pipeThrough(new CompressionStream("gzip"));
             }
-            const res = await fetch(`/api/v1/projects/${projectSlug}/media`, {
+            const init: RequestInit & { duplex?: "half" } = {
                 method: "POST",
                 headers,
-                body: buf,
-            });
+                body,
+                duplex: "half",
+            };
+            const res = await fetch(
+                `/api/v1/projects/${projectSlug}/media`,
+                init,
+            );
+            const payload = await res.json().catch(() => ({}));
             if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                throw new Error(body.error ?? `HTTP ${res.status}`);
+                throw new Error(payload.error ?? `HTTP ${res.status}`);
             }
             status =
-                isTilesetFile(file) || isModelFile(file)
-                    ? `Queued ${file.name} for 3D ingest`
+                payload.status === "queued"
+                    ? `Queued ${file.name} for ingest`
                     : `Stored ${file.name}`;
             onUploaded({ mediaType });
         } catch (e: any) {
@@ -163,10 +182,12 @@
                 f.type === "application/pdf" ||
                 f.name.toLowerCase().endsWith(".pdf") ||
                 isTilesetFile(f) ||
-                isModelFile(f),
+                isModelFile(f) ||
+                f.name.toLowerCase().endsWith(".tif") ||
+                f.name.toLowerCase().endsWith(".tiff"),
         );
         if (files.length === 0) {
-            error = "Choose an image, PDF, .3tz, or GLB/glTF";
+            error = "Choose an image, PDF, GeoTIFF, .3tz, or GLB/glTF";
             return;
         }
         (async () => {
@@ -278,7 +299,7 @@
                 <input
                     type="file"
                     class="sr-only"
-                    accept="image/*,application/pdf,.pdf,.3tz,.glb,.gltf,model/vnd.3dtiles,model/gltf-binary"
+                    accept="image/*,application/pdf,.pdf,.tif,.tiff,.3tz,.glb,.gltf,model/vnd.3dtiles,model/gltf-binary"
                     multiple
                     disabled={busy}
                     onchange={(e) => onFiles(e.currentTarget.files)}

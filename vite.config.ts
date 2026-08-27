@@ -98,11 +98,11 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/media": "http://localhost:8080",
-      // Long timeout: reverse-image POST embeds via OpenCLIP / embed-worker.
+      // Long timeout: large media uploads and reverse-image CLIP embeds.
       "/api/v1": {
         target: "http://localhost:8080",
-        timeout: 120_000,
-        proxyTimeout: 120_000,
+        timeout: 3_600_000,
+        proxyTimeout: 3_600_000,
       },
       // Same-origin Supabase for Tailscale Funnel demos (browser never hits :54321).
       "/auth/v1": {
@@ -132,8 +132,8 @@ export default defineConfig({
       "/media": "http://localhost:8080",
       "/api/v1": {
         target: "http://localhost:8080",
-        timeout: 120_000,
-        proxyTimeout: 120_000,
+        timeout: 3_600_000,
+        proxyTimeout: 3_600_000,
       },
       "/auth/v1": {
         target: "http://127.0.0.1:54321",
