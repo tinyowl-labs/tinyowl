@@ -11,6 +11,7 @@
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import FileUpIcon from "@lucide/svelte/icons/file-up";
     import GitPullRequestIcon from "@lucide/svelte/icons/git-pull-request";
+    import HistoryIcon from "@lucide/svelte/icons/history";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import Header from "$lib/components/ui/header.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
@@ -61,6 +62,11 @@
                                 label: "Reviews",
                                 href: `/${data?.slug}/review`,
                                 icon: GitPullRequestIcon,
+                            },
+                            {
+                                label: "History",
+                                href: `/${data?.slug}/history`,
+                                icon: HistoryIcon,
                             },
                             {
                                 label: "Mappings",
@@ -212,7 +218,13 @@
             {/snippet}
         </MobileNav>
 
-        <main class="flex-1 min-h-0 overflow-y-auto bg-background">
+        <main
+            class="flex-1 min-h-0 bg-background {/\/(history|review)\b/.test(
+                $page.url.pathname,
+            )
+                ? 'overflow-hidden'
+                : 'overflow-y-auto'}"
+        >
             {#if project}
                 {@render children()}
             {:else}

@@ -140,4 +140,60 @@ export const actions: Actions = {
     }
     return { success: true, qfieldAction: "disconnected" };
   },
+
+  publishFromQField: async ({ request, locals, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", qfieldAction: "publish" };
+
+    const data = await request.formData();
+    const accountId = String(data.get("account_id") ?? "").trim();
+    const qfcProjectId = String(data.get("qfc_project_id") ?? "").trim();
+    const qfcProjectName = String(data.get("qfc_project_name") ?? "").trim();
+    const org = String(data.get("org") ?? "").trim();
+    const slug = String(data.get("slug") ?? "").trim();
+    const title = String(data.get("title") ?? "").trim();
+    const gpkgName = String(data.get("gpkg_name") ?? "").trim();
+    if (!accountId || !qfcProjectId) {
+      return {
+        error: "Account and QFieldCloud project required.",
+        qfieldAction: "publish",
+      };
+    }
+
+    const accessToken = await locals.getAccessToken();
+    const body: Record<string, string> = {
+      account_id: accountId,
+      qfc_project_id: qfcProjectId,
+    };
+    if (qfcProjectName) body.qfc_project_name = qfcProjectName;
+    if (org) body.org = org;
+    if (slug) body.slug = slug;
+    if (title) body.title = title;
+    if (gpkgName) body.gpkg_name = gpkgName;
+
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/integrations/qfieldcloud/publish`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    if (!res.ok) {
+      return {
+        error: `Publish failed: ${await res.text()}`,
+        qfieldAction: "publish",
+      };
+    }
+    const created = await res.json();
+    return {
+      success: true,
+      qfieldAction: "published",
+      publishedSlug: created.slug,
+      publishedUrl: created.url,
+    };
+  },
 };

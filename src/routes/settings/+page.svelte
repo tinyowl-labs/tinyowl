@@ -54,12 +54,23 @@
     const tabValues = new Set(tabs.map((t) => t.value));
 
     function tabFromUrl(url: URL = $page.url): string {
+        if (url.searchParams.get("qfield_publish") === "1") return "qfieldcloud";
         const t = url.searchParams.get("tab") ?? "";
         return tabValues.has(t) ? t : "account";
     }
 
     let activeTab = $state(untrack(() => tabFromUrl()));
     let showQFieldConnect = $state(false);
+    let showQFieldPublish = $state(
+        untrack(() => $page.url.searchParams.get("qfield_publish") === "1"),
+    );
+    let publishAccountId = $state("");
+    let publishProjects = $state<{ id: string; name: string; status?: string }[]>(
+        [],
+    );
+    let publishProjectId = $state("");
+    let publishProjectName = $state("");
+
     let reconnectPrefill = $state<{
         base_url: string;
         username: string;
@@ -140,8 +151,43 @@
         } else {
             reconnectPrefill = null;
             showQFieldConnect = true;
+            showQFieldPublish = false;
         }
     }
+
+    async function loadPublishProjects(accountId: string) {
+        publishAccountId = accountId;
+        publishProjects = [];
+        publishProjectId = "";
+        publishProjectName = "";
+        if (!accountId) return;
+        publishLoading = true;
+        try {
+            const res = await fetch(
+                `/api/qfieldcloud/accounts/${accountId}/projects`,
+            );
+            if (res.ok) {
+                const data = await res.json();
+                publishProjects = Array.isArray(data)
+                    ? data
+                    : (data?.results ?? []);
+            }
+        } catch (_) {
+            publishProjects = [];
+        } finally {
+            publishLoading = false;
+        }
+    }
+
+    $effect(() => {
+        if (
+            showQFieldPublish &&
+            qfieldAccounts.length > 0 &&
+            !publishAccountId
+        ) {
+            void loadPublishProjects(qfieldAccounts[0].id);
+        }
+    });
 
     // Account
     let firstName = $state("");
@@ -473,9 +519,153 @@
                                     <p
                                         class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
                                     >
-                                        Connected. Open a project’s Settings →
-                                        QFieldCloud to link a Cloud project.
+                                        Connected. Publish a Cloud project below,
+                                        or link from a project’s Settings →
+                                        QFieldCloud.
                                     </p>
+                                {/if}
+                                {#if form?.success && form?.qfieldAction === "published"}
+                                    <p
+                                        class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                                    >
+                                        Published
+                                        {#if form.publishedSlug}
+                                            <a
+                                                class="underline"
+                                                href={form.publishedUrl ||
+                                                    `/${form.publishedSlug}`}
+                                                >{form.publishedSlug}</a
+                                            >
+                                        {/if}
+                                        — bridge sync requested.
+                                    </p>
+                                {/if}
+
+                                <div class="mb-4 flex flex-wrap gap-2">
+                                    <Button
+                                        type="button"
+                                        variant={showQFieldPublish
+                                            ? "default"
+                                            : "outline"}
+                                        size="sm"
+                                        onclick={() => {
+                                            showQFieldPublish = !showQFieldPublish;
+                                            if (showQFieldPublish)
+                                                showQFieldConnect = false;
+                                        }}
+                                    >
+                                        {showQFieldPublish
+                                            ? "Hide publish"
+                                            : "Publish from QFieldCloud"}
+                                    </Button>
+                                </div>
+
+                                {#if showQFieldPublish}
+                                    <form
+                                        method="POST"
+                                        action="?/publishFromQField"
+                                        class="mb-6 rounded-lg border border-border p-4 space-y-3"
+                                        use:enhance
+                                    >
+                                        <p class="text-sm text-muted-foreground">
+                                            Create an echidna project and link an
+                                            existing QFieldCloud project
+                                            (born-linked). Bridge will sync next.
+                                        </p>
+                                        <Field>
+                                            <FieldLabel for="publish_account"
+                                                >Cloud account</FieldLabel
+                                            >
+                                            <select
+                                                id="publish_account"
+                                                name="account_id"
+                                                class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                                                required
+                                                value={publishAccountId}
+                                                onchange={(e) =>
+                                                    void loadPublishProjects(
+                                                        (e.currentTarget as HTMLSelectElement)
+                                                            .value,
+                                                    )}
+                                            >
+                                                {#each qfieldAccounts as acct}
+                                                    <option value={acct.id}
+                                                        >{acct.label ||
+                                                            acct.username} ({acct.base_url})</option
+                                                    >
+                                                {/each}
+                                            </select>
+                                        </Field>
+                                        <Field>
+                                            <FieldLabel for="publish_qfc"
+                                                >QFieldCloud project</FieldLabel
+                                            >
+                                            {#if publishLoading}
+                                                <p class="text-sm text-muted-foreground">
+                                                    Loading projects…
+                                                </p>
+                                            {:else}
+                                                <select
+                                                    id="publish_qfc"
+                                                    name="qfc_project_id"
+                                                    class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                                                    required
+                                                    value={publishProjectId}
+                                                    onchange={(e) => {
+                                                        const sel =
+                                                            e.currentTarget as HTMLSelectElement;
+                                                        publishProjectId =
+                                                            sel.value;
+                                                        const opt =
+                                                            sel.selectedOptions[0];
+                                                        publishProjectName =
+                                                            opt?.text?.trim() ??
+                                                            "";
+                                                    }}
+                                                >
+                                                    <option value=""
+                                                        >Select…</option
+                                                    >
+                                                    {#each publishProjects as proj}
+                                                        <option value={proj.id}
+                                                            >{proj.name ||
+                                                                proj.id}</option
+                                                        >
+                                                    {/each}
+                                                </select>
+                                            {/if}
+                                        </Field>
+                                        <input
+                                            type="hidden"
+                                            name="qfc_project_name"
+                                            value={publishProjectName}
+                                        />
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <Field>
+                                                <FieldLabel for="publish_title"
+                                                    >Title (optional)</FieldLabel
+                                                >
+                                                <Input
+                                                    id="publish_title"
+                                                    name="title"
+                                                    placeholder="Derived from Cloud name"
+                                                />
+                                            </Field>
+                                            <Field>
+                                                <FieldLabel for="publish_slug"
+                                                    >Slug (optional)</FieldLabel
+                                                >
+                                                <Input
+                                                    id="publish_slug"
+                                                    name="slug"
+                                                    placeholder="auto"
+                                                />
+                                            </Field>
+                                        </div>
+                                        <Button type="submit" size="sm"
+                                            >Create + link</Button
+                                        >
+                                    </form>
                                 {/if}
 
                                 {#if showQFieldConnect}

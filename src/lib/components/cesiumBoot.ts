@@ -176,7 +176,7 @@ export function createCesiumMap(
         baseLayer: new Cesium.ImageryLayer(
             new Cesium.UrlTemplateImageryProvider({
                 // CARTO light (no labels) — cleaner than OSM for map chrome.
-                url: "https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+                url: "https://basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png",
                 maximumLevel: 19,
                 credit: "",
             }),

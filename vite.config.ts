@@ -97,11 +97,10 @@ export default defineConfig({
     // Allow Tailscale MagicDNS / Funnel hosts (leading-dot match is flaky across Vite versions).
     allowedHosts: true,
     proxy: {
-      "/media": "http://localhost:8081",
+      "/media": "http://localhost:8080",
       // Long timeout: reverse-image POST embeds via OpenCLIP / embed-worker.
-      // :8080 is Traefik (CVAT); TinyOwl API runs on :8081 locally.
       "/api/v1": {
-        target: "http://localhost:8081",
+        target: "http://localhost:8080",
         timeout: 120_000,
         proxyTimeout: 120_000,
       },
@@ -130,9 +129,9 @@ export default defineConfig({
     // Tailscale Funnel / MagicDNS
     allowedHosts: true,
     proxy: {
-      "/media": "http://localhost:8081",
+      "/media": "http://localhost:8080",
       "/api/v1": {
-        target: "http://localhost:8081",
+        target: "http://localhost:8080",
         timeout: 120_000,
         proxyTimeout: 120_000,
       },

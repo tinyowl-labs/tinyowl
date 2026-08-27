@@ -185,6 +185,7 @@ Device-code flow for CLI authentication:
 | `GET` | `/api/v1/integrations/qfieldcloud/accounts` | List connected QFieldCloud accounts |
 | `DELETE` | `/api/v1/integrations/qfieldcloud/accounts/{id}` | Disconnect a QFieldCloud account |
 | `GET` | `/api/v1/integrations/qfieldcloud/accounts/{id}/projects` | List remote QFieldCloud projects |
+| `POST` | `/api/v1/integrations/qfieldcloud/publish` | Create echidna project + link Cloud project (born-linked) |
 | `GET` | `/api/v1/integrations/qfieldcloud/links` | List QFieldCloud project links |
 | `GET` | `/api/v1/integrations/qfieldcloud/links/{slug}/jobs` | List sync jobs for a link |
 | `GET` | `/api/v1/integrations/qfieldcloud/links/{slug}/files` | List files for a link |

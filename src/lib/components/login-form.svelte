@@ -1,5 +1,6 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
+    import { page } from "$app/stores";
     import { env } from "$env/dynamic/public";
     import { createClient } from "$lib/supabase/client";
     import {
@@ -18,6 +19,11 @@
     let loading = $state(false);
     let error = $state("");
 
+    function safeNext(raw: string | null): string {
+        if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
+        return raw;
+    }
+
     async function handleSubmit(e: SubmitEvent) {
         e.preventDefault();
         loading = true;
@@ -33,7 +39,8 @@
             return;
         }
         // Ensure auth cookies are written before SSR loads the next page.
-        await goto("/", { invalidateAll: true });
+        const dest = safeNext($page.url.searchParams.get("next"));
+        await goto(dest, { invalidateAll: true });
     }
 </script>
 

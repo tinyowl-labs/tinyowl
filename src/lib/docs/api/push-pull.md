@@ -7,7 +7,7 @@ Endpoints for syncing project data via a diff-based protocol. The canonical data
 The sync model works as follows:
 
 1. **First push** — The client sends a DDL header to seed the GeoPackage schema, then applies the initial diff (immediate).
-2. **Subsequent pushes** — Each incremental push creates a **pending changeset** (optional `X-TinyOwl-Message`). On **approve**, the server applies the geodiff, saves `NNNN.diff`, and advances `server_head`.
+2. **Subsequent pushes** — Each incremental push creates a **pending changeset** (**required** `X-TinyOwl-Message`). On **approve**, the server applies the geodiff, saves `NNNN.diff`, and advances `server_head`.
 3. **Pull** — Clients request all **approved** diffs since a given `server_head`.
 
 Approve triggers re-indexing: column mappings, entity spatial data, media references, and project metadata.
@@ -111,7 +111,7 @@ The diff data is sent as the raw request body. Additional metadata is passed via
 | `X-TinyOwl-DDL` | Yes (first push) | Base64-encoded DDL to seed the GeoPackage schema |
 | `X-TinyOwl-Meta-Only` | No | If `"true"`, skip diff application and only re-index (requires existing canonical) |
 | `X-TinyOwl-Toml` | No | Base64-encoded JSON array of table TOML annotations |
-| `X-TinyOwl-Message` | No | Review message stored on the pending changeset (`tinyowl push -m`) |
+| `X-TinyOwl-Message` | **Yes** (incremental / pending) | Review message stored on the pending changeset (`tinyowl push -m`) |
 
 #### First Push (Schema Creation)
 

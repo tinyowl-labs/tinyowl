@@ -68,18 +68,20 @@
     let actionsOpen = $state(false);
     let copied = $state(false);
 
-    function formatBytes(bytes: number): string {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / 1048576).toFixed(1)} MB`;
-    }
-
     function formatDate(ts: string): string {
         return new Date(ts).toLocaleDateString("en-GB", {
             day: "numeric",
             month: "short",
             year: "numeric",
         });
+    }
+
+    function entityChips(
+        summary: any,
+    ): { table: string; insert?: number; update?: number; delete?: number }[] {
+        return (Array.isArray(summary) ? summary : []).filter(
+            (s: any) => !String(s?.table ?? "").startsWith("_"),
+        );
     }
 
     const vocabSummary = $derived.by(() => {
@@ -371,64 +373,20 @@
             >
                 <GitCommitIcon class="size-4 shrink-0 text-muted-foreground" />
                 <span class="text-sm font-medium text-foreground"
-                    >Pending review</span
+                    >Recent activity</span
                 >
-                {#if pendingChangesets.length > 0}
+                {#if diffs.length + pendingChangesets.length > 0}
                     <span class="text-xs text-muted-foreground"
-                        >({pendingChangesets.length})</span
+                        >({diffs.length + pendingChangesets.length})</span
                     >
                 {/if}
                 <a
-                    href="/{slug}/review"
+                    href="/{slug}/history"
                     class="ml-auto text-xs text-primary hover:underline"
-                    >All reviews</a
+                    >Time machine</a
                 >
             </div>
-            {#if pendingChangesets.length === 0}
-                <div
-                    class="px-4 py-6 text-center text-sm text-muted-foreground"
-                >
-                    No pending changesets
-                </div>
-            {:else}
-                <div class="divide-y divide-border max-h-80 overflow-y-auto">
-                    {#each pendingChangesets as cs}
-                        <a
-                            href="/{slug}/review/{cs.id}"
-                            class="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-accent/40"
-                        >
-                            <div class="flex items-center gap-2 min-w-0">
-                                <span class="text-foreground truncate"
-                                    >{cs.message?.trim() || "Untitled push"}</span
-                                >
-                                <span class="text-muted-foreground shrink-0"
-                                    >{formatDate(cs.created_at)}</span
-                                >
-                            </div>
-                            <span class="font-mono text-muted-foreground shrink-0"
-                                >{cs.sha256?.slice(0, 7) ?? ""}</span
-                            >
-                        </a>
-                    {/each}
-                </div>
-            {/if}
-        </div>
-
-        <div class="rounded-lg border border-border overflow-hidden">
-            <div
-                class="flex items-center gap-2 px-4 py-3 border-b border-border"
-            >
-                <GitCommitIcon class="size-4 shrink-0 text-muted-foreground" />
-                <span class="text-sm font-medium text-foreground"
-                    >Recent activity</span
-                >
-                {#if diffs.length > 0}
-                    <span class="text-xs text-muted-foreground"
-                        >({diffs.length})</span
-                    >
-                {/if}
-            </div>
-            {#if diffs.length === 0}
+            {#if diffs.length === 0 && pendingChangesets.length === 0}
                 <div
                     class="px-4 py-6 text-center text-sm text-muted-foreground"
                 >
@@ -436,28 +394,95 @@
                 </div>
             {:else}
                 <div class="divide-y divide-border max-h-80 overflow-y-auto">
-                    {#each diffs as diff}
-                        <div
-                            class="px-4 py-2.5 flex items-center justify-between gap-3 text-xs"
+                    {#each pendingChangesets as cs}
+                        <a
+                            href="/{slug}/review/{cs.id}"
+                            class="px-4 py-2.5 flex items-start justify-between gap-3 text-xs hover:bg-accent/40"
                         >
-                            <div class="flex items-center gap-2 min-w-0">
-                                <span
-                                    class="font-mono text-muted-foreground shrink-0"
-                                    >{diff.sha256?.slice(0, 7) ?? ""}</span
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span
+                                        class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400"
+                                        >pending</span
+                                    >
+                                    <span class="text-foreground truncate"
+                                        >{cs.message?.trim() ||
+                                            "Untitled push"}</span
+                                    >
+                                </div>
+                                <div
+                                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground"
                                 >
-                                <span class="text-muted-foreground"
-                                    >{formatDate(diff.created_at)}</span
-                                >
+                                    <span>{formatDate(cs.created_at)}</span>
+                                    {#each entityChips(cs.geodiff_summary) as s}
+                                        <span>
+                                            {s.table}
+                                            {#if s.insert}<span
+                                                    class="text-emerald-400"
+                                                    >+{s.insert}</span
+                                                >{/if}
+                                            {#if s.update}<span
+                                                    class="text-amber-400"
+                                                    >~{s.update}</span
+                                                >{/if}
+                                            {#if s.delete}<span
+                                                    class="text-red-400"
+                                                    >−{s.delete}</span
+                                                >{/if}
+                                        </span>
+                                    {/each}
+                                </div>
                             </div>
-                            <div
-                                class="flex items-center gap-3 text-muted-foreground shrink-0"
+                            <span
+                                class="font-mono text-muted-foreground shrink-0"
+                                >{cs.sha256?.slice(0, 7) ?? ""}</span
                             >
-                                <span
-                                    >{diff.entity_count?.toLocaleString() ?? 0} entities</span
+                        </a>
+                    {/each}
+                    {#each diffs as diff}
+                        <a
+                            href="/{slug}/history/{diff.seq}"
+                            class="px-4 py-2.5 flex items-start justify-between gap-3 text-xs hover:bg-accent/40"
+                        >
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span
+                                        class="font-mono text-muted-foreground shrink-0"
+                                        >#{diff.seq}</span
+                                    >
+                                    <span class="text-foreground truncate"
+                                        >{diff.message?.trim() ||
+                                            "Untitled push"}</span
+                                    >
+                                </div>
+                                <div
+                                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground"
                                 >
-                                <span>{formatBytes(diff.byte_size ?? 0)}</span>
+                                    <span>{formatDate(diff.created_at)}</span>
+                                    {#each entityChips(diff.geodiff_summary) as s}
+                                        <span>
+                                            {s.table}
+                                            {#if s.insert}<span
+                                                    class="text-emerald-400"
+                                                    >+{s.insert}</span
+                                                >{/if}
+                                            {#if s.update}<span
+                                                    class="text-amber-400"
+                                                    >~{s.update}</span
+                                                >{/if}
+                                            {#if s.delete}<span
+                                                    class="text-red-400"
+                                                    >−{s.delete}</span
+                                                >{/if}
+                                        </span>
+                                    {/each}
+                                </div>
                             </div>
-                        </div>
+                            <span
+                                class="font-mono text-muted-foreground shrink-0"
+                                >{diff.sha256?.slice(0, 7) ?? ""}</span
+                            >
+                        </a>
                     {/each}
                 </div>
             {/if}

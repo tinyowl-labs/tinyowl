@@ -1,36 +1,18 @@
 <script lang="ts">
     import { page } from "$app/stores";
+    import { enhance } from "$app/forms";
     import { Button } from "$lib/components/ui/button";
     import * as InputOTP from "$lib/components/ui/input-otp";
 
-    let { data } = $props();
+    let { data, form } = $props();
 
     let code = $state($page.url.searchParams.get("code") || "");
     let verifying = $state(false);
     let done = $state(false);
-    let errorMsg = $state("");
 
-    async function verify() {
-        if (!data.accessToken || code.length < 8) return;
-        verifying = true;
-        errorMsg = "";
-        try {
-            const res = await fetch(`${data.serverUrl}/auth/cli/verify`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code, token: data.accessToken }),
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || "Verification failed");
-            }
-            done = true;
-        } catch (e) {
-            errorMsg = e instanceof Error ? e.message : "Unknown error";
-        } finally {
-            verifying = false;
-        }
-    }
+    const loginHref = $derived(
+        `/auth/login?next=${encodeURIComponent(`/auth/cli?code=${code || ""}`)}`,
+    );
 </script>
 
 <svelte:head><title>Authorise CLI — echidna</title></svelte:head>
@@ -44,10 +26,10 @@
         {#if !data.user}
             <p class="text-sm text-muted-foreground">
                 Please
-                <a href="/auth/login" class="underline text-primary">sign in</a>
+                <a href={loginHref} class="underline text-primary">sign in</a>
                 {" "}first, then return.
             </p>
-        {:else if done}
+        {:else if done || form?.success}
             <div
                 class="rounded-lg border border-border bg-secondary/50 p-4 text-left"
             >
@@ -68,38 +50,50 @@
                 Enter the 8-character code shown in your terminal
             </p>
 
-            <div class="mt-3 flex justify-center">
-                <InputOTP.Root
-                    maxlength={8}
-                    bind:value={code}
-                    onComplete={verify}
-                >
-                    {#snippet children({ cells })}
-                        <InputOTP.Group
-                            class="gap-2.5 *:data-[slot=input-otp-slot]:rounded-md *:data-[slot=input-otp-slot]:border"
-                        >
-                            {#each cells.slice(0, 4) as cell}
-                                <InputOTP.Slot {cell} />
-                            {/each}
-                            <InputOTP.Separator />
-                            {#each cells.slice(4, 8) as cell}
-                                <InputOTP.Slot {cell} />
-                            {/each}
-                        </InputOTP.Group>
-                    {/snippet}
-                </InputOTP.Root>
-            </div>
-
-            <Button
-                onclick={verify}
-                disabled={verifying || code.length < 8}
-                class="mt-6 w-full rounded-full"
+            <form
+                method="POST"
+                action="?/verify"
+                class="mt-3"
+                use:enhance={() => {
+                    verifying = true;
+                    return async ({ result, update }) => {
+                        verifying = false;
+                        await update();
+                        if (result.type === "success") done = true;
+                    };
+                }}
             >
-                {verifying ? "Authorising…" : "Authorise CLI Access"}
-            </Button>
+                <input type="hidden" name="code" value={code} />
 
-            {#if errorMsg}
-                <p class="mt-4 text-xs text-destructive">{errorMsg}</p>
+                <div class="flex justify-center">
+                    <InputOTP.Root maxlength={8} bind:value={code}>
+                        {#snippet children({ cells })}
+                            <InputOTP.Group
+                                class="gap-2.5 *:data-[slot=input-otp-slot]:rounded-md *:data-[slot=input-otp-slot]:border"
+                            >
+                                {#each cells.slice(0, 4) as cell}
+                                    <InputOTP.Slot {cell} />
+                                {/each}
+                                <InputOTP.Separator />
+                                {#each cells.slice(4, 8) as cell}
+                                    <InputOTP.Slot {cell} />
+                                {/each}
+                            </InputOTP.Group>
+                        {/snippet}
+                    </InputOTP.Root>
+                </div>
+
+                <Button
+                    type="submit"
+                    disabled={verifying || code.length < 8}
+                    class="mt-6 w-full rounded-full"
+                >
+                    {verifying ? "Authorising…" : "Authorise CLI Access"}
+                </Button>
+            </form>
+
+            {#if form?.error}
+                <p class="mt-4 text-xs text-destructive">{form.error}</p>
             {/if}
         {/if}
     </div>
