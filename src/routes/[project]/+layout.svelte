@@ -25,6 +25,9 @@
     const canWrite = $derived(
         role === "owner" || role === "admin" || role === "collaborator",
     );
+    const fullBleed = $derived(
+        /\/(history|review)\b/.test($page.url.pathname),
+    );
 
     const allNavItems = $derived([
         {
@@ -219,10 +222,8 @@
         </MobileNav>
 
         <main
-            class="flex-1 min-h-0 bg-background {/\/(history|review)\b/.test(
-                $page.url.pathname,
-            )
-                ? 'overflow-hidden'
+            class="flex-1 min-h-0 bg-background {fullBleed
+                ? 'relative overflow-hidden'
                 : 'overflow-y-auto'}"
         >
             {#if project}

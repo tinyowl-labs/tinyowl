@@ -17,7 +17,7 @@ tinyowl login                        # authenticate via browser
 tinyowl clone my-project             # clone a remote project
 cd my-project
 # edit project.gpkg with QGIS or ArcGIS…
-tinyowl push                         # push changes to the server
+tinyowl push -m "describe this changeset"   # push; incremental is pending until approve
 ```
 
 Or start from scratch:
@@ -26,7 +26,7 @@ Or start from scratch:
 tinyowl init my-site --template excavation
 cd my-site
 # add tables/ TOML files, then edit project.gpkg…
-tinyowl push
+tinyowl push -m "Initial data"
 ```
 
 ## Global flags
@@ -44,7 +44,7 @@ The token is stored in `~/.tinyowl/config.toml` after running `tinyowl login`.
 
 | Command | Description |
 |---|---|
-| [`push`](#push) | Push local changes to the server |
+| [`push`](push.md) | Push local changes (`-m` required for reviewable incremental pushes) |
 | [`pull`](#pull) | Pull remote changes from the server |
 | [`clone`](#clone) | Clone a remote project to a local directory |
 | [`init`](#init) | Initialize a new TinyOwl project |
@@ -111,7 +111,7 @@ my-project/
 └── .tinyowl/
     ├── canonical.gpkg     # authoritative state
     ├── ledger.db          # commit / sync history
-    └── snapshots/         # diff snapshots
+    └── snapshots/         # last approved HEAD (base.gpkg)
 ```
 
 ## Architecture

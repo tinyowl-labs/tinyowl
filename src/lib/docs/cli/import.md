@@ -66,7 +66,7 @@ The project is ready to use:
 ```bash
 cd ./my-project
 # edit project.gpkg in QGIS…
-tinyowl push
+tinyowl push -m "Imported survey"
 ```
 
 Review and adjust the generated `tables/*.toml` files to add vocabulary annotations, column descriptions, and relation predicates before pushing.

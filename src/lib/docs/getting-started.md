@@ -183,17 +183,17 @@ The CLI generates `tables/Contexts.toml` (if it doesn't exist) with CRM suggesti
 ## Step 8: Push to the server
 
 ```bash
-tinyowl push
+tinyowl push -m "Added contexts"
 ```
 
-Expected output:
+Expected output (first push installs canonical immediately):
 
 ```
-Changes: +3 ~0 -0
+Initial push — uploading local canonical.
 Pushed! Server head: 1
 ```
 
-The CLI detected the new rows, computed a diff, uploaded it, and updated the ledger. The server indexed the metadata, extracted geometries into PostGIS, and scanned vocabulary values.
+Later edits are incremental diffs that wait for **approve** on the web. After approve, the next `push` or `pull` refreshes `snapshots/base.gpkg` from server HEAD.
 
 ## Step 9: Browse in the web UI
 

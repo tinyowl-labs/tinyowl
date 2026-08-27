@@ -175,8 +175,8 @@ export function createCesiumMap(
         useBrowserRecommendedResolution: false,
         baseLayer: new Cesium.ImageryLayer(
             new Cesium.UrlTemplateImageryProvider({
-                // CARTO light (no labels) — cleaner than OSM for map chrome.
-                url: "https://basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png",
+                url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png",
+                subdomains: ["a", "b", "c", "d"],
                 maximumLevel: 19,
                 credit: "",
             }),
@@ -184,6 +184,10 @@ export function createCesiumMap(
     });
     if (opts.scene2D !== false) {
         viewer.scene.mode = Cesium.SceneMode.SCENE2D;
+    }
+    // Drop any default ion/Carto key-required layer Cesium may still add.
+    while (viewer.imageryLayers.length > 1) {
+        viewer.imageryLayers.remove(viewer.imageryLayers.get(0), true);
     }
     viewer.scene.globe.depthTestAgainstTerrain = false;
     viewer.scene.globe.showGroundAtmosphere = false;

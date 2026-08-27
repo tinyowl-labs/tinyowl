@@ -78,7 +78,7 @@
     <title>Review — {slug} — echidna</title>
 </svelte:head>
 
-<article class="flex flex-col h-full min-h-0 overflow-hidden">
+<article class="absolute inset-0 flex flex-col overflow-hidden">
     <header
         class="shrink-0 flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-border"
     >

@@ -24,7 +24,7 @@ tinyowl import boundary.shp --as-new Boundaries --yes
 # Append into an existing table
 tinyowl import more_sites.csv --into Site_Points --map "SiteName=name,Period=period"
 
-tinyowl push
+tinyowl push -m "Imported sites"
 ```
 
 ## What import does

@@ -142,7 +142,7 @@
     <title>History — {slug} — echidna</title>
 </svelte:head>
 
-<article class="flex flex-col h-full min-h-0 overflow-hidden">
+<article class="absolute inset-0 flex flex-col overflow-hidden">
     <header
         class="shrink-0 flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-border"
     >
@@ -285,10 +285,8 @@
             </div>
         </div>
 
-        <div
-            class="min-h-0 overflow-hidden grid grid-rows-[minmax(0,1fr)_minmax(200px,42%)]"
-        >
-            <div class="relative min-h-0 overflow-hidden">
+        <div class="min-h-0 overflow-hidden flex flex-col">
+            <div class="relative flex-1 min-h-0 overflow-hidden">
                 <ReviewMap
                     features={scrubFeatures}
                     selectedId={null}
@@ -303,7 +301,7 @@
                 {/if}
             </div>
             <div
-                class="min-h-0 overflow-hidden flex flex-col border-t border-border"
+                class="shrink-0 h-[min(280px,38vh)] overflow-hidden flex flex-col border-t border-border"
             >
                 <div
                     class="shrink-0 px-4 py-2 border-b border-border flex items-center justify-between"

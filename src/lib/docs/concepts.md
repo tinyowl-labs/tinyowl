@@ -24,7 +24,7 @@ my-excavation/
 └── .tinyowl/              # Internal — never edit these directly
     ├── canonical.gpkg     # Append-only source of truth
     ├── ledger.db          # Sync state, commit history, entity tracking
-    └── snapshots/         # Geodiff baselines for incremental sync
+    └── snapshots/         # last approved HEAD (base.gpkg)
 ```
 
 ### `project.toml`
@@ -80,9 +80,9 @@ TinyOwl keeps **two** GeoPackage files, with a clear separation of concerns:
 ```
 
 1. **You edit** `project.gpkg` in QGIS, QField, or any GIS tool.
-2. **`tinyowl push`** detects changes via the **revision engine**, applies them to `canonical.gpkg`, computes a binary diff, and uploads it.
-3. **The server** applies the diff to its copy of canonical, saves it, and re-indexes metadata.
-4. **`tinyowl pull`** downloads remote diffs, applies them to your canonical, and **rebases** any local changes to avoid ID conflicts.
+2. **`tinyowl push -m "..."`** detects changes via the **revision engine**, applies them to `canonical.gpkg`, diffs that against last approved HEAD (`snapshots/base.gpkg`), and uploads it (pending until approve).
+3. **On approve**, the server applies the geodiff to its canonical and advances `server_head`. The next `push` / `pull` refreshes local `base.gpkg`.
+4. **`tinyowl pull`** downloads approved diffs since local HEAD. Collaborators apply them onto canonical; if apply conflicts because those rows are already in canonical, the CLI downloads HEAD into `base.gpkg` and leaves canonical as-is.
 5. **`tinyowl export`** regenerates `project.gpkg` from canonical after each sync (push/pull calls this automatically).
 
 This model keeps data safe: canonical is never directly edited, every change is recorded in the ledger, and diffs form a verifiable chain.
@@ -107,19 +107,19 @@ The ledger is what makes incremental sync possible. Without it, every push would
 ### Push (local → server)
 
 ```
-tinyowl push [--message "Added new contexts"]
+tinyowl push -m "Added new contexts"
 ```
 
 1. Loads `project.toml` and all `tables/*.toml`
 2. **Revises** — compares `project.gpkg` against `canonical.gpkg` to detect inserts, updates, deletes
 3. **Validates** — runs schema checks (advisory, never blocks)
 4. **Cross-ref checks** — validates FK references across tables
-5. **Computes diff** — generates a binary geodiff changeset
-6. **Uploads** — sends the diff + TOML metadata to the server
-7. **Records** — writes the operation to the ledger, saves a snapshot
-8. **Re-exports** — regenerates `project.gpkg` from the updated canonical
+5. **Refreshes base** — if ledger HEAD is behind the server, pull/apply or download approved HEAD into `snapshots/base.gpkg`
+6. **Computes diff** — geodiff of `base.gpkg` (last approved HEAD) vs `canonical.gpkg`
+7. **Uploads** — first push installs canonical immediately; later diffs are **pending** until approve on the web
+8. **Records** — writes the operation to the ledger. Snapshot of canonical → `base.gpkg` only after an approved apply, not while pending
 
-First push sends a full dump + DDL schema. Subsequent pushes are incremental. Changes to TOML annotations or README.md are detected and uploaded separately.
+First push sends a full GPKG. Subsequent pushes are incremental. `--force` against existing HEAD requires `--replace-head` (rebuild only). Changes to TOML annotations or README.md are detected and uploaded separately.
 
 ### Pull (server → local)
 
@@ -128,10 +128,9 @@ tinyowl pull
 ```
 
 1. Checks server HEAD against local ledger
-2. Downloads all diffs since last known HEAD
-3. Applies diffs to canonical
-4. Rebases local changes (avoids PK conflicts)
-5. Updates ledger, saves snapshot
+2. If behind: downloads approved diffs since last known HEAD
+3. Applies diffs to canonical, or on constraint conflict keeps canonical and refreshes `base.gpkg` from HEAD
+4. Updates ledger; snapshot on successful apply
 
 ### Clone (full download)
 

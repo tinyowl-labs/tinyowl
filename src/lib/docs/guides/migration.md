@@ -103,7 +103,7 @@ tinyowl import survey.gpkg --project ./my-survey --name "My Survey"
 The server supports a push/pull protocol that the CLI uses for syncing. The CLI also supports:
 
 - `tinyowl pull` — Download canonical and catch up on diffs
-- `tinyowl push` — Push local changes (includes validation)
+- `tinyowl push -m "..."` — Push local changes (incremental is pending until approve)
 - `tinyowl clone` — Clone a remote project
 - `tinyowl status` / `log` / `commit` — View sync state and commit history
 - `tinyowl media push` / `add` / `import-dir` — Manage media files
