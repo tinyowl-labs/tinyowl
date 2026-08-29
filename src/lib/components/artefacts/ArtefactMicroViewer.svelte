@@ -636,6 +636,10 @@
                 const tileset = await Cesium.Cesium3DTileset.fromUrl(resource, {
                     enableCollision: false,
                     maximumScreenSpaceError: 8,
+                    skipLevelOfDetail: false,
+                    immediatelyLoadDesiredLevelOfDetail: false,
+                    loadSiblings: true,
+                    loadingDescendantLimit: 128,
                 });
                 if (gen !== loadGen) {
                     tileset.destroy?.();

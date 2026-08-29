@@ -2097,6 +2097,10 @@
                 const prim = await Cesium.Cesium3DTileset.fromUrl(resource, {
                     enableCollision: false,
                     maximumScreenSpaceError: 4,
+                    skipLevelOfDetail: false,
+                    immediatelyLoadDesiredLevelOfDetail: false,
+                    loadSiblings: true,
+                    loadingDescendantLimit: 128,
                 });
                 if (gen !== modelLoadGen || !readyHashes.has(m.hash)) {
                     if (!prim.isDestroyed?.()) prim.destroy();
