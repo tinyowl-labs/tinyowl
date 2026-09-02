@@ -12,6 +12,8 @@
     import SettingsIcon from "@lucide/svelte/icons/settings";
     import LogOutIcon from "@lucide/svelte/icons/log-out";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+    import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
+    import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
     import { buttonVariants } from "$lib/components/ui/button/button.svelte";
     import { cn } from "$lib/utils.js";
@@ -21,7 +23,19 @@
         subtitle = "",
         hasSession = false,
         fixed = false,
-    }: { subtitle?: string; hasSession?: boolean; fixed?: boolean } = $props();
+        /** When set with onSidebarToggle, shows a panel control next to the brand. */
+        sidebarCollapsed = false,
+        onSidebarToggle,
+        /** Visibility class for the toggle (match the sidebar breakpoint). */
+        sidebarToggleClass = "hidden md:inline-flex",
+    }: {
+        subtitle?: string;
+        hasSession?: boolean;
+        fixed?: boolean;
+        sidebarCollapsed?: boolean;
+        onSidebarToggle?: () => void;
+        sidebarToggleClass?: string;
+    } = $props();
 
     const dark = $derived(isDark());
 
@@ -35,13 +49,12 @@
 </script>
 
 <header
-    class="glass-dock flex h-11 shrink-0 items-center justify-between px-4 border-b border-border text-foreground"
-    class:fixed
-    class:top-0={fixed}
-    class:inset-x-0={fixed}
-    class:z-50={fixed}
+    class={cn(
+        "glass-dock flex h-11 shrink-0 items-center justify-between px-4 border-b border-border text-foreground",
+        fixed ? "fixed top-0 inset-x-0 z-50" : "relative z-20",
+    )}
 >
-    <div class="flex items-center gap-2.5">
+    <div class="flex min-w-0 items-center gap-2">
         <a
             href="/"
             aria-label="echidna"
@@ -54,6 +67,24 @@
             </span>
             echidna
         </a>
+        {#if onSidebarToggle}
+            <button
+                type="button"
+                onclick={onSidebarToggle}
+                class="{sidebarToggleClass} size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                aria-label={sidebarCollapsed
+                    ? "Expand sidebar"
+                    : "Collapse sidebar"}
+                aria-pressed={!sidebarCollapsed}
+            >
+                {#if sidebarCollapsed}
+                    <PanelLeftIcon class="size-4" />
+                {:else}
+                    <PanelLeftCloseIcon class="size-4" />
+                {/if}
+            </button>
+        {/if}
         {#if subtitle}
             <span class="w-px h-4 shrink-0 bg-border"></span>
             <span class="text-sm font-medium truncate text-foreground"

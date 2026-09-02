@@ -3,14 +3,15 @@
     import { browser } from "$app/environment";
     import { isDark, mapColors, themePrefs } from "$lib/stores/theme.svelte";
     import {
-        cesiumColorFromCss,
-        createCesiumMap,
-        destroyCesiumViewer,
-        loadCesiumGlobal,
-        tuneCesiumBasemap,
-    } from "../cesiumBoot";
-    import CesiumLoading from "../CesiumLoading.svelte";
-    import CesiumAttribution from "../CesiumAttribution.svelte";
+        createLeafletMap,
+        destroyLeafletMap,
+        loadLeaflet,
+        observeLeafletResize,
+        paddedLatLngBounds,
+        tuneLeafletBasemap,
+    } from "../leafletBoot";
+    import MapLoading from "../MapLoading.svelte";
+    import MapAttribution from "../MapAttribution.svelte";
 
     type Props = {
         bbox: string;
@@ -21,7 +22,6 @@
     let { bbox, href = "", class: klass = "" }: Props = $props();
 
     let container = $state<HTMLDivElement>();
-    let creditSink = $state<HTMLDivElement>();
     let mounted = $state(false);
     let mapReady = $state(false);
 
@@ -29,46 +29,22 @@
         mounted = true;
     });
 
-    function ringFromGeoJSON(geojson: any): number[] | null {
-        const coords = geojson?.coordinates?.[0];
-        if (!Array.isArray(coords) || coords.length < 3) return null;
-        const flat: number[] = [];
-        for (const c of coords) {
-            if (!Array.isArray(c) || c.length < 2) continue;
-            flat.push(Number(c[0]), Number(c[1]), 0);
+    function asPolygon(raw: unknown): GeoJSON.Polygon | GeoJSON.Feature | null {
+        if (!raw || typeof raw !== "object") return null;
+        const g = raw as Record<string, unknown>;
+        if (g.type === "Polygon" && Array.isArray(g.coordinates)) {
+            return raw as GeoJSON.Polygon;
         }
-        return flat.length >= 9 ? flat : null;
-    }
-
-    /** Expand a tight project bbox so the thumbnail shows context. */
-    function paddedViewRectangle(Cesium: any, rect: any) {
-        const west = Cesium.Math.toDegrees(rect.west);
-        const south = Cesium.Math.toDegrees(rect.south);
-        const east = Cesium.Math.toDegrees(rect.east);
-        const north = Cesium.Math.toDegrees(rect.north);
-        let dw = Math.max(east - west, 0.008);
-        let dh = Math.max(north - south, 0.008);
-        // Generous pad — site bboxes are tiny and looked "too zoomed in".
-        dw *= 2.4;
-        dh *= 2.4;
-        // Match the wide banner aspect (~2.8:1) so height isn't cropped oddly.
-        const aspect = 2.8;
-        if (dw / dh < aspect) dw = dh * aspect;
-        else dh = dw / aspect;
-        const cx = (west + east) / 2;
-        const cy = (south + north) / 2;
-        return Cesium.Rectangle.fromDegrees(
-            cx - dw / 2,
-            cy - dh / 2,
-            cx + dw / 2,
-            cy + dh / 2,
-        );
+        if (g.type === "Feature" && asPolygon(g.geometry)) {
+            return raw as GeoJSON.Feature;
+        }
+        return null;
     }
 
     $effect(() => {
         themePrefs.accentHue;
         themePrefs.bgBase;
-        if (!mounted || !container || !creditSink || !browser) return;
+        if (!mounted || !container || !browser) return;
 
         let cancelled = false;
         let cleanup: (() => void) | undefined;
@@ -76,63 +52,57 @@
 
         void (async () => {
             try {
-                const Cesium = await loadCesiumGlobal();
-                if (cancelled || !container || !creditSink) return;
+                const L = await loadLeaflet();
+                if (cancelled || !container) return;
 
-                const viewer = createCesiumMap(Cesium, container, creditSink, {
+                const map = createLeafletMap(L, container, {
                     interactive: false,
-                    requestRenderMode: false,
                 });
-                tuneCesiumBasemap(viewer, Cesium, isDark());
+                const stopResize = observeLeafletResize(map, container);
+                cleanup = () => {
+                    stopResize();
+                    destroyLeafletMap(map);
+                };
+                if (cancelled) {
+                    cleanup();
+                    return;
+                }
+                tuneLeafletBasemap(map, isDark());
+                map.invalidateSize();
 
                 const colors = mapColors();
-                const fill = (
-                    cesiumColorFromCss(Cesium, colors.marker, "#3b82f6") ??
-                    Cesium.Color.DODGERBLUE
-                ).withAlpha(isDark() ? 0.25 : 0.18);
-                const stroke =
-                    cesiumColorFromCss(Cesium, colors.stroke, "#1d4ed8") ??
-                    Cesium.Color.WHITE;
+                const fill = colors.marker || "#3b82f6";
+                const stroke = colors.stroke || "#1d4ed8";
 
                 try {
-                    const geojson = JSON.parse(bbox);
-                    const flat = ringFromGeoJSON(geojson);
-                    if (flat) {
-                        const positions =
-                            Cesium.Cartesian3.fromDegreesArrayHeights(flat);
-                        viewer.entities.add({
-                            polygon: {
-                                hierarchy: positions,
-                                material: fill,
-                                outline: false,
-                                height: 0,
-                                heightReference: Cesium.HeightReference.NONE,
+                    const parsed = asPolygon(JSON.parse(bbox));
+                    if (parsed) {
+                        const layer = L.geoJSON(parsed, {
+                            style: {
+                                color: stroke,
+                                weight: 2,
+                                fillColor: fill,
+                                fillOpacity: isDark() ? 0.25 : 0.18,
+                                opacity: 1,
                             },
-                            polyline: {
-                                positions,
-                                width: 2,
-                                material: stroke,
-                                clampToGround: false,
-                            },
-                        });
-                        const tight =
-                            Cesium.Rectangle.fromCartesianArray(positions);
-                        await viewer.camera.flyTo({
-                            destination: paddedViewRectangle(Cesium, tight),
-                            duration: 0.6,
-                        });
+                            interactive: false,
+                        }).addTo(map);
+                        const tight = layer.getBounds();
+                        if (tight.isValid()) {
+                            map.fitBounds(paddedLatLngBounds(L, tight), {
+                                animate: true,
+                                duration: 0.6,
+                            });
+                        }
                     }
                 } catch {
                     /* ignore bad bbox */
                 }
 
-                viewer.resize();
-                viewer.scene.requestRender();
+                map.invalidateSize();
                 if (!cancelled) mapReady = true;
-                cleanup = () => destroyCesiumViewer(viewer);
             } catch (e) {
-                console.warn("BboxMap Cesium failed", e);
-                // Release the loading overlay even on failure.
+                console.warn("BboxMap Leaflet failed", e);
                 if (!cancelled) mapReady = true;
             }
         })();
@@ -147,29 +117,27 @@
 {#if href}
     <a
         {href}
-        class="relative block rounded-lg border border-border overflow-hidden hover:border-primary/50 transition-colors {klass}"
+        class="leaflet-locator relative block rounded-lg border border-border overflow-hidden hover:border-primary/50 transition-colors {klass}"
         aria-label="Project boundary map"
     >
         <div bind:this={container} class="w-full h-full bg-secondary/20"></div>
-        <div bind:this={creditSink} class="hidden"></div>
         {#if !mapReady}
-            <CesiumLoading />
+            <MapLoading />
         {/if}
         {#if mapReady}
-            <CesiumAttribution />
+            <MapAttribution />
         {/if}
     </a>
 {:else}
     <div
-        class="relative rounded-lg border border-border overflow-hidden bg-secondary/20 {klass}"
+        class="leaflet-locator relative rounded-lg border border-border overflow-hidden bg-secondary/20 {klass}"
     >
         <div bind:this={container} class="w-full h-full"></div>
-        <div bind:this={creditSink} class="hidden"></div>
         {#if !mapReady}
-            <CesiumLoading />
+            <MapLoading />
         {/if}
         {#if mapReady}
-            <CesiumAttribution />
+            <MapAttribution />
         {/if}
     </div>
 {/if}

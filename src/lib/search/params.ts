@@ -43,9 +43,12 @@ export function parseBBox(raw: string | null | undefined): SearchBBox | null {
   const parts = raw.split(",").map((p) => Number(p.trim()));
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return null;
   let [west, south, east, north] = parts;
+  west = Math.max(-180, Math.min(180, west));
+  east = Math.max(-180, Math.min(180, east));
+  south = Math.max(-90, Math.min(90, south));
+  north = Math.max(-90, Math.min(90, north));
   if (west > east) [west, east] = [east, west];
   if (south > north) [south, north] = [north, south];
-  if (west < -180 || east > 180 || south < -90 || north > 90) return null;
   return { west, south, east, north };
 }
 

@@ -6,8 +6,6 @@
     import UsersIcon from "@lucide/svelte/icons/users";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import GitCommit from "@lucide/svelte/icons/git-commit";
-    import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
-    import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import SettingsIcon from "@lucide/svelte/icons/settings";
     import Header from "$lib/components/ui/header.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
@@ -52,65 +50,53 @@
 <svelte:head><title>Profile — echidna</title></svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
-    <Header subtitle="Profile" {hasSession} />
+    <Header
+        subtitle="Profile"
+        {hasSession}
+        sidebarCollapsed={collapsed}
+        onSidebarToggle={() => (collapsed = !collapsed)}
+    />
 
     {#if user}
         <div class="flex flex-1 min-h-0">
             <!-- Desktop left sidebar: Your projects -->
             <aside
-                class="hidden md:flex shrink-0 border-r border-border glass-panel flex-col transition-all duration-200 {collapsed
+                class="hidden md:flex shrink-0 overflow-hidden border-r border-border transition-[width] duration-200 ease-out {collapsed
                     ? 'w-12'
                     : 'w-64'}"
             >
-                <button
-                    onclick={() => (collapsed = !collapsed)}
-                    class="flex items-center justify-center h-10 shrink-0 border-b border-border text-muted-foreground hover:text-foreground hover:bg-secondary/30 transition-colors"
-                    title={collapsed ? "Expand projects" : "Collapse projects"}
-                >
-                    {#if collapsed}
-                        <PanelLeftIcon class="size-4" />
-                    {:else}
-                        <PanelLeftCloseIcon class="size-4" />
-                    {/if}
-                </button>
-
-                {#if !collapsed}
+                <div class="glass-panel flex h-full w-full min-w-0 flex-col">
                     <div
-                        class="flex items-center justify-between gap-2 px-3 py-2 border-b border-border"
+                        class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2.5"
                     >
-                        <h2
-                            class="text-xs font-semibold tracking-wider uppercase text-muted-foreground"
-                        >
-                            Your projects
-                        </h2>
                         <button
                             type="button"
                             onclick={() => (showCreate = true)}
-                            class="inline-flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors"
                             title="New project"
                         >
                             <PlusIcon class="size-3.5" />
                         </button>
+                        <h2
+                            class="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-opacity duration-150 {collapsed
+                                ? 'opacity-0'
+                                : 'opacity-100 delay-100'}"
+                        >
+                            Your projects
+                        </h2>
                     </div>
-                {:else}
-                    <button
-                        type="button"
-                        onclick={() => (showCreate = true)}
-                        class="flex items-center justify-center m-1.5 size-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
-                        title="New project"
-                    >
-                        <PlusIcon class="size-4" />
-                    </button>
-                {/if}
 
-                <nav class="flex flex-col gap-0.5 p-1.5 flex-1 overflow-y-auto">
-                    {#if projects.length === 0}
-                        {#if !collapsed}
-                            <div class="px-2 py-6 text-center">
+                    <nav class="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">
+                        {#if projects.length === 0}
+                            <div
+                                class="px-2 py-6 text-center transition-opacity duration-150 {collapsed
+                                    ? 'opacity-0'
+                                    : 'opacity-100 delay-100'}"
+                            >
                                 <UsersIcon
-                                    class="size-5 mx-auto mb-2 text-muted-foreground"
+                                    class="mx-auto mb-2 size-5 text-muted-foreground"
                                 />
-                                <p class="text-xs text-muted-foreground mb-3">
+                                <p class="mb-3 text-xs text-muted-foreground">
                                     No projects yet
                                 </p>
                                 <Button
@@ -121,19 +107,19 @@
                                     Create project
                                 </Button>
                             </div>
-                        {/if}
-                    {:else}
-                        {#each projects as project}
-                            <a
-                                href="/{project.slug}"
-                                title={collapsed ? project.title : undefined}
-                                class="flex items-center gap-2.5 rounded-md {collapsed
-                                    ? 'justify-center px-0 py-1.5'
-                                    : 'px-2.5 py-2'} text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
-                            >
-                                <UsersIcon class="size-4 shrink-0" />
-                                {#if !collapsed}
-                                    <span class="min-w-0 flex-1">
+                        {:else}
+                            {#each projects as project}
+                                <a
+                                    href="/{project.slug}"
+                                    title={project.title}
+                                    class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground no-underline transition-colors hover:bg-secondary/50 hover:text-foreground"
+                                >
+                                    <UsersIcon class="size-4 shrink-0" />
+                                    <span
+                                        class="min-w-0 flex-1 transition-opacity duration-150 {collapsed
+                                            ? 'pointer-events-none opacity-0'
+                                            : 'opacity-100 delay-100'}"
+                                    >
                                         <span
                                             class="block truncate font-medium text-foreground"
                                             >{project.title}</span
@@ -144,11 +130,11 @@
                                                 · {project.role}{/if}</span
                                         >
                                     </span>
-                                {/if}
-                            </a>
-                        {/each}
-                    {/if}
-                </nav>
+                                </a>
+                            {/each}
+                        {/if}
+                    </nav>
+                </div>
             </aside>
 
             <!-- Mobile projects drawer -->

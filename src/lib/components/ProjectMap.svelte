@@ -5,17 +5,19 @@
     import { isDark, mapColors, themePrefs } from "$lib/stores/theme.svelte";
     import { searchHref } from "$lib/search/params";
     import type { Centroid } from "../../routes/+page.server";
+    import type { Map as LeafletMap } from "leaflet";
     import {
-        cesiumColorFromCss,
-        cesiumMapLabel,
-        createCesiumMap,
-        destroyCesiumViewer,
-        loadCesiumGlobal,
-        tuneCesiumBasemap,
-        viewRectangle,
-    } from "./cesiumBoot";
-    import CesiumLoading from "./CesiumLoading.svelte";
-    import CesiumAttribution from "./CesiumAttribution.svelte";
+        createClusterGroup,
+        createLeafletMap,
+        destroyLeafletMap,
+        loadLeafletWithCluster,
+        observeLeafletResize,
+        tuneLeafletBasemap,
+        viewBounds,
+        type LeafletNS,
+    } from "./leafletBoot";
+    import MapLoading from "./MapLoading.svelte";
+    import MapAttribution from "./MapAttribution.svelte";
 
     type Props = {
         centroids: Centroid[];
@@ -31,11 +33,8 @@
     }: Props = $props();
 
     let container = $state<HTMLDivElement>();
-    let creditSink = $state<HTMLDivElement>();
     let mounted = $state(false);
-    let viewer: any = null;
-    let Cesium: any = null;
-    let clickHandler: any = null;
+    let map: LeafletMap | null = null;
     let error = $state("");
     let mapReady = $state(false);
 
@@ -44,9 +43,8 @@
     });
 
     function searchThisArea() {
-        if (!viewer || !Cesium) return;
-        const rect = viewRectangle(viewer, Cesium);
-        if (!rect) return;
+        if (!map) return;
+        const rect = viewBounds(map);
         goto(
             searchHref({
                 bbox: {
@@ -74,8 +72,7 @@
         themePrefs.accentHue;
         themePrefs.bgBase;
         const list = centroids.filter(hasCoord);
-        if (!mounted || !container || !creditSink || !browser) return;
-        // No plottable points — clear the preparing overlay (empty map shell).
+        if (!mounted || !container || !browser) return;
         if (list.length === 0) {
             mapReady = true;
             return;
@@ -83,132 +80,98 @@
 
         let cancelled = false;
         let cleanup: (() => void) | undefined;
-        let resizeObs: ResizeObserver | undefined;
         mapReady = false;
 
         void (async () => {
             try {
-                Cesium = await loadCesiumGlobal();
-                if (cancelled || !container || !creditSink) return;
+                const L: LeafletNS = await loadLeafletWithCluster();
+                if (cancelled || !container) return;
 
-                viewer = createCesiumMap(Cesium, container, creditSink, {
-                    requestRenderMode: false,
-                });
-                tuneCesiumBasemap(viewer, Cesium, isDark());
+                map = createLeafletMap(L, container);
+                const stopResize = observeLeafletResize(map, container);
+                cleanup = () => {
+                    stopResize();
+                    destroyLeafletMap(map);
+                    map = null;
+                };
+                if (cancelled) {
+                    cleanup();
+                    return;
+                }
+                tuneLeafletBasemap(map, isDark());
+                map.invalidateSize();
 
                 const colors = mapColors();
-                const marker =
-                    cesiumColorFromCss(Cesium, colors.marker, "#3b82f6") ??
-                    Cesium.Color.DODGERBLUE;
-                const stroke =
-                    cesiumColorFromCss(Cesium, colors.stroke, "#1d4ed8") ??
-                    Cesium.Color.WHITE;
-                const positions: any[] = [];
+                const fill = colors.marker || "#3b82f6";
+                const showLabels = list.length <= 40;
+                const latlngs: [number, number][] = [];
+                const cluster = createClusterGroup(L, {
+                    disableClusteringAtZoom: 12,
+                    maxClusterRadius: 56,
+                });
 
                 for (const c of list) {
-                    const position = Cesium.Cartesian3.fromDegrees(
-                        c.lng,
-                        c.lat,
-                        0,
-                    );
-                    positions.push(position);
+                    latlngs.push([c.lat, c.lng]);
                     const detail =
                         c.entity_count > 0
                             ? `${c.entity_count.toLocaleString()} entities across ${c.table_count} tables`
                             : `${c.table_count} tables`;
-                    viewer.entities.add({
-                        id: `project:${c.slug}`,
-                        position,
-                        point: {
-                            pixelSize: 12,
-                            color: marker.withAlpha(0.9),
-                            outlineColor: stroke,
-                            outlineWidth: 2,
-                            heightReference: Cesium.HeightReference.NONE,
-                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                        },
-                        label: {
-                            ...cesiumMapLabel(Cesium, c.title, {
-                                font: "600 12px ui-sans-serif, system-ui, sans-serif",
-                                pixelOffsetY: -14,
-                            }),
-                            show: list.length <= 40,
-                        },
-                        description: `<div class="text-[13px]">
-                            <strong>${escapeHTML(c.title)}</strong><br/>
-                            <span class="opacity-60">${detail}</span>
-                        </div>`,
-                        properties: { slug: c.slug },
+                    const marker = L.circleMarker([c.lat, c.lng], {
+                        radius: 7,
+                        color: "#fff",
+                        weight: 2,
+                        fillColor: fill,
+                        fillOpacity: 1,
+                        opacity: 1,
                     });
+                    if (showLabels) {
+                        marker.on("add", () => {
+                            marker.getElement()?.setAttribute("title", detail);
+                        });
+                    }
+                    cluster.addLayer(marker);
+
+                    marker.bindTooltip(
+                        showLabels
+                            ? escapeHTML(c.title)
+                            : `<div class="text-[13px]"><strong>${escapeHTML(c.title)}</strong><br/><span class="opacity-60">${escapeHTML(detail)}</span></div>`,
+                        {
+                            permanent: showLabels,
+                            direction: "top",
+                            offset: [0, -8],
+                            className: "leaflet-map-label",
+                            opacity: 1,
+                        },
+                    );
+
+                    const slug = c.slug;
+                    marker.on("click", () => goto(`/${slug}`));
                 }
 
-                clickHandler = new Cesium.ScreenSpaceEventHandler(
-                    viewer.scene.canvas,
-                );
-                clickHandler.setInputAction(
-                    (click: { position: unknown }) => {
-                        const picked = viewer.scene.pick(click.position);
-                        const entity = picked?.id;
-                        const slug =
-                            entity?.properties?.slug?.getValue?.() ??
-                            entity?.properties?.slug;
-                        if (slug) goto(`/${String(slug)}`);
-                    },
-                    Cesium.ScreenSpaceEventType.LEFT_CLICK,
-                );
+                cluster.addTo(map);
 
-                if (positions.length === 1) {
-                    const only = list[0]!;
-                    await viewer.camera.flyTo({
-                        destination: Cesium.Cartesian3.fromDegrees(
-                            only.lng,
-                            only.lat,
-                            1_500_000,
-                        ),
-                        duration: 0.8,
-                    });
-                } else if (positions.length > 1) {
-                    const bs = Cesium.BoundingSphere.fromPoints(positions);
-                    await viewer.camera.flyToBoundingSphere(bs, {
-                        duration: 0.8,
-                        offset: new Cesium.HeadingPitchRange(
-                            0,
-                            Cesium.Math.toRadians(-90),
-                            Math.max(bs.radius * 3, 400_000),
-                        ),
-                    });
+                if (latlngs.length === 1) {
+                    map.setView(latlngs[0]!, 6);
+                } else {
+                    const bounds = cluster.getBounds();
+                    if (bounds.isValid()) {
+                        map.fitBounds(bounds, {
+                            padding: [40, 40],
+                            maxZoom: 8,
+                            animate: true,
+                            duration: 0.8,
+                        });
+                    }
                 }
 
                 if (!cancelled) mapReady = true;
 
-                resizeObs = new ResizeObserver(() => {
-                    try {
-                        viewer?.resize();
-                        viewer?.scene?.requestRender();
-                    } catch {
-                        /* ignore */
-                    }
-                });
-                resizeObs.observe(container);
-
-                viewer.resize();
-                viewer.scene.requestRender();
+                map.invalidateSize();
                 error = "";
-                cleanup = () => {
-                    resizeObs?.disconnect();
-                    try {
-                        clickHandler?.destroy?.();
-                    } catch {
-                        /* ignore */
-                    }
-                    clickHandler = null;
-                    destroyCesiumViewer(viewer);
-                    viewer = null;
-                };
             } catch (e) {
                 error =
                     e instanceof Error ? e.message : "Failed to start map";
-                console.warn("ProjectMap Cesium failed", e);
+                console.warn("ProjectMap Leaflet failed", e);
             }
         })();
 
@@ -221,15 +184,14 @@
 
 <div class="relative {klass}">
     <div
-        class="relative rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
+        class="leaflet-locator relative rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
     >
         <div bind:this={container} class="w-full h-full min-h-70"></div>
-        <div bind:this={creditSink} class="hidden"></div>
         {#if !mapReady && !error}
-            <CesiumLoading />
+            <MapLoading />
         {/if}
         {#if mapReady && !error}
-            <CesiumAttribution />
+            <MapAttribution />
         {/if}
         {#if error}
             <div

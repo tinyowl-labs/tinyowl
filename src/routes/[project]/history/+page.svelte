@@ -82,6 +82,29 @@
             if (tableName && !tableName.startsWith("_")) names.add(tableName);
         }
         if (names.size === 0) names.add("Sites");
+
+        const opByKey = new Map<string, { type: string; geometry: any }>();
+        for (const e of geodiff) {
+            const table = String((e as any)?.table ?? "");
+            if (!table || table.startsWith("_")) continue;
+            const op = String((e as any)?.type ?? "").toLowerCase();
+            if (op !== "insert" && op !== "update" && op !== "delete") continue;
+            const cols = Array.isArray((e as any)?.changes) ? (e as any).changes : [];
+            let eid = "";
+            for (const c of cols) {
+                const n = String(c?.name ?? "");
+                if (n !== "source_id" && n !== "fid" && n !== "id" && n !== "entity_id")
+                    continue;
+                const v = c.new ?? c.old;
+                if (v != null && v !== "") {
+                    eid = String(v);
+                    break;
+                }
+            }
+            const key = eid ? `${table}:${eid}` : "";
+            if (key) opByKey.set(key, { type: op, geometry: (e as any).geometry });
+        }
+
         for (const name of names) {
             try {
                 const res = await fetch(
@@ -91,16 +114,30 @@
                 if (!res.ok) continue;
                 const fc = await res.json();
                 for (const f of fc.features ?? []) {
+                    const eid = f.properties?.entity_id;
+                    const key = eid != null ? `${name}:${eid}` : `${name}:${feats.length}`;
+                    const op = opByKey.get(key);
                     feats.push({
-                        id: `${name}:${f.properties?.entity_id ?? feats.length}`,
+                        id: key,
                         table: name,
-                        type: "head",
+                        type: op?.type ?? "head",
                         geometry: f.geometry,
                     });
+                    if (op) opByKey.delete(key);
                 }
             } catch {
                 /* skip table */
             }
+        }
+        for (const [key, op] of opByKey) {
+            if (!op.geometry) continue;
+            const table = key.slice(0, key.indexOf(":"));
+            feats.push({
+                id: key,
+                table,
+                type: op.type,
+                geometry: op.geometry,
+            });
         }
         if (feats.length === 0) {
             for (const e of geodiff) {
@@ -144,7 +181,7 @@
 
 <article class="absolute inset-0 flex flex-col overflow-hidden">
     <header
-        class="shrink-0 flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-border"
+        class="relative z-10 shrink-0 flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-border bg-background"
     >
         <div class="min-w-0">
             <div class="flex items-center gap-2">
@@ -286,7 +323,7 @@
         </div>
 
         <div class="min-h-0 overflow-hidden flex flex-col">
-            <div class="relative flex-1 min-h-0 overflow-hidden">
+            <div class="relative z-0 isolate flex-1 min-h-0 overflow-hidden">
                 <ReviewMap
                     features={scrubFeatures}
                     selectedId={null}
@@ -294,7 +331,7 @@
                 />
                 {#if seq > 0 && !loadErr && scrubFeatures.length === 0}
                     <p
-                        class="pointer-events-none absolute left-3 top-3 z-10 rounded-md bg-background/80 px-2 py-1 text-xs text-muted-foreground"
+                        class="pointer-events-none absolute left-3 top-3 z-20 rounded-md bg-background/80 px-2 py-1 text-xs text-muted-foreground"
                     >
                         No geometry at seq {seq}
                     </p>

@@ -3,8 +3,6 @@
     import { browser } from "$app/environment";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-    import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
-    import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import Header from "$lib/components/ui/header.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
 
@@ -49,82 +47,86 @@
 </svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
-    <Header subtitle="Documentation" {hasSession} />
+    <Header
+        subtitle="Documentation"
+        {hasSession}
+        sidebarCollapsed={collapsed}
+        onSidebarToggle={() => (collapsed = !collapsed)}
+        sidebarToggleClass="hidden lg:inline-flex"
+    />
 
     <div class="flex flex-1 min-h-0">
         <!-- Desktop sidebar -->
         <aside
-            class="hidden lg:flex shrink-0 border-r border-border glass-panel flex-col transition-all duration-200 {collapsed
+            class="hidden lg:flex shrink-0 overflow-hidden border-r border-border transition-[width] duration-200 ease-out {collapsed
                 ? 'w-12'
                 : 'w-56'}"
         >
-            <button
-                onclick={() => (collapsed = !collapsed)}
-                class="flex items-center justify-center h-10 shrink-0 border-b border-border text-muted-foreground hover:text-foreground hover:bg-secondary/30 transition-colors"
-                title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-                {#if collapsed}
-                    <PanelLeftIcon class="size-4" />
-                {:else}
-                    <PanelLeftCloseIcon class="size-4" />
-                {/if}
-            </button>
-
-            <nav class="flex flex-col gap-0.5 p-1.5 overflow-y-auto flex-1">
-                {#each nav as group}
-                    {#if collapsed}
-                        <div
-                            class="flex items-center justify-center py-1.5 text-[10px] font-semibold text-muted-foreground/40 uppercase"
-                            title={group.section}
-                        >
-                            {group.section.charAt(0)}
-                        </div>
-                    {:else}
+            <div class="glass-panel flex h-full w-full min-w-0 flex-col">
+                <nav class="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">
+                    {#each nav as group}
                         <div class="mb-0.5">
                             <button
                                 onclick={() => toggleSection(group.section)}
-                                class="flex items-center justify-between w-full rounded-md px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+                                class="flex w-full items-center justify-between rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                                title={group.section}
                             >
-                                <span>{group.section}</span>
+                                <span
+                                    class="truncate transition-opacity duration-150 {collapsed
+                                        ? 'opacity-0'
+                                        : 'opacity-100 delay-100'}"
+                                    >{group.section}</span
+                                >
                                 <ChevronDownIcon
                                     class="size-3.5 shrink-0 transition-transform {isSectionCollapsed(
                                         group.section,
                                     )
                                         ? '-rotate-90'
-                                        : 'rotate-0'}"
+                                        : 'rotate-0'} {collapsed
+                                        ? 'opacity-0'
+                                        : 'opacity-100'}"
                                 />
                             </button>
                             {#if !isSectionCollapsed(group.section)}
-                                <div class="flex flex-col gap-0.5 mt-0.5 ml-2">
+                                <div
+                                    class="ml-2 mt-0.5 flex flex-col gap-0.5 transition-opacity duration-150 {collapsed
+                                        ? 'pointer-events-none opacity-0'
+                                        : 'opacity-100 delay-100'}"
+                                >
                                     {#each group.items as item}
                                         <a
                                             href={item.href}
-                                            class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm {isActive(
+                                            class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm no-underline transition-colors {isActive(
                                                 item.href,
                                             )
-                                                ? 'bg-secondary text-foreground font-medium'
-                                                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                                                ? 'bg-secondary font-medium text-foreground'
+                                                : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'}"
                                         >
-                                            {item.label}
+                                            <span class="truncate"
+                                                >{item.label}</span
+                                            >
                                         </a>
                                     {/each}
                                 </div>
                             {/if}
                         </div>
-                    {/if}
-                {/each}
-            </nav>
-            {#if !collapsed}
-                <div class="mt-auto p-3 border-t border-border">
+                    {/each}
+                </nav>
+                <div class="mt-auto border-t border-border p-1.5">
                     <a
                         href="/"
-                        class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
+                        class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground no-underline transition-colors hover:bg-secondary/50 hover:text-foreground"
                     >
-                        <ChevronLeft class="size-3.5" />
-                        Back to projects
+                        <ChevronLeft class="size-3.5 shrink-0" />
+                        <span
+                            class="truncate transition-opacity duration-150 {collapsed
+                                ? 'pointer-events-none opacity-0'
+                                : 'opacity-100 delay-100'}"
+                            >Back to projects</span
+                        >
                     </a>
                 </div>
-            {/if}
+            </div>
         </aside>
 
         <!-- Mobile navigation -->
