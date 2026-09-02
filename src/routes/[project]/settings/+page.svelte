@@ -8,6 +8,7 @@
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
+    import JobLog from "$lib/components/qfield/job-log.svelte";
     import {
         LICENCES,
         LOCATION_PRECISIONS,
@@ -32,6 +33,40 @@
     );
 
     const qfieldLink = $derived((data as any)?.qfieldLink ?? null);
+    let polledQfield = $state<any>(null);
+    const displayQfield = $derived(polledQfield ?? qfieldLink);
+    const qfieldJobActive = $derived(
+        Boolean(
+            displayQfield &&
+                (displayQfield.import_status === "pending" ||
+                    displayQfield.import_status === "running" ||
+                    displayQfield.sync_pending ||
+                    displayQfield.sync_requested_at),
+        ),
+    );
+
+    $effect(() => {
+        const s = slug;
+        const on = qfieldJobActive;
+        if (!s || !on) return;
+        let stopped = false;
+        async function tick() {
+            try {
+                const res = await fetch(
+                    `/api/qfieldcloud/links/${encodeURIComponent(s)}`,
+                );
+                if (res.ok && !stopped) polledQfield = await res.json();
+            } catch {
+                /* ignore */
+            }
+        }
+        void tick();
+        const id = setInterval(() => void tick(), 1000);
+        return () => {
+            stopped = true;
+            clearInterval(id);
+        };
+    });
     const qfieldAccounts = $derived(
         ((data as any)?.qfieldAccounts ?? []) as {
             id: string;
@@ -473,59 +508,89 @@
                             </p>
                         {/if}
 
-                        {#if qfieldLink}
+                        {#if displayQfield}
                             <div
                                 class="rounded-lg border border-border px-4 py-3 space-y-2"
                             >
                                 <p class="text-sm text-foreground">
-                                    Linked to
+                                    {#if displayQfield.mode === "snapshot"}
+                                        Copied from
+                                    {:else}
+                                        Linked to
+                                    {/if}
                                     <span class="font-medium"
-                                        >{qfieldLink.qfc_project_name ||
-                                            qfieldLink.qfc_project_id}</span
+                                        >{displayQfield.qfc_project_name ||
+                                            displayQfield.qfc_project_id}</span
                                     >
                                 </p>
+                                {#if displayQfield.mode === "snapshot"}
+                                    <p class="text-xs text-muted-foreground">
+                                        Snapshot — echidna is the source of
+                                        truth. The Cloud project is not
+                                        live-synced.
+                                        {#if displayQfield.source_owner}
+                                            Original owner: {displayQfield.source_owner}.
+                                        {/if}
+                                    </p>
+                                {/if}
+                                {#if displayQfield.job_log || displayQfield.import_status === "pending" || displayQfield.import_status === "running" || displayQfield.sync_pending || displayQfield.sync_requested_at}
+                                    <JobLog
+                                        log={displayQfield.job_log || ""}
+                                        status={displayQfield.import_status ||
+                                            (displayQfield.sync_pending ||
+                                            displayQfield.sync_requested_at
+                                                ? "syncing"
+                                                : "")}
+                                        error={displayQfield.import_error ||
+                                            ""}
+                                        progress={displayQfield.job_progress ||
+                                            null}
+                                    />
+                                {/if}
                                 <p class="text-xs text-muted-foreground">
-                                    {qfieldLink.base_url}
-                                    {#if qfieldLink.username}
-                                        · {qfieldLink.username}
+                                    {displayQfield.base_url}
+                                    {#if displayQfield.username}
+                                        · {displayQfield.username}
                                     {/if}
                                 </p>
-                                {#if qfieldLink.sync_pending || qfieldLink.sync_requested_at}
+                                {#if displayQfield.sync_pending || displayQfield.sync_requested_at}
                                     <p class="text-xs text-amber-700">
-                                        Sync pending since {qfieldLink.sync_requested_at}
+                                        Sync pending since {displayQfield.sync_requested_at}
                                     </p>
                                 {/if}
-                                {#if qfieldLink.last_synced_at}
+                                {#if displayQfield.last_synced_at}
                                     <p class="text-xs text-muted-foreground">
-                                        Last bridge sync: {qfieldLink.last_synced_at}
+                                        Last bridge sync: {displayQfield.last_synced_at}
                                     </p>
                                 {/if}
-                                {#if qfieldLink.gpkg_name}
+                                {#if displayQfield.gpkg_name}
                                     <p class="text-xs text-muted-foreground">
-                                        Bridge GPKG: {qfieldLink.gpkg_name}
+                                        Bridge GPKG: {displayQfield.gpkg_name}
                                     </p>
                                 {/if}
                                 {#if canLinkQField}
                                     <div class="flex flex-wrap gap-2 pt-2">
-                                        <form
-                                            method="POST"
-                                            action="?/syncQFieldCloud"
-                                            use:enhance
-                                        >
-                                            <Button
-                                                type="submit"
-                                                size="sm"
-                                                disabled={Boolean(
-                                                    qfieldLink.sync_pending ||
-                                                        qfieldLink.sync_requested_at,
-                                                )}
+                                        {#if displayQfield.mode !== "snapshot"}
+                                            <form
+                                                method="POST"
+                                                action="?/syncQFieldCloud"
+                                                use:enhance
                                             >
-                                                {qfieldLink.sync_pending ||
-                                                qfieldLink.sync_requested_at
-                                                    ? "Sync pending…"
-                                                    : "Sync now"}
-                                            </Button>
-                                        </form>
+                                                <Button
+                                                    type="submit"
+                                                    size="sm"
+                                                    disabled={Boolean(
+                                                        displayQfield.sync_pending ||
+                                                            displayQfield.sync_requested_at,
+                                                    )}
+                                                >
+                                                    {displayQfield.sync_pending ||
+                                                    displayQfield.sync_requested_at
+                                                        ? "Sync pending…"
+                                                        : "Sync now"}
+                                                </Button>
+                                            </form>
+                                        {/if}
                                         <form
                                             method="POST"
                                             action="?/unlinkQFieldCloud"

@@ -2,6 +2,7 @@
     import { enhance } from "$app/forms";
     import {
         afterNavigate,
+        goto,
         invalidateAll,
         replaceState,
     } from "$app/navigation";
@@ -34,6 +35,7 @@
     import PlusIcon from "@lucide/svelte/icons/plus";
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import LogOutIcon from "@lucide/svelte/icons/log-out";
+    import JobLog from "$lib/components/qfield/job-log.svelte";
 
     let { data, form: rawForm } = $props();
     const form = $derived(rawForm as any);
@@ -41,12 +43,44 @@
     const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const user = $derived(data?.user);
     const qfieldAccounts = $derived(data?.qfieldAccounts ?? []);
-    const qfieldLinks = $derived(data?.qfieldLinks ?? []);
+    const qfieldLinks = $derived(
+        (data?.qfieldLinks ?? []) as {
+            tinyowl_slug: string;
+            account_id: string;
+            qfc_project_id: string;
+            qfc_project_name?: string | null;
+            last_synced_at?: string | null;
+            base_url: string;
+            username: string;
+            mode?: string | null;
+            import_status?: string | null;
+            import_error?: string | null;
+            job_log?: string | null;
+            sync_pending?: boolean;
+            sync_requested_at?: string | null;
+        }[],
+    );
+    const ocLinks = $derived(
+        (data?.ocLinks ?? []) as {
+            tinyowl_slug: string;
+            oc_uuid: string;
+            oc_slug?: string | null;
+            oc_label?: string | null;
+            oc_uri?: string | null;
+            import_status?: string | null;
+            import_error?: string | null;
+            row_count?: number | null;
+            truncated?: boolean;
+            job_log?: string | null;
+            job_progress?: Record<string, unknown> | null;
+        }[],
+    );
     const cliTokens = $derived(data?.cliTokens ?? []);
 
     const tabs = [
         { value: "account", label: "Account" },
         { value: "qfieldcloud", label: "QFieldCloud" },
+        { value: "opencontext", label: "Open Context" },
         { value: "tokens", label: "CLI tokens" },
         { value: "appearance", label: "Appearance" },
         { value: "security", label: "Security" },
@@ -64,18 +98,161 @@
     let showQFieldPublish = $state(
         untrack(() => $page.url.searchParams.get("qfield_publish") === "1"),
     );
+    type PublishProject = {
+        id: string;
+        name: string;
+        status?: string;
+        is_public?: boolean;
+        owner?: string;
+        user_role?: string;
+        writable?: boolean;
+        linked_slug?: string | null;
+    };
+
     let publishAccountId = $state("");
-    let publishProjects = $state<{ id: string; name: string; status?: string }[]>(
-        [],
-    );
+    let publishProjects = $state<PublishProject[]>([]);
     let publishProjectId = $state("");
     let publishProjectName = $state("");
+    let publishLoading = $state(false);
+    let publishQuery = $state(
+        untrack(() => $page.url.searchParams.get("qfc_name") ?? ""),
+    );
+    const publishPrefillId = untrack(
+        () => $page.url.searchParams.get("qfc_id") ?? "",
+    );
+
+    const selectedPublish = $derived(
+        publishProjects.find((p) => p.id === publishProjectId) ?? null,
+    );
+    const selectedIsSnapshot = $derived(
+        Boolean(selectedPublish && selectedPublish.writable === false),
+    );
+    let publishForceSnapshot = $state(false);
+    const willSnapshot = $derived(
+        selectedIsSnapshot || publishForceSnapshot,
+    );
+
+    type JobLink = {
+        tinyowl_slug?: string;
+        job_log?: string | null;
+        job_progress?: Record<string, unknown> | null;
+        import_status?: string | null;
+        import_error?: string | null;
+        sync_pending?: boolean;
+        sync_requested_at?: string | null;
+        last_synced_at?: string | null;
+        mode?: string | null;
+        row_count?: number | null;
+        truncated?: boolean;
+    };
+    let jobBySlug = $state<Record<string, JobLink>>({});
+
+    function jobIsActive(link: JobLink | null | undefined) {
+        if (!link) return false;
+        const st = link.import_status;
+        if (st === "pending" || st === "running") return true;
+        return Boolean(link.sync_pending || link.sync_requested_at);
+    }
+
+    const watchKey = $derived.by(() => {
+        const slugs = new Set<string>();
+        if (form?.publishedSlug) {
+            const live = jobBySlug[form.publishedSlug];
+            if (!live || jobIsActive(live)) slugs.add(String(form.publishedSlug));
+        }
+        for (const l of qfieldLinks) {
+            const live = jobBySlug[l.tinyowl_slug] ?? l;
+            if (jobIsActive(live)) slugs.add(l.tinyowl_slug);
+        }
+        for (const l of ocLinks) {
+            const live = jobBySlug[l.tinyowl_slug] ?? l;
+            if (jobIsActive(live)) slugs.add(l.tinyowl_slug);
+        }
+        return [...slugs].sort().join(",");
+    });
+
+    $effect(() => {
+        const key = watchKey;
+        if (!key) return;
+        const slugs = key.split(",");
+        let stopped = false;
+        async function tick() {
+            for (const s of slugs) {
+                const oc =
+                    ocLinks.some((l) => l.tinyowl_slug === s) ||
+                    ((form?.ocAction === "published" ||
+                        form?.ocAction === "retried") &&
+                        s === String(form?.publishedSlug ?? ""));
+                const path = oc
+                    ? `/api/opencontext/links/${encodeURIComponent(s)}`
+                    : `/api/qfieldcloud/links/${encodeURIComponent(s)}`;
+                try {
+                    const res = await fetch(path);
+                    if (!res.ok || stopped) continue;
+                    const body = await res.json();
+                    if (body && !stopped) {
+                        jobBySlug = { ...jobBySlug, [s]: body };
+                    }
+                } catch {
+                    /* ignore */
+                }
+            }
+        }
+        void tick();
+        const id = setInterval(() => void tick(), 1000);
+        return () => {
+            stopped = true;
+            clearInterval(id);
+        };
+    });
 
     let reconnectPrefill = $state<{
         base_url: string;
         username: string;
         label: string;
     } | null>(null);
+
+    type OCHit = {
+        uuid: string;
+        slug?: string;
+        label: string;
+        uri: string;
+        href?: string;
+        citation_uri?: string;
+        item_category?: string;
+    };
+    let ocQuery = $state("");
+    let ocHits = $state<OCHit[]>([]);
+    let ocLoading = $state(false);
+    let ocSelected = $state("");
+    const ocSelectedHit = $derived(
+        ocHits.find((p) => p.uuid === ocSelected) ?? null,
+    );
+
+    async function searchOpenContext() {
+        ocLoading = true;
+        try {
+            const qs = ocQuery.trim()
+                ? `?q=${encodeURIComponent(ocQuery.trim())}`
+                : "";
+            const res = await fetch(`/api/opencontext/projects${qs}`);
+            if (!res.ok) {
+                ocHits = [];
+                return;
+            }
+            const body = await res.json();
+            ocHits = Array.isArray(body?.projects) ? body.projects : [];
+            if (ocSelected && !ocHits.some((p) => p.uuid === ocSelected)) {
+                ocSelected = ocHits[0]?.uuid ?? "";
+            } else if (!ocSelected && ocHits.length) {
+                ocSelected = ocHits[0].uuid;
+            }
+        } catch {
+            ocHits = [];
+        } finally {
+            ocLoading = false;
+        }
+    }
 
     // Sync tab when navigating into /settings?tab=… from another route.
     // Ignore in-place query updates from our own replaceState (those race clicks).
@@ -155,25 +332,55 @@
         }
     }
 
-    async function loadPublishProjects(accountId: string) {
+    async function loadPublishProjects(
+        accountId: string,
+        opts?: { q?: string; id?: string; keepSelection?: boolean },
+    ) {
         publishAccountId = accountId;
-        publishProjects = [];
-        publishProjectId = "";
-        publishProjectName = "";
+        const keep = Boolean(opts?.keepSelection);
+        if (!keep) {
+            publishProjects = [];
+            publishProjectId = "";
+            publishProjectName = "";
+        }
         if (!accountId) return;
         publishLoading = true;
         try {
+            const params = new URLSearchParams();
+            const q = (opts?.q ?? publishQuery).trim();
+            const id = (opts?.id ?? publishPrefillId).trim();
+            if (q) params.set("q", q);
+            if (id) params.set("id", id);
+            const qs = params.toString();
             const res = await fetch(
-                `/api/qfieldcloud/accounts/${accountId}/projects`,
+                `/api/qfieldcloud/accounts/${accountId}/projects${qs ? `?${qs}` : ""}`,
             );
             if (res.ok) {
                 const data = await res.json();
                 publishProjects = Array.isArray(data)
                     ? data
                     : (data?.results ?? []);
+                const preferId = id || publishProjectId;
+                if (preferId) {
+                    const match = publishProjects.find((p) => p.id === preferId);
+                    if (match) {
+                        publishProjectId = match.id;
+                        publishProjectName = match.name || match.id;
+                    }
+                } else if (q) {
+                    const match = publishProjects.find((p) =>
+                        (p.name || "")
+                            .toLowerCase()
+                            .includes(q.toLowerCase()),
+                    );
+                    if (match) {
+                        publishProjectId = match.id;
+                        publishProjectName = match.name || match.id;
+                    }
+                }
             }
         } catch (_) {
-            publishProjects = [];
+            if (!keep) publishProjects = [];
         } finally {
             publishLoading = false;
         }
@@ -185,7 +392,16 @@
             qfieldAccounts.length > 0 &&
             !publishAccountId
         ) {
-            void loadPublishProjects(qfieldAccounts[0].id);
+            void loadPublishProjects(qfieldAccounts[0].id, {
+                q: publishQuery,
+                id: publishPrefillId,
+            });
+        }
+    });
+
+    $effect(() => {
+        if (form?.success && form?.qfieldAction === "published" && form.publishedUrl) {
+            goto(form.publishedUrl);
         }
     });
 
@@ -489,9 +705,10 @@
                                         <p
                                             class="mt-1 text-sm text-muted-foreground"
                                         >
-                                            Connect a Cloud account, then link a
-                                            project from that project's
-                                            settings.
+                                            Connect a Cloud account, then
+                                            publish a Cloud project below — or
+                                            link from an existing project's
+                                            Settings.
                                         </p>
                                     </div>
                                     <Button
@@ -524,20 +741,48 @@
                                     </p>
                                 {/if}
                                 {#if form?.success && form?.qfieldAction === "published"}
-                                    <p
-                                        class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                                    <div
+                                        class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground space-y-2"
                                     >
-                                        Published
+                                        <p>
+                                            {#if form.publishedMode === "snapshot"}
+                                                Copied
+                                            {:else}
+                                                Published
+                                            {/if}
+                                            {#if form.publishedSlug}
+                                                <a
+                                                    class="underline"
+                                                    href={form.publishedUrl ||
+                                                        `/${form.publishedSlug}`}
+                                                    >{form.publishedSlug}</a
+                                                >
+                                            {/if}
+                                            {#if form.publishedMode === "snapshot"}
+                                                — snapshot import queued. The
+                                                Cloud project is left
+                                                untouched.
+                                            {:else}
+                                                — bridge sync requested.
+                                            {/if}
+                                        </p>
                                         {#if form.publishedSlug}
-                                            <a
-                                                class="underline"
-                                                href={form.publishedUrl ||
-                                                    `/${form.publishedSlug}`}
-                                                >{form.publishedSlug}</a
-                                            >
+                                            {@const live =
+                                                jobBySlug[form.publishedSlug]}
+                                            <JobLog
+                                                log={live?.job_log || ""}
+                                                status={live?.import_status ||
+                                                    (form.publishedMode ===
+                                                    "snapshot"
+                                                        ? "pending"
+                                                        : "")}
+                                                error={live?.import_error ||
+                                                    ""}
+                                                progress={live?.job_progress ||
+                                                    null}
+                                            />
                                         {/if}
-                                        — bridge sync requested.
-                                    </p>
+                                    </div>
                                 {/if}
 
                                 <div class="mb-4 flex flex-wrap gap-2">
@@ -570,9 +815,13 @@
                                         use:enhance
                                     >
                                         <p class="text-sm text-muted-foreground">
-                                            Create an echidna project and link an
-                                            existing QFieldCloud project
-                                            (born-linked). Bridge will sync next.
+                                            Create an echidna project from a
+                                            QFieldCloud project. Writable
+                                            projects stay born-linked unless you
+                                            choose snapshot. Public or
+                                            read-only projects are always copied
+                                            into echidna; the Cloud original is
+                                            left untouched.
                                         </p>
                                         <Field>
                                             <FieldLabel for="publish_account"
@@ -588,6 +837,7 @@
                                                     void loadPublishProjects(
                                                         (e.currentTarget as HTMLSelectElement)
                                                             .value,
+                                                        { q: publishQuery },
                                                     )}
                                             >
                                                 {#each qfieldAccounts as acct}
@@ -597,6 +847,54 @@
                                                     >
                                                 {/each}
                                             </select>
+                                        </Field>
+                                        <Field>
+                                            <FieldLabel for="publish_q_search"
+                                                >Find public projects</FieldLabel
+                                            >
+                                            <div class="flex gap-2">
+                                                <Input
+                                                    id="publish_q_search"
+                                                    type="search"
+                                                    placeholder="Search public Cloud projects by name"
+                                                    bind:value={publishQuery}
+                                                    onkeydown={(e) => {
+                                                        if (e.key === "Enter") {
+                                                            e.preventDefault();
+                                                            if (publishAccountId)
+                                                                void loadPublishProjects(
+                                                                    publishAccountId,
+                                                                    {
+                                                                        q: publishQuery,
+                                                                        keepSelection: true,
+                                                                    },
+                                                                );
+                                                        }
+                                                    }}
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onclick={() => {
+                                                        if (publishAccountId)
+                                                            void loadPublishProjects(
+                                                                publishAccountId,
+                                                                {
+                                                                    q: publishQuery,
+                                                                    keepSelection: true,
+                                                                },
+                                                            );
+                                                    }}
+                                                >
+                                                    Search
+                                                </Button>
+                                            </div>
+                                            <FieldDescription>
+                                                Own projects load automatically.
+                                                Type a name and press Enter to
+                                                include public Cloud projects.
+                                            </FieldDescription>
                                         </Field>
                                         <Field>
                                             <FieldLabel for="publish_qfc"
@@ -618,11 +916,15 @@
                                                             e.currentTarget as HTMLSelectElement;
                                                         publishProjectId =
                                                             sel.value;
-                                                        const opt =
-                                                            sel.selectedOptions[0];
+                                                        const match =
+                                                            publishProjects.find(
+                                                                (p) =>
+                                                                    p.id ===
+                                                                    sel.value,
+                                                            );
                                                         publishProjectName =
-                                                            opt?.text?.trim() ??
-                                                            "";
+                                                            match?.name ||
+                                                            sel.value;
                                                     }}
                                                 >
                                                     <option value=""
@@ -631,17 +933,64 @@
                                                     {#each publishProjects as proj}
                                                         <option value={proj.id}
                                                             >{proj.name ||
-                                                                proj.id}</option
+                                                                proj.id}{#if proj.writable === false}
+                                                                {" "}(public copy){/if}</option
                                                         >
                                                     {/each}
                                                 </select>
                                             {/if}
                                         </Field>
+                                        {#if selectedPublish}
+                                            <label
+                                                class="flex items-start gap-2 text-sm text-foreground"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    class="mt-0.5 size-4 accent-primary"
+                                                    checked={willSnapshot}
+                                                    disabled={selectedIsSnapshot}
+                                                    onchange={(e) => {
+                                                        publishForceSnapshot =
+                                                            e.currentTarget
+                                                                .checked;
+                                                    }}
+                                                />
+                                                <span>
+                                                    Copy as snapshot — don’t
+                                                    keep Cloud in sync
+                                                    {#if selectedIsSnapshot}
+                                                        <span
+                                                            class="block text-muted-foreground"
+                                                            >Required for
+                                                            public/read-only
+                                                            Cloud projects.</span
+                                                        >
+                                                    {:else}
+                                                        <span
+                                                            class="block text-muted-foreground"
+                                                            >Imports the package
+                                                            once. Echidna
+                                                            becomes the source
+                                                            of truth; nothing is
+                                                            written back to
+                                                            Cloud.</span
+                                                        >
+                                                    {/if}
+                                                </span>
+                                            </label>
+                                        {/if}
                                         <input
                                             type="hidden"
                                             name="qfc_project_name"
                                             value={publishProjectName}
                                         />
+                                        {#if willSnapshot}
+                                            <input
+                                                type="hidden"
+                                                name="mode"
+                                                value="snapshot"
+                                            />
+                                        {/if}
                                         <div class="grid grid-cols-2 gap-3">
                                             <Field>
                                                 <FieldLabel for="publish_title"
@@ -665,7 +1014,9 @@
                                             </Field>
                                         </div>
                                         <Button type="submit" size="sm"
-                                            >Create + link</Button
+                                            >{willSnapshot
+                                                ? "Copy into echidna"
+                                                : "Create + link"}</Button
                                         >
                                     </form>
                                 {/if}
@@ -856,7 +1207,12 @@
                                                         </p>
                                                         <ul class="space-y-1.5">
                                                             {#each links as link}
-                                                                <li>
+                                                                {@const live =
+                                                                    jobBySlug[
+                                                                        link
+                                                                            .tinyowl_slug
+                                                                    ] ?? link}
+                                                                <li class="space-y-1.5">
                                                                     <a
                                                                         href="/{link.tinyowl_slug}/settings"
                                                                         class="inline-flex items-center gap-1.5 text-sm text-foreground hover:underline"
@@ -869,10 +1225,31 @@
                                                                                 {link.qfc_project_name}</span
                                                                             >
                                                                         {/if}
+                                                                        {#if link.mode === "snapshot"}
+                                                                            <span
+                                                                                class="text-muted-foreground"
+                                                                                >({live.import_status ===
+                                                                                "done"
+                                                                                    ? "snapshot"
+                                                                                    : `snapshot ${live.import_status || "pending"}`})</span
+                                                                            >
+                                                                        {/if}
                                                                         <ExternalLinkIcon
                                                                             class="size-3 text-muted-foreground"
                                                                         />
                                                                     </a>
+                                                                    {#if live.job_log || jobIsActive(live)}
+                                                                        <JobLog
+                                                                            log={live.job_log ||
+                                                                                ""}
+                                                                            status={live.import_status ||
+                                                                                ""}
+                                                                            error={live.import_error ||
+                                                                                ""}
+                                                                            progress={live.job_progress ||
+                                                                                null}
+                                                                        />
+                                                                    {/if}
                                                                 </li>
                                                             {/each}
                                                         </ul>
@@ -886,6 +1263,258 @@
                                                         Settings → QFieldCloud
                                                         to link one.
                                                     </p>
+                                                {/if}
+                                            </div>
+                                        {/each}
+                                    </div>
+                                {/if}
+                            </section>
+                        </div>
+                    {:else if tabValue === "opencontext"}
+                        <div class="space-y-6 w-full">
+                            <section>
+                                <div class="mb-4">
+                                    <h2
+                                        class="text-sm font-medium text-foreground"
+                                    >
+                                        Clone a publication
+                                    </h2>
+                                    <p
+                                        class="mt-1 text-sm text-muted-foreground"
+                                    >
+                                        Search Open Context and copy a project
+                                        into echidna as a snapshot. The source
+                                        is read-only — this does not write back.
+                                    </p>
+                                </div>
+                                {#if form?.error && form?.ocAction}
+                                    <p
+                                        class="mb-4 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                                    >
+                                        {form.error}
+                                    </p>
+                                {/if}
+                                {#if form?.success && (form?.ocAction === "retried" || form?.ocAction === "published")}
+                                    <p
+                                        class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                                    >
+                                        {#if form.ocAction === "retried"}
+                                            Retry queued
+                                        {:else}
+                                            Cloned
+                                        {/if}
+                                        {#if form.publishedSlug}
+                                            <a
+                                                class="underline"
+                                                href={form.publishedUrl ||
+                                                    `/${form.publishedSlug}`}
+                                                >{form.publishedSlug}</a
+                                            >
+                                        {/if}
+                                        — follow the log on the clone below.
+                                    </p>
+                                {/if}
+                                <form
+                                    method="POST"
+                                    action="?/publishFromOpenContext"
+                                    class="mb-6 rounded-lg border border-border p-4 space-y-3"
+                                    use:enhance
+                                >
+                                    <Field>
+                                        <FieldLabel for="oc_q"
+                                            >Find a project</FieldLabel
+                                        >
+                                        <div class="flex gap-2">
+                                            <Input
+                                                id="oc_q"
+                                                type="search"
+                                                placeholder="Kenan Tepe, Murlo, votive…"
+                                                bind:value={ocQuery}
+                                                onkeydown={(e) => {
+                                                    if (e.key === "Enter") {
+                                                        e.preventDefault();
+                                                        void searchOpenContext();
+                                                    }
+                                                }}
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onclick={() =>
+                                                    void searchOpenContext()}
+                                                disabled={ocLoading}
+                                            >
+                                                {ocLoading
+                                                    ? "Searching…"
+                                                    : "Search"}
+                                            </Button>
+                                        </div>
+                                    </Field>
+                                    <Field>
+                                        <FieldLabel for="oc_uuid"
+                                            >Publication</FieldLabel
+                                        >
+                                        <select
+                                            id="oc_uuid"
+                                            name="oc_uuid"
+                                            class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                                            required
+                                            bind:value={ocSelected}
+                                        >
+                                            {#if ocHits.length === 0}
+                                                <option value=""
+                                                    >Search to list projects</option
+                                                >
+                                            {:else}
+                                                {#each ocHits as hit}
+                                                    <option value={hit.uuid}
+                                                        >{hit.label}</option
+                                                    >
+                                                {/each}
+                                            {/if}
+                                        </select>
+                                        {#if ocSelectedHit?.uri}
+                                            <FieldDescription>
+                                                <a
+                                                    class="underline"
+                                                    href={ocSelectedHit.href ||
+                                                        ocSelectedHit.uri}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    >{ocSelectedHit.uri}</a
+                                                >
+                                            </FieldDescription>
+                                        {/if}
+                                    </Field>
+                                    <div
+                                        class="grid gap-3 sm:grid-cols-2"
+                                    >
+                                        <Field>
+                                            <FieldLabel for="oc_title"
+                                                >Title</FieldLabel
+                                            >
+                                            <Input
+                                                id="oc_title"
+                                                name="title"
+                                                placeholder={ocSelectedHit?.label ||
+                                                    "Optional"}
+                                            />
+                                        </Field>
+                                        <Field>
+                                            <FieldLabel for="oc_slug"
+                                                >Slug</FieldLabel
+                                            >
+                                            <Input
+                                                id="oc_slug"
+                                                name="slug"
+                                                placeholder="derived from title"
+                                            />
+                                        </Field>
+                                    </div>
+                                    <Field>
+                                        <FieldLabel for="oc_max"
+                                            >Max records</FieldLabel
+                                        >
+                                        <Input
+                                            id="oc_max"
+                                            name="max_rows"
+                                            type="number"
+                                            min="1"
+                                            max="10000"
+                                            value="2000"
+                                        />
+                                        <FieldDescription>
+                                            Large archives (DINAA, Kenan Tepe)
+                                            are truncated at this cap. Start
+                                            small.
+                                        </FieldDescription>
+                                    </Field>
+                                    <Button
+                                        type="submit"
+                                        disabled={!ocSelected}
+                                    >
+                                        Clone snapshot
+                                    </Button>
+                                </form>
+                                {#if ocLinks.length}
+                                    <div class="space-y-2">
+                                        <h3
+                                            class="text-sm font-medium text-foreground"
+                                        >
+                                            Cloned projects
+                                        </h3>
+                                        {#each ocLinks as link}
+                                            {@const live =
+                                                jobBySlug[link.tinyowl_slug] ??
+                                                link}
+                                            <div
+                                                class="rounded-md border border-border px-3 py-2 text-sm"
+                                            >
+                                                <a
+                                                    class="underline"
+                                                    href={`/${link.tinyowl_slug}`}
+                                                    >{link.tinyowl_slug}</a
+                                                >
+                                                <span
+                                                    class="text-muted-foreground"
+                                                >
+                                                    ← {link.oc_label ||
+                                                        link.oc_slug ||
+                                                        link.oc_uuid}
+                                                </span>
+                                                <span
+                                                    class="ml-2 text-xs text-muted-foreground"
+                                                >
+                                                    snapshot {live.import_status ||
+                                                        "pending"}
+                                                    {#if live.row_count}
+                                                        · {live.row_count} rows
+                                                    {/if}
+                                                    {#if live.truncated}
+                                                        · truncated
+                                                    {/if}
+                                                </span>
+                                                {#if live.job_log || jobIsActive(live)}
+                                                    <div class="mt-2">
+                                                        <JobLog
+                                                            log={live.job_log ||
+                                                                ""}
+                                                            status={live.import_status ||
+                                                                ""}
+                                                            error={live.import_error ||
+                                                                ""}
+                                                            progress={live.job_progress ||
+                                                                null}
+                                                            idle="waiting for import…"
+                                                        />
+                                                    </div>
+                                                {:else if live.import_error}
+                                                    <p
+                                                        class="mt-1 text-xs text-destructive"
+                                                    >
+                                                        {live.import_error}
+                                                    </p>
+                                                {/if}
+                                                {#if live.import_status === "failed"}
+                                                    <form
+                                                        method="POST"
+                                                        action="?/retryOpenContext"
+                                                        class="mt-2"
+                                                        use:enhance
+                                                    >
+                                                        <input
+                                                            type="hidden"
+                                                            name="slug"
+                                                            value={link.tinyowl_slug}
+                                                        />
+                                                        <Button
+                                                            type="submit"
+                                                            variant="outline"
+                                                            size="sm"
+                                                        >
+                                                            Retry
+                                                        </Button>
+                                                    </form>
                                                 {/if}
                                             </div>
                                         {/each}

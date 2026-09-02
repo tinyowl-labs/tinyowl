@@ -168,7 +168,7 @@
     <Header subtitle={project?.title} {hasSession}>
         {#snippet leading()}
             <nav
-                class="ml-1 hidden items-center gap-0.5 md:flex"
+                class="ml-1 hidden items-center gap-1.5 md:flex"
                 aria-label="Project"
             >
                 {#each navGroups as group}
@@ -186,7 +186,7 @@
                         </a>
                         <div
                             role="menu"
-                            class="invisible absolute left-0 top-full z-50 min-w-44 -mt-1 opacity-0 pointer-events-none group-hover/navitem:visible group-hover/navitem:opacity-100 group-hover/navitem:pointer-events-auto group-focus-within/navitem:visible group-focus-within/navitem:opacity-100 group-focus-within/navitem:pointer-events-auto"
+                            class="invisible absolute left-0 top-full z-50 min-w-44 pt-2 opacity-0 pointer-events-none group-hover/navitem:visible group-hover/navitem:opacity-100 group-hover/navitem:pointer-events-auto group-focus-within/navitem:visible group-focus-within/navitem:opacity-100 group-focus-within/navitem:pointer-events-auto"
                         >
                             <div
                                 class="rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"

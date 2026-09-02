@@ -62,11 +62,11 @@
     <div
         class="relative flex h-11 items-center justify-between overflow-visible px-4"
     >
-    <div class="flex min-w-0 items-center gap-2">
+    <div class="flex min-w-0 flex-1 items-center gap-2 overflow-visible">
         <a
             href="/"
             aria-label="echidna"
-            class="inline-flex items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground"
+            class="inline-flex shrink-0 items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground"
         >
             <span
                 class="size-6 shrink-0 inline-block [&>svg]:w-full [&>svg]:h-full"
@@ -94,19 +94,20 @@
             </button>
         {/if}
         {#if subtitle}
-            <span class="w-px h-4 shrink-0 bg-border"></span>
-            <span class="min-w-0 text-sm font-medium truncate text-foreground"
-                >{subtitle}</span
+            <span class="h-4 w-px shrink-0 bg-border"></span>
+            <span
+                class="min-w-0 max-w-[12rem] shrink truncate text-sm font-medium text-foreground md:max-w-[18rem] lg:max-w-[22rem]"
+                title={subtitle}>{subtitle}</span
             >
         {/if}
         {#if leading}
-            <div class="flex min-w-0 shrink-0 items-center">
+            <div class="flex shrink-0 items-center overflow-visible">
                 {@render leading()}
             </div>
         {/if}
     </div>
 
-    <nav class="flex items-center gap-1">
+    <nav class="flex shrink-0 items-center gap-1">
         <button
             type="button"
             onclick={toggleTheme}
@@ -131,7 +132,7 @@
                     <ChevronDownIcon class="size-3 opacity-60" />
                 </a>
                 <div
-                    class="invisible absolute right-0 top-full z-50 min-w-48 pt-1 opacity-0 transition-none group-hover/profile:visible group-hover/profile:opacity-100 group-focus-within/profile:visible group-focus-within/profile:opacity-100"
+                    class="invisible absolute right-0 top-full z-50 min-w-48 pt-2 opacity-0 transition-none group-hover/profile:visible group-hover/profile:opacity-100 group-focus-within/profile:visible group-focus-within/profile:opacity-100"
                 >
                     <div
                         class="rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"

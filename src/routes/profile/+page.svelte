@@ -229,14 +229,22 @@
                         >
                             {searching ? "Projects" : "Recent projects"}
                         </h1>
-                        <button
-                            type="button"
-                            onclick={() => (showCreate = true)}
-                            class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        >
-                            <PlusIcon class="size-3.5" />
-                            New
-                        </button>
+                        <div class="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onclick={() => (showCreate = true)}
+                                class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            >
+                                <PlusIcon class="size-3.5" />
+                                New
+                            </button>
+                            <a
+                                href="/settings?qfield_publish=1"
+                                class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
+                            >
+                                From QFieldCloud
+                            </a>
+                        </div>
                     </div>
 
                     {#if projects.length > 0}
@@ -265,13 +273,22 @@
                                 <p class="mb-3 text-sm text-muted-foreground">
                                     No projects yet
                                 </p>
-                                <Button
-                                    type="button"
-                                    size="sm"
-                                    onclick={() => (showCreate = true)}
-                                >
-                                    Create project
-                                </Button>
+                                <div class="flex flex-wrap justify-center gap-2">
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        onclick={() => (showCreate = true)}
+                                    >
+                                        Create project
+                                    </Button>
+                                    <Button
+                                        href="/settings?qfield_publish=1"
+                                        variant="outline"
+                                        size="sm"
+                                    >
+                                        From QFieldCloud
+                                    </Button>
+                                </div>
                             </div>
                         {:else if visibleProjects.length === 0}
                             <p

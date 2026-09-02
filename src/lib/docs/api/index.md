@@ -184,12 +184,13 @@ Device-code flow for CLI authentication:
 | `POST` | `/api/v1/integrations/qfieldcloud/connect` | Connect QFieldCloud account |
 | `GET` | `/api/v1/integrations/qfieldcloud/accounts` | List connected QFieldCloud accounts |
 | `DELETE` | `/api/v1/integrations/qfieldcloud/accounts/{id}` | Disconnect a QFieldCloud account |
-| `GET` | `/api/v1/integrations/qfieldcloud/accounts/{id}/projects` | List remote QFieldCloud projects |
-| `POST` | `/api/v1/integrations/qfieldcloud/publish` | Create echidna project + link Cloud project (born-linked) |
+| `GET` | `/api/v1/integrations/qfieldcloud/accounts/{id}/projects` | List remote QFieldCloud projects (`q`, `id`, `include_public`) |
+| `POST` | `/api/v1/integrations/qfieldcloud/publish` | Create echidna project from Cloud (born-link if writable; snapshot if public/read-only) |
 | `GET` | `/api/v1/integrations/qfieldcloud/links` | List QFieldCloud project links |
 | `GET` | `/api/v1/integrations/qfieldcloud/links/{slug}/jobs` | List sync jobs for a link |
 | `GET` | `/api/v1/integrations/qfieldcloud/links/{slug}/files` | List files for a link |
 | `PATCH` | `/api/v1/integrations/qfieldcloud/links/{slug}/cursor` | Update sync cursor |
+| `PATCH` | `/api/v1/integrations/qfieldcloud/links/{slug}/import` | Update snapshot import status / append `job_log` / `job_progress` |
 | `GET` | `/api/v1/projects/{slug}/qfieldcloud-link` | Get QFieldCloud link for a project |
 | `PUT` | `/api/v1/projects/{slug}/qfieldcloud-link` | Create/update QFieldCloud link |
 | `POST` | `/api/v1/projects/{slug}/qfieldcloud-link/sync` | Request immediate QFieldCloud sync |

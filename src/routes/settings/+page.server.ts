@@ -14,6 +14,7 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
       user,
       qfieldAccounts: [],
       qfieldLinks: [],
+      ocLinks: [],
       cliTokens: [],
     };
   }
@@ -44,6 +45,8 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
     last_synced_at?: string | null;
     base_url: string;
     username: string;
+    mode?: string | null;
+    import_status?: string | null;
   }[] = [];
   try {
     const res = await fetch(
@@ -51,6 +54,27 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
       { headers },
     );
     if (res.ok) qfieldLinks = await res.json();
+    } catch (_) {}
+
+  let ocLinks: {
+    tinyowl_slug: string;
+    oc_uuid: string;
+    oc_slug?: string | null;
+    oc_label?: string | null;
+    oc_uri?: string | null;
+    import_status?: string | null;
+    import_error?: string | null;
+    row_count?: number | null;
+    truncated?: boolean;
+    job_log?: string | null;
+    job_progress?: Record<string, unknown> | null;
+  }[] = [];
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/integrations/opencontext/links`,
+      { headers },
+    );
+    if (res.ok) ocLinks = await res.json();
   } catch (_) {}
 
   let cliTokens: {
@@ -68,7 +92,7 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
     if (res.ok) cliTokens = await res.json();
   } catch (_) {}
 
-  return { user, qfieldAccounts, qfieldLinks, cliTokens };
+  return { user, qfieldAccounts, qfieldLinks, ocLinks, cliTokens };
 };
 
 export const actions: Actions = {
@@ -153,6 +177,7 @@ export const actions: Actions = {
     const slug = String(data.get("slug") ?? "").trim();
     const title = String(data.get("title") ?? "").trim();
     const gpkgName = String(data.get("gpkg_name") ?? "").trim();
+    const mode = String(data.get("mode") ?? "").trim();
     if (!accountId || !qfcProjectId) {
       return {
         error: "Account and QFieldCloud project required.",
@@ -170,6 +195,7 @@ export const actions: Actions = {
     if (slug) body.slug = slug;
     if (title) body.title = title;
     if (gpkgName) body.gpkg_name = gpkgName;
+    if (mode === "snapshot") body.mode = "snapshot";
 
     const res = await fetch(
       `${TINYOWL_CORE_URL}/api/v1/integrations/qfieldcloud/publish`,
@@ -194,6 +220,91 @@ export const actions: Actions = {
       qfieldAction: "published",
       publishedSlug: created.slug,
       publishedUrl: created.url,
+      publishedMode: created.mode ?? "live",
+      importStatus: created.import_status ?? null,
+    };
+  },
+
+  publishFromOpenContext: async ({ request, locals, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", ocAction: "publish" };
+
+    const data = await request.formData();
+    const ocUuid = String(data.get("oc_uuid") ?? "").trim();
+    const org = String(data.get("org") ?? "").trim();
+    const slug = String(data.get("slug") ?? "").trim();
+    const title = String(data.get("title") ?? "").trim();
+    const maxRows = String(data.get("max_rows") ?? "").trim();
+    if (!ocUuid) {
+      return { error: "Open Context project required.", ocAction: "publish" };
+    }
+
+    const accessToken = await locals.getAccessToken();
+    const body: Record<string, string | number> = { oc_uuid: ocUuid };
+    if (org) body.org = org;
+    if (slug) body.slug = slug;
+    if (title) body.title = title;
+    if (maxRows) {
+      const n = Number(maxRows);
+      if (Number.isFinite(n) && n > 0) body.max_rows = n;
+    }
+
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/integrations/opencontext/publish`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    if (!res.ok) {
+      return {
+        error: `Clone failed: ${await res.text()}`,
+        ocAction: "publish",
+      };
+    }
+    const created = await res.json();
+    return {
+      success: true,
+      ocAction: "published",
+      publishedSlug: created.slug,
+      publishedUrl: created.url,
+      importStatus: created.import_status ?? null,
+    };
+  },
+
+  retryOpenContext: async ({ request, locals, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", ocAction: "retry" };
+
+    const data = await request.formData();
+    const slug = String(data.get("slug") ?? "").trim();
+    if (!slug) {
+      return { error: "Project required.", ocAction: "retry" };
+    }
+
+    const accessToken = await locals.getAccessToken();
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/opencontext-link/retry`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
+    if (!res.ok) {
+      return {
+        error: `Retry failed: ${await res.text()}`,
+        ocAction: "retry",
+      };
+    }
+    return {
+      success: true,
+      ocAction: "retried",
+      publishedSlug: slug,
+      importStatus: "pending",
     };
   },
 };
