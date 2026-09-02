@@ -1500,7 +1500,29 @@
                                                         method="POST"
                                                         action="?/retryOpenContext"
                                                         class="mt-2"
-                                                        use:enhance
+                                                        use:enhance={() => {
+                                                            return async ({
+                                                                result,
+                                                                update,
+                                                            }) => {
+                                                                await update();
+                                                                if (
+                                                                    result.type ===
+                                                                    "success"
+                                                                ) {
+                                                                    jobBySlug =
+                                                                        {
+                                                                            ...jobBySlug,
+                                                                            [link.tinyowl_slug]:
+                                                                                {
+                                                                                    ...live,
+                                                                                    import_status:
+                                                                                        "pending",
+                                                                                },
+                                                                        };
+                                                                }
+                                                            };
+                                                        }}
                                                     >
                                                         <input
                                                             type="hidden"
@@ -1511,6 +1533,9 @@
                                                             type="submit"
                                                             variant="outline"
                                                             size="sm"
+                                                            disabled={jobIsActive(
+                                                                live,
+                                                            )}
                                                         >
                                                             Retry
                                                         </Button>
