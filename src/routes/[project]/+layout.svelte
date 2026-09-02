@@ -286,8 +286,8 @@
     </MobileNav>
 
     <main
-        class="flex-1 min-h-0 bg-background {workspace
-            ? 'relative overflow-hidden'
+        class="relative z-0 flex-1 min-h-0 bg-background {workspace
+            ? 'overflow-hidden'
             : 'overflow-y-auto'}"
     >
         {#if project}

@@ -4,6 +4,7 @@
         Background,
         Controls,
         MiniMap,
+        Panel,
         MarkerType,
         type Node,
         type Edge,
@@ -48,11 +49,21 @@
         schemaTable: SchemaTableNode,
     };
 
+    const NODE_W = 280;
+    const HEADER_H = 44;
+    const ROW_H = 28;
+    const GAP_Y = 64;
+    const GAP_X = 176;
+
     // Follow Appearance prefs, not OS "system" preference.
     const flowColorMode = $derived.by(() => {
         themePrefs.bgBase;
         return isDark() ? "dark" : "light";
     });
+
+    function nodeHeight(t: SchemaTable): number {
+        return HEADER_H + t.columns.length * ROW_H + 4;
+    }
 
     function layout(
         tables: SchemaTable[],
@@ -70,7 +81,6 @@
             }
         }
 
-        // Rank: roots (no incoming) left, dependents right
         const incoming = new Map<string, number>();
         for (const t of tables) incoming.set(t.name, 0);
         for (const e of edges) {
@@ -83,7 +93,6 @@
             .filter((t) => (incoming.get(t.name) ?? 0) === 0)
             .map((t) => t.name);
         for (const name of queue) ranks.set(name, 0);
-        // BFS-ish propagation
         let changed = true;
         let guard = 0;
         while (changed && guard++ < tables.length + 2) {
@@ -109,24 +118,31 @@
             if (!byRank.has(r)) byRank.set(r, []);
             byRank.get(r)!.push(t);
         }
+        for (const list of byRank.values()) {
+            list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+        }
+
+        const rankHeights = new Map<number, number>();
+        for (const [rank, list] of byRank) {
+            let h = 0;
+            for (const t of list) h += nodeHeight(t) + GAP_Y;
+            rankHeights.set(rank, Math.max(0, h - GAP_Y));
+        }
+        const maxH = Math.max(0, ...rankHeights.values());
 
         const nodes: Node[] = [];
-        const colWidth = 300;
-        const rowHeight = 28;
-        const headerH = 36;
-        const gapY = 40;
-        const gapX = 80;
-
         for (const [rank, list] of [...byRank.entries()].sort(
             (a, b) => a[0] - b[0],
         )) {
-            let y = 0;
+            const colH = rankHeights.get(rank) ?? 0;
+            let y = (maxH - colH) / 2;
             for (const t of list) {
-                const h = headerH + Math.min(t.columns.length, 12) * rowHeight;
+                const h = nodeHeight(t);
                 nodes.push({
                     id: t.name,
                     type: "schemaTable",
-                    position: { x: rank * (colWidth + gapX), y },
+                    position: { x: rank * (NODE_W + GAP_X), y },
+                    style: `width:${NODE_W}px`,
                     data: {
                         label: t.label || t.name,
                         columns: t.columns,
@@ -134,15 +150,46 @@
                         highlighted: [...(highlighted.get(t.name) ?? [])],
                     },
                 });
-                y += h + gapY;
+                y += h + GAP_Y;
             }
         }
 
         const tableSet = new Set(tables.map((t) => t.name));
+        const colByTable = new Map(
+            tables.map((t) => [t.name, t.columns] as const),
+        );
+
+        function resolveHandle(
+            tableName: string,
+            column: string | undefined,
+            fallback: string,
+        ): string {
+            const cols = colByTable.get(tableName) ?? [];
+            const want = column || fallback;
+            if (cols.some((c) => c.name === want)) return want;
+            const ci = want.toLowerCase();
+            const hit = cols.find((c) => c.name.toLowerCase() === ci);
+            if (hit) return hit.name;
+            return (
+                cols.find((c) => c.pk)?.name ??
+                cols.find((c) => c.name.toLowerCase() === "source_id")?.name ??
+                cols[0]?.name ??
+                want
+            );
+        }
         const flowEdges: Edge[] = edges
             .filter((e) => tableSet.has(e.source) && tableSet.has(e.target))
             .map((e) => {
-                const targetHandle = e.target_column || "source_id";
+                const sourceHandle = resolveHandle(
+                    e.source,
+                    e.source_column,
+                    e.source_column,
+                );
+                const targetHandle = resolveHandle(
+                    e.target,
+                    e.target_column,
+                    "source_id",
+                );
                 const label =
                     e.label ||
                     (e.count
@@ -158,24 +205,24 @@
                     id: e.id,
                     source: e.source,
                     target: e.target,
-                    sourceHandle: e.source_column,
+                    sourceHandle,
                     targetHandle,
                     label,
                     type: "smoothstep",
                     animated: e.kind === "relation",
                     class: `schema-edge schema-edge--${e.kind}`,
-                    style: `stroke: ${stroke}; stroke-width: 2.5;`,
+                    style: `stroke: ${stroke}; stroke-width: 1.75;`,
                     markerEnd: {
                         type: MarkerType.ArrowClosed,
-                        width: 18,
-                        height: 18,
+                        width: 10,
+                        height: 10,
                         color: stroke,
                     },
                     labelStyle:
-                        "font-size: 11px; fill: var(--color-foreground); font-weight: 500;",
+                        "font-size: 10px; fill: var(--color-muted-foreground); font-weight: 500;",
                     labelBgStyle:
-                        "fill: var(--color-card); fill-opacity: 0.92;",
-                    labelBgPadding: [4, 6] as [number, number],
+                        "fill: var(--color-background); fill-opacity: 0.88;",
+                    labelBgPadding: [3, 5] as [number, number],
                     labelBgBorderRadius: 4,
                 } as Edge;
             });
@@ -195,64 +242,136 @@
 
 {#if loading}
     <div
-        class="flex h-full min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground rounded-lg border border-border"
+        class="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"
     >
         <Loader2Icon class="size-4 animate-spin" />
         Loading schema…
     </div>
 {:else if tables.length === 0}
     <div
-        class="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground"
+        class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
     >
         <WaypointsIcon class="size-8 text-muted-foreground/30" />
         No tables to graph.
     </div>
 {:else}
-    <div
-        class="h-full min-h-[420px] rounded-lg border border-border overflow-hidden bg-background"
-    >
+    <div class="relative h-full min-h-0 w-full overflow-hidden bg-background">
         <SvelteFlow
             bind:nodes
             bind:edges
             {nodeTypes}
             fitView
+            fitViewOptions={{ padding: 0.2, maxZoom: 1.05 }}
+            minZoom={0.25}
+            maxZoom={1.75}
             nodesDraggable={true}
             nodesConnectable={false}
             elementsSelectable={true}
+            defaultEdgeOptions={{ type: "smoothstep" }}
             proOptions={{ hideAttribution: true }}
             colorMode={flowColorMode}
             class="schema-flow"
         >
             <Background
-                gap={18}
+                gap={22}
                 size={1}
                 bgColor="var(--background)"
-                patternColor="var(--border)"
+                patternColor="color-mix(in oklab, var(--border) 70%, transparent)"
             />
-            <Controls />
+            <Controls
+                position="bottom-left"
+                orientation="horizontal"
+                showLock={false}
+                fitViewOptions={{ padding: 0.2, maxZoom: 1.05 }}
+            />
+            <Panel
+                position="bottom-left"
+                class="pointer-events-none !m-3 !left-[7.25rem] flex flex-col gap-1.5"
+            >
+                <div
+                    class="pointer-events-auto flex items-center gap-3 rounded-md border border-border bg-card/90 px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm"
+                >
+                    <span class="inline-flex items-center gap-1.5">
+                        <svg
+                            class="size-3.5 shrink-0"
+                            viewBox="0 0 16 8"
+                            aria-hidden="true"
+                        >
+                            <line
+                                x1="0"
+                                y1="4"
+                                x2="16"
+                                y2="4"
+                                stroke="var(--color-primary)"
+                                stroke-width="1.75"
+                            />
+                        </svg>
+                        FK
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <svg
+                            class="size-3.5 shrink-0"
+                            viewBox="0 0 16 8"
+                            aria-hidden="true"
+                        >
+                            <line
+                                x1="0"
+                                y1="4"
+                                x2="16"
+                                y2="4"
+                                stroke="var(--color-foreground)"
+                                stroke-width="1.75"
+                                stroke-dasharray="5 3"
+                            />
+                        </svg>
+                        Relation
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <svg
+                            class="size-3.5 shrink-0"
+                            viewBox="0 0 16 8"
+                            aria-hidden="true"
+                        >
+                            <line
+                                x1="0"
+                                y1="4"
+                                x2="16"
+                                y2="4"
+                                stroke="var(--color-muted-foreground)"
+                                stroke-width="1.75"
+                                stroke-dasharray="1.5 3"
+                                opacity="0.7"
+                            />
+                        </svg>
+                        Inferred
+                    </span>
+                </div>
+                {#if schemaEdges.length === 0}
+                    <p
+                        class="max-w-xs rounded-md border border-dashed border-border bg-card/80 px-2.5 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm"
+                    >
+                        No FK edges yet — import with
+                        <code class="font-mono">--qgs</code>
+                        or add
+                        <code class="font-mono">references</code>
+                        in table TOML.
+                    </p>
+                {/if}
+            </Panel>
             <MiniMap
+                position="bottom-right"
                 pannable
                 zoomable
-                bgColor="var(--card)"
-                maskColor="color-mix(in oklab, var(--foreground) 12%, transparent)"
-                nodeColor="var(--secondary)"
+                width={128}
+                height={80}
+                bgColor="color-mix(in oklab, var(--card) 88%, transparent)"
+                maskColor="color-mix(in oklab, var(--foreground) 10%, transparent)"
+                nodeColor="var(--muted)"
                 nodeStrokeColor="var(--border)"
+                nodeBorderRadius={4}
             />
         </SvelteFlow>
     </div>
-    <p class="mt-2 text-[11px] text-muted-foreground">
-        Solid edges = QGIS ValueRelation / TOML
-        <code class="font-mono">references</code> / SQLite FKs. Dashed =
-        <code class="font-mono">[[relations]]</code> or
-        <code class="font-mono">_relations</code>. Faint dotted = name guess
-        only (confirm in table TOML or QGS).
-        {#if schemaEdges.length === 0}
-            No FK edges yet — import with
-            <code class="font-mono">--qgs</code> or add
-            <code class="font-mono">references = "OtherTable.col"</code> and
-            push.
-        {/if}
-    </p>
 {/if}
 
 <style>
@@ -267,8 +386,35 @@
     :global(.schema-flow .svelte-flow__background) {
         background: var(--background) !important;
     }
+    :global(.schema-flow .svelte-flow__node) {
+        padding: 0;
+        border: none;
+        background: transparent;
+        box-shadow: none;
+        overflow: visible !important;
+    }
+    :global(.schema-flow .svelte-flow__node.selected) {
+        box-shadow: none;
+    }
+    :global(.schema-flow .svelte-flow__handle) {
+        width: 8px;
+        height: 8px;
+        min-width: 8px;
+        min-height: 8px;
+        pointer-events: none;
+    }
+    :global(.schema-flow .svelte-flow__handle-left) {
+        left: 0 !important;
+        right: auto !important;
+        top: 50% !important;
+    }
+    :global(.schema-flow .svelte-flow__handle-right) {
+        right: 0 !important;
+        left: auto !important;
+        top: 50% !important;
+    }
     :global(.schema-flow .svelte-flow__edge-path) {
-        stroke-width: 2.5px !important;
+        stroke-width: 1.75px !important;
         fill: none !important;
     }
     :global(.schema-flow .schema-edge--fk .svelte-flow__edge-path) {
@@ -276,44 +422,61 @@
     }
     :global(.schema-flow .schema-edge--relation .svelte-flow__edge-path) {
         stroke: var(--color-foreground) !important;
-        stroke-dasharray: 6 4;
-        opacity: 0.85;
+        stroke-dasharray: 7 5;
+        opacity: 0.8;
     }
     :global(.schema-flow .schema-edge--inferred .svelte-flow__edge-path) {
         stroke: var(--color-muted-foreground) !important;
-        stroke-dasharray: 2 5;
-        opacity: 0.55;
+        stroke-dasharray: 2 6;
+        opacity: 0.5;
     }
     :global(.schema-flow .svelte-flow__edge .svelte-flow__edge-text) {
-        font-size: 11px;
-        fill: var(--color-foreground);
+        font-size: 10px;
+        fill: var(--color-muted-foreground);
     }
     :global(.schema-flow .svelte-flow__edge .svelte-flow__edge-textbg) {
-        fill: var(--color-card);
-        fill-opacity: 0.92;
+        fill: var(--color-background);
+        fill-opacity: 0.88;
     }
     :global(.schema-flow .svelte-flow__arrowhead polyline),
     :global(.schema-flow marker path) {
         fill: var(--color-primary);
         stroke: var(--color-primary);
     }
+    :global(.schema-flow .svelte-flow__panel) {
+        margin: 12px;
+    }
     :global(.schema-flow .svelte-flow__controls) {
+        display: flex;
+        overflow: hidden;
         border: 1px solid var(--color-border);
         border-radius: var(--radius-md);
-        overflow: hidden;
         box-shadow: none;
+        background: color-mix(in oklab, var(--color-card) 92%, transparent);
     }
     :global(.schema-flow .svelte-flow__controls-button) {
-        background: var(--color-card);
-        border-bottom: 1px solid var(--color-border);
+        background: transparent;
+        border: none;
+        border-right: 1px solid var(--color-border);
         fill: var(--color-foreground);
+        width: 28px;
+        height: 28px;
+    }
+    :global(.schema-flow .svelte-flow__controls-button:last-child) {
+        border-right: none;
     }
     :global(.schema-flow .svelte-flow__controls-button:hover) {
         background: var(--color-accent);
     }
     :global(.schema-flow .svelte-flow__minimap) {
-        background: var(--color-card) !important;
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
+        overflow: hidden;
+        background: color-mix(
+            in oklab,
+            var(--color-card) 92%,
+            transparent
+        ) !important;
+        border: 1px solid var(--color-border) !important;
+        border-radius: var(--radius-md) !important;
+        box-shadow: none !important;
     }
 </style>

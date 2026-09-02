@@ -83,16 +83,16 @@
     });
 </script>
 
-<div class="flex flex-col h-full min-h-0">
+<div class="flex h-full min-h-0 flex-col">
     <div
-        class="flex-1 min-h-0 overflow-auto rounded-md border border-border bg-card"
+        class="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-card"
     >
         <Table.Root>
             <Table.Header class="sticky top-0 z-10 bg-card/95 backdrop-blur-sm">
                 {#each table.getHeaderGroups() as headerGroup}
                     <Table.Row class="hover:bg-transparent border-border">
                         {#each headerGroup.headers as header}
-                            <Table.Head class="max-w-75 bg-muted/40">
+                            <Table.Head class="h-9 max-w-56 bg-muted/40 px-3 py-0">
                                 {#if header.isPlaceholder}
                                     <!-- empty -->
                                 {:else if header.column.getCanSort()}
@@ -134,7 +134,7 @@
                         ondblclick={(e) => onRowDblClick?.(row.original, e)}
                     >
                         {#each row.getVisibleCells() as cell}
-                            <Table.Cell class="max-w-75">
+                            <Table.Cell class="max-w-56 px-3 py-2">
                                 <span
                                     class="block truncate"
                                     title={String(cell.getValue() ?? "")}
@@ -160,7 +160,7 @@
         </Table.Root>
     </div>
 
-    <div class="flex shrink-0 items-center justify-between pt-3">
+    <div class="flex shrink-0 items-center justify-between pt-3 pb-0.5">
         <div class="text-sm text-muted-foreground">
             {table.getFilteredRowModel().rows.length} row(s)
         </div>

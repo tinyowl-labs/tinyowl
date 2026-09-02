@@ -374,24 +374,22 @@
     <Header subtitle="Settings" {hasSession} />
 
     <main class="flex-1 min-h-0 overflow-y-auto bg-background">
-        <div class="mx-auto w-full max-w-4xl px-6 py-8">
-            <header class="mb-6">
-                <h1
-                    class="text-2xl font-semibold tracking-tight text-foreground"
-                >
-                    Settings
-                </h1>
-                <p class="mt-1 text-sm text-muted-foreground">
-                    Account, integrations, and preferences
-                </p>
-            </header>
+        <div class="mx-auto w-full max-w-5xl px-6 py-6">
+            <p class="mb-5 text-sm text-muted-foreground">
+                Account, integrations, and preferences
+            </p>
 
-            <Tabs value={activeTab} {tabs} onValueChange={onTabChange}>
+            <Tabs
+                value={activeTab}
+                {tabs}
+                orientation="vertical"
+                onValueChange={onTabChange}
+            >
                 {#snippet children(tabValue: string)}
                     {#if tabValue === "account"}
-                        <div class="space-y-8 w-full">
+                        <div class="space-y-6 w-full">
                             <section>
-                                <div class="flex items-center gap-4 mb-6">
+                                <div class="flex items-center gap-4 mb-4">
                                     <div
                                         class="size-16 shrink-0 rounded-full bg-secondary flex items-center justify-center text-xl font-medium text-muted-foreground"
                                     >
@@ -477,7 +475,7 @@
                             </section>
                         </div>
                     {:else if tabValue === "qfieldcloud"}
-                        <div class="space-y-8 w-full">
+                        <div class="space-y-6 w-full">
                             <section>
                                 <div
                                     class="flex items-start justify-between gap-4 mb-4"
@@ -500,6 +498,7 @@
                                         type="button"
                                         variant="outline"
                                         size="sm"
+                                        class="text-muted-foreground hover:bg-accent hover:text-foreground"
                                         onclick={toggleConnectForm}
                                     >
                                         {showQFieldConnect
@@ -548,6 +547,9 @@
                                             ? "default"
                                             : "outline"}
                                         size="sm"
+                                        class={showQFieldPublish
+                                            ? ""
+                                            : "text-muted-foreground hover:bg-accent hover:text-foreground"}
                                         onclick={() => {
                                             showQFieldPublish = !showQFieldPublish;
                                             if (showQFieldPublish)
@@ -802,6 +804,7 @@
                                                             type="button"
                                                             variant="ghost"
                                                             size="sm"
+                                                            class="text-muted-foreground hover:bg-accent hover:text-foreground"
                                                             onclick={() =>
                                                                 startReconnect(
                                                                     acct,
@@ -891,7 +894,7 @@
                             </section>
                         </div>
                     {:else if tabValue === "tokens"}
-                        <div class="space-y-8 w-full">
+                        <div class="space-y-6 w-full">
                             <section>
                                 <div
                                     class="flex items-start justify-between gap-4 mb-4"
@@ -921,6 +924,7 @@
                                         type="button"
                                         variant="outline"
                                         size="sm"
+                                        class="text-muted-foreground hover:bg-accent hover:text-foreground"
                                         onclick={() => {
                                             showCreateToken = !showCreateToken;
                                             newlyCreatedToken = null;
@@ -954,6 +958,7 @@
                                                 type="button"
                                                 variant="outline"
                                                 size="icon-sm"
+                                                class="text-muted-foreground hover:bg-accent hover:text-foreground"
                                                 onclick={copyToken}
                                                 title="Copy"
                                             >
@@ -1065,7 +1070,7 @@
                             </section>
                         </div>
                     {:else if tabValue === "appearance"}
-                        <div class="space-y-8 w-full">
+                        <div class="space-y-6 w-full">
                             <section>
                                 <h2
                                     class="text-sm font-medium text-foreground mb-1"
@@ -1087,7 +1092,7 @@
                                             class="rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.bgBase ===
                                             opt.value
                                                 ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-secondary/50'}"
+                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
                                         >
                                             {opt.label}
                                         </button>
@@ -1116,7 +1121,7 @@
                                             class="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.accentHue ===
                                             preset.hue
                                                 ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-secondary/50'}"
+                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
                                         >
                                             <span
                                                 class="size-3 rounded-full shrink-0"
@@ -1146,7 +1151,7 @@
                                             class="rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.radius ===
                                             opt.value
                                                 ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-secondary/50'}"
+                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
                                         >
                                             {opt.label}
                                         </button>
@@ -1172,7 +1177,7 @@
                                             class="rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.blur ===
                                             opt.value
                                                 ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-secondary/50'}"
+                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
                                         >
                                             {opt.label}
                                         </button>
@@ -1181,7 +1186,7 @@
                             </section>
                         </div>
                     {:else if tabValue === "security"}
-                        <div class="space-y-10 w-full">
+                        <div class="space-y-6 w-full">
                             <section>
                                 <h2
                                     class="text-sm font-medium text-foreground mb-1"
@@ -1240,7 +1245,7 @@
                                 </form>
                             </section>
 
-                            <section class="border-t border-border pt-8">
+                            <section class="border-t border-border pt-6">
                                 <h2
                                     class="text-sm font-medium text-foreground mb-1"
                                 >
@@ -1249,7 +1254,11 @@
                                 <p class="text-sm text-muted-foreground mb-4">
                                     End your session on this device.
                                 </p>
-                                <Button href="/auth/logout" variant="outline">
+                                <Button
+                                    href="/auth/logout"
+                                    variant="outline"
+                                    class="text-muted-foreground hover:bg-accent hover:text-foreground"
+                                >
                                     <LogOutIcon class="size-4" />
                                     Sign out
                                 </Button>

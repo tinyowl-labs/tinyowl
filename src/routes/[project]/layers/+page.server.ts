@@ -55,25 +55,21 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     }
   } catch (_) {}
 
-  // Fetch rows for each table
   const tableNames = Object.keys(tables);
   const allRows: Record<string, TableRow[]> = {};
-  for (const name of tableNames) {
-    try {
-      const res = await fetch(
-        `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${name}/rows`,
-        { headers },
-      );
-      if (res.ok) {
-        const data = await res.json();
-        allRows[name] = data.rows ?? [];
-      } else {
+  await Promise.all(
+    tableNames.map(async (name) => {
+      try {
+        const res = await fetch(
+          `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${name}/rows`,
+          { headers },
+        );
+        allRows[name] = res.ok ? ((await res.json()).rows ?? []) : [];
+      } catch (_) {
         allRows[name] = [];
       }
-    } catch (_) {
-      allRows[name] = [];
-    }
-  }
+    }),
+  );
 
   // Fetch media and build entity lookup
   let mediaByEntity: Record<string, { url: string; media_type: string }[]> = {};

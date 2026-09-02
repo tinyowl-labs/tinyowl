@@ -2463,7 +2463,9 @@
     });
 
     $effect(() => {
-        if (!ready || !viewer || !active) return;
+        if (!ready || !viewer) return;
+        viewer.useDefaultRenderLoop = active;
+        if (!active) return;
         try {
             viewer.resize();
             viewer.scene.requestRender();

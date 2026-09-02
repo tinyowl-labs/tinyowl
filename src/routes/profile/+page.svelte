@@ -6,13 +6,21 @@
     import UsersIcon from "@lucide/svelte/icons/users";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import GitCommit from "@lucide/svelte/icons/git-commit";
+    import SearchIcon from "@lucide/svelte/icons/search";
     import SettingsIcon from "@lucide/svelte/icons/settings";
+    import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+    import CheckIcon from "@lucide/svelte/icons/check";
+    import UserPlusIcon from "@lucide/svelte/icons/user-plus";
     import Header from "$lib/components/ui/header.svelte";
-    import MobileNav from "$lib/components/ui/mobile-nav.svelte";
     import { Button } from "$lib/components/ui/button/index.js";
     import CommitTimeline from "$lib/components/dashboard/CommitTimeline.svelte";
 
+    const RECENT_LIMIT = 6;
+
     let showCreate = $state(false);
+    let query = $state("");
+    let accountOpen = $state(false);
+    let accountMenuEl: HTMLDivElement | undefined = $state();
     let { data, form } = $props();
 
     const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
@@ -26,16 +34,64 @@
             : (user?.email ?? "User"),
     );
 
-    let mobileOpen = $state(false);
+    const initials = $derived(
+        user?.user_metadata?.first_name
+            ? `${user.user_metadata.first_name.charAt(0)}${user.user_metadata.last_name?.charAt(0) ?? ""}`.toUpperCase()
+            : (user?.email?.charAt(0).toUpperCase() ?? "U"),
+    );
 
-    $effect(() => {
-        if (!browser) return;
-        const onResize = () => {
-            if (window.innerWidth >= 768) mobileOpen = false;
-        };
-        window.addEventListener("resize", onResize);
-        return () => window.removeEventListener("resize", onResize);
+    const lastEditedAt = $derived.by(() => {
+        const map = new Map<string, string>();
+        for (const d of diffs) {
+            if (!map.has(d.project_slug)) map.set(d.project_slug, d.created_at);
+        }
+        return map;
     });
+
+    const recentProjects = $derived.by(() => {
+        const bySlug = new Map(projects.map((p) => [p.slug, p]));
+        const seen = new Set<string>();
+        const ordered: typeof projects = [];
+        for (const d of diffs) {
+            if (seen.has(d.project_slug)) continue;
+            const p = bySlug.get(d.project_slug);
+            if (!p) continue;
+            ordered.push(p);
+            seen.add(d.project_slug);
+            if (ordered.length >= RECENT_LIMIT) return ordered;
+        }
+        for (const p of projects) {
+            if (seen.has(p.slug)) continue;
+            ordered.push(p);
+            seen.add(p.slug);
+            if (ordered.length >= RECENT_LIMIT) break;
+        }
+        return ordered;
+    });
+
+    const searching = $derived(query.trim().length > 0);
+
+    const visibleProjects = $derived.by(() => {
+        const q = query.trim().toLowerCase();
+        if (!q) return recentProjects;
+        return projects.filter(
+            (p) =>
+                p.title.toLowerCase().includes(q) ||
+                p.slug.toLowerCase().includes(q),
+        );
+    });
+
+    function relativeTime(ts: string): string {
+        const date = new Date(ts);
+        const diffMins = Math.floor((Date.now() - date.getTime()) / 60000);
+        const diffHours = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHours / 24);
+        if (diffMins < 1) return "Just now";
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    }
 
     $effect(() => {
         if (form?.success && form?.slug) {
@@ -43,45 +99,170 @@
             goto(`/${form.slug}`);
         }
     });
+
+    $effect(() => {
+        if (!browser || !accountOpen) return;
+        const onPointer = (e: PointerEvent) => {
+            if (accountMenuEl?.contains(e.target as Node)) return;
+            accountOpen = false;
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") accountOpen = false;
+        };
+        window.addEventListener("pointerdown", onPointer);
+        window.addEventListener("keydown", onKey);
+        return () => {
+            window.removeEventListener("pointerdown", onPointer);
+            window.removeEventListener("keydown", onKey);
+        };
+    });
 </script>
 
-<svelte:head><title>Profile — echidna</title></svelte:head>
+<svelte:head><title>Projects — echidna</title></svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
-    <Header subtitle="Profile" {hasSession} />
+    <Header subtitle="Projects" {hasSession} />
 
     {#if user}
-        <div class="flex flex-1 min-h-0">
-            <!-- Desktop left sidebar: Your projects -->
-            <aside
-                class="hidden md:flex w-64 shrink-0 overflow-hidden border-r border-border"
-            >
-                <div class="glass-panel flex h-full w-full min-w-0 flex-col">
-                    <div
-                        class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2.5"
+        <main class="flex-1 min-h-0 overflow-y-auto bg-background">
+            <div class="mx-auto max-w-5xl px-6 py-6">
+                <div class="mb-6 flex items-center justify-between gap-4">
+                    <div class="relative min-w-0" bind:this={accountMenuEl}>
+                        <button
+                            type="button"
+                            class="flex min-w-0 max-w-full items-center gap-2.5 rounded-md px-1.5 py-1 text-left outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label="Switch account"
+                            aria-haspopup="listbox"
+                            aria-expanded={accountOpen}
+                            onclick={() => (accountOpen = !accountOpen)}
+                        >
+                            <span
+                                class="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium text-muted-foreground"
+                                aria-hidden="true"
+                            >
+                                {initials}
+                            </span>
+                            <span class="min-w-0">
+                                <span
+                                    class="block truncate text-sm font-medium text-foreground"
+                                    >{displayName}</span
+                                >
+                                {#if user?.email}
+                                    <span
+                                        class="block truncate text-xs text-muted-foreground"
+                                        >{user.email}</span
+                                    >
+                                {/if}
+                            </span>
+                            <ChevronDownIcon
+                                class="size-3.5 shrink-0 text-muted-foreground {accountOpen
+                                    ? 'rotate-180'
+                                    : ''} transition-transform"
+                            />
+                        </button>
+                        {#if accountOpen}
+                            <div
+                                class="absolute left-0 top-full z-50 mt-1 min-w-64 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+                                role="listbox"
+                                aria-label="Accounts"
+                            >
+                                <p
+                                    class="px-2 py-1.5 text-[11px] font-medium text-muted-foreground"
+                                >
+                                    Accounts
+                                </p>
+                                <div
+                                    class="flex items-center gap-2 rounded-sm px-2 py-1.5"
+                                    role="option"
+                                    aria-selected="true"
+                                >
+                                    <div
+                                        class="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-medium text-muted-foreground"
+                                        aria-hidden="true"
+                                    >
+                                        {initials}
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <p
+                                            class="truncate text-xs font-medium text-foreground"
+                                        >
+                                            {displayName}
+                                        </p>
+                                        {#if user?.email}
+                                            <p
+                                                class="truncate text-[11px] text-muted-foreground"
+                                            >
+                                                {user.email}
+                                            </p>
+                                        {/if}
+                                    </div>
+                                    <CheckIcon
+                                        class="size-3.5 shrink-0 text-foreground"
+                                    />
+                                </div>
+                                <div class="my-1 h-px bg-border"></div>
+                                <a
+                                    href="/auth/login"
+                                    class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
+                                >
+                                    <UserPlusIcon class="size-3.5 shrink-0" />
+                                    Add account
+                                </a>
+                            </div>
+                        {/if}
+                    </div>
+                    <a
+                        href="/settings"
+                        class="inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
                     >
+                        <SettingsIcon class="size-3.5" />
+                        Settings
+                    </a>
+                </div>
+
+                <section class="mb-8">
+                    <div
+                        class="mb-3 flex items-center justify-between gap-3"
+                    >
+                        <h1
+                            class="text-lg font-semibold tracking-tight text-foreground"
+                        >
+                            {searching ? "Projects" : "Recent projects"}
+                        </h1>
                         <button
                             type="button"
                             onclick={() => (showCreate = true)}
-                            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors"
-                            title="New project"
+                            class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
                             <PlusIcon class="size-3.5" />
+                            New
                         </button>
-                        <h2
-                            class="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-                        >
-                            Your projects
-                        </h2>
                     </div>
 
-                    <nav class="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">
+                    {#if projects.length > 0}
+                        <div class="relative mb-3">
+                            <SearchIcon
+                                class="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                            />
+                            <input
+                                type="search"
+                                bind:value={query}
+                                placeholder="Search projects"
+                                autocomplete="off"
+                                class="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
+                        </div>
+                    {/if}
+
+                    <div class="h-52 overflow-y-auto">
                         {#if projects.length === 0}
-                            <div class="px-2 py-6 text-center">
+                            <div
+                                class="flex h-full flex-col items-center justify-center rounded-lg border border-border bg-card px-4 text-center"
+                            >
                                 <UsersIcon
-                                    class="mx-auto mb-2 size-5 text-muted-foreground"
+                                    class="mb-2 size-6 text-muted-foreground"
                                 />
-                                <p class="mb-3 text-xs text-muted-foreground">
+                                <p class="mb-3 text-sm text-muted-foreground">
                                     No projects yet
                                 </p>
                                 <Button
@@ -92,117 +273,63 @@
                                     Create project
                                 </Button>
                             </div>
-                        {:else}
-                            {#each projects as project}
-                                <a
-                                    href="/{project.slug}"
-                                    title={project.title}
-                                    class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground no-underline transition-colors hover:bg-secondary/50 hover:text-foreground"
-                                >
-                                    <UsersIcon class="size-4 shrink-0" />
-                                    <span class="min-w-0 flex-1">
-                                        <span
-                                            class="block truncate font-medium text-foreground"
-                                            >{project.title}</span
-                                        >
-                                        <span
-                                            class="block truncate text-[11px] text-muted-foreground"
-                                            >{project.slug}{#if project.role}
-                                                · {project.role}{/if}</span
-                                        >
-                                    </span>
-                                </a>
-                            {/each}
-                        {/if}
-                    </nav>
-                </div>
-            </aside>
-
-            <!-- Mobile projects drawer -->
-            <MobileNav bind:open={mobileOpen} title="Your projects">
-                {#snippet children()}
-                    <div class="p-3 border-b border-border">
-                        <Button
-                            type="button"
-                            size="sm"
-                            class="w-full"
-                            onclick={() => {
-                                mobileOpen = false;
-                                showCreate = true;
-                            }}
-                        >
-                            <PlusIcon class="size-3.5" />
-                            New project
-                        </Button>
-                    </div>
-                    <nav class="flex flex-col gap-0.5 p-3">
-                        {#if projects.length === 0}
+                        {:else if visibleProjects.length === 0}
                             <p
-                                class="px-3 py-6 text-center text-sm text-muted-foreground"
+                                class="flex h-full items-center justify-center rounded-lg border border-border bg-card px-4 text-center text-sm text-muted-foreground"
                             >
-                                No projects yet
+                                No matching projects
                             </p>
                         {:else}
-                            {#each projects as project}
-                                <a
-                                    href="/{project.slug}"
-                                    onclick={() => (mobileOpen = false)}
-                                    class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline"
-                                >
-                                    <UsersIcon class="size-4 shrink-0" />
-                                    <span class="min-w-0">
+                            <div
+                                class="grid content-start gap-2 sm:grid-cols-2"
+                            >
+                                {#each visibleProjects as project}
+                                    <a
+                                        href="/{project.slug}"
+                                        class="rounded-lg border border-border bg-card px-3.5 py-3 no-underline transition-colors hover:bg-accent hover:text-foreground"
+                                    >
                                         <span
-                                            class="block truncate font-medium text-foreground"
+                                            class="block truncate text-sm font-medium text-foreground"
                                             >{project.title}</span
                                         >
                                         <span
-                                            class="block truncate text-xs text-muted-foreground"
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
                                             >{project.slug}{#if project.role}
-                                                · {project.role}{/if}</span
+                                                · {project.role}{/if}{#if lastEditedAt.get(project.slug)}
+                                                · {relativeTime(
+                                                    lastEditedAt.get(
+                                                        project.slug,
+                                                    )!,
+                                                )}{/if}</span
                                         >
-                                    </span>
-                                </a>
-                            {/each}
+                                    </a>
+                                {/each}
+                            </div>
                         {/if}
-                    </nav>
-                {/snippet}
-            </MobileNav>
-
-            <main class="flex-1 min-h-0 overflow-y-auto bg-background">
-                <div class="mx-auto max-w-3xl px-6 py-8">
-                    <div class="flex items-start justify-between gap-4 mb-8">
-                        <div class="min-w-0">
-                            <h1
-                                class="text-2xl font-semibold tracking-tight text-foreground"
-                            >
-                                Recent activity
-                            </h1>
-                            <p class="mt-1 text-sm text-muted-foreground">
-                                Diffs across your projects · {displayName}
-                            </p>
-                        </div>
-                        <a
-                            href="/settings"
-                            class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors no-underline shrink-0"
-                        >
-                            <SettingsIcon class="size-3.5" />
-                            Settings
-                        </a>
                     </div>
+                </section>
 
+                <section>
+                    <h2
+                        class="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                    >
+                        Recent activity
+                    </h2>
                     {#if diffs.length === 0}
-                        <div class="rounded-lg border p-8 text-center bg-card">
+                        <div
+                            class="rounded-lg border border-border bg-card px-4 py-6 text-center"
+                        >
                             <div
-                                class="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-secondary"
+                                class="mx-auto mb-2 flex size-8 items-center justify-center rounded-full bg-secondary"
                             >
                                 <GitCommit
-                                    class="size-4 text-muted-foreground"
+                                    class="size-3.5 text-muted-foreground"
                                 />
                             </div>
                             <p class="text-sm text-muted-foreground">
                                 No diffs yet. Run
                                 <code
-                                    class="font-mono text-xs rounded px-1 bg-secondary"
+                                    class="rounded bg-secondary px-1 font-mono text-xs"
                                 >
                                     tinyowl push
                                 </code>
@@ -212,15 +339,15 @@
                     {:else}
                         <CommitTimeline {diffs} />
                     {/if}
-                </div>
-            </main>
-        </div>
+                </section>
+            </div>
+        </main>
     {:else}
         <div class="flex-1 flex items-center justify-center bg-background">
             <p class="text-sm text-muted-foreground">
                 <a href="/auth/login" class="underline underline-offset-4"
                     >Sign in</a
-                > to view your profile.
+                > to view your projects.
             </p>
         </div>
     {/if}

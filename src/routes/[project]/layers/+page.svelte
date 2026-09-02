@@ -4,6 +4,7 @@
     import MapIcon from "@lucide/svelte/icons/map";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import DownloadIcon from "@lucide/svelte/icons/download";
+    import PanelRightIcon from "@lucide/svelte/icons/panel-right";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
     import { DataTable } from "$lib/components/ui/data-table/index.js";
@@ -171,6 +172,17 @@
         })),
     );
 
+    const columnsByTable = $derived.by(() => {
+        const out: Record<
+            string,
+            ColumnDef<Record<string, unknown>>[]
+        > = {};
+        for (const name of tableNames) {
+            out[name] = buildColumns(name);
+        }
+        return out;
+    });
+
     let activeTab = $state(
         untrack(() =>
             layerParam && tableNames.includes(layerParam)
@@ -268,6 +280,8 @@
         return "bg-accent/40";
     }
 
+    let schemaToolsOpen = $state(false);
+
     let viewMode = $state<ViewMode>(
         untrack(() => {
             if (
@@ -281,6 +295,17 @@
             return "map";
         }),
     );
+
+    let mapEverShown = $state(
+        untrack(() => {
+            const v = viewParam;
+            return v === "" || v === "map" || v === "3d";
+        }),
+    );
+
+    $effect(() => {
+        if (viewMode === "map") mapEverShown = true;
+    });
 
     // Deep links (media / search) set view + highlight — honour them on nav.
     $effect(() => {
@@ -615,6 +640,19 @@
             </span>
         {/snippet}
         {#snippet actions()}
+            {#if viewMode === "schema"}
+                <button
+                    type="button"
+                    onclick={() => (schemaToolsOpen = !schemaToolsOpen)}
+                    class="rounded-md p-1 transition-colors {schemaToolsOpen
+                        ? 'bg-secondary text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'}"
+                    title="Entity relations and foreign keys"
+                    aria-pressed={schemaToolsOpen}
+                >
+                    <PanelRightIcon class="size-4" />
+                </button>
+            {/if}
             {#if gpkgUri}
                 <a
                     href={gpkgUri}
@@ -671,7 +709,7 @@
                 ? 'z-10'
                 : 'invisible pointer-events-none z-0'}"
         >
-            {#if browser}
+            {#if browser && mapEverShown}
                 <LayerScene
                     projectSlug={$page.params.project ?? ""}
                     {accessToken}
@@ -692,19 +730,27 @@
         </div>
 
         {#if viewMode === "table"}
-            <div class="absolute inset-0 z-20 bg-background">
+            <div class="absolute inset-0 z-10 overflow-hidden bg-background p-5">
                 {#if tableNames.length > 0}
                     <div class="h-full min-h-0">
                         <Tabs
                             value={activeTab}
                             onValueChange={handleTabChange}
                             {tabs}
+                            class="flex h-full min-h-0 flex-col"
+                            listClass="p-1.5"
+                            contentClass="mt-5 flex flex-1 min-h-0 flex-col overflow-hidden"
+                            lazy
                         >
                             {#snippet children(tabValue: string)}
                                 {@const tableRows = rows[tabValue] ?? []}
-                                {@const tableCols = buildColumns(tabValue)}
+                                {@const tableCols =
+                                    columnsByTable[tabValue] ?? []}
                                 {#if tableRows.length > 0}
-                                    <div bind:this={tableContainer}>
+                                    <div
+                                        bind:this={tableContainer}
+                                        class="h-full min-h-0"
+                                    >
                                         <DataTable
                                             columns={tableCols}
                                             data={tableRows}
@@ -753,7 +799,7 @@
                                     </div>
                                 {:else}
                                     <div
-                                        class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                                        class="flex h-full min-h-0 flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
                                     >
                                         <TableIcon
                                             class="size-10 text-muted-foreground/30 mb-3"
@@ -768,7 +814,7 @@
                     </div>
                 {:else}
                     <div
-                        class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                        class="flex h-full min-h-0 flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
                     >
                         <LayersIcon
                             class="size-10 text-muted-foreground/30 mb-3"
@@ -785,49 +831,42 @@
                 {/if}
             </div>
         {:else if viewMode === "schema"}
-            <div class="absolute inset-0 z-20 bg-background flex flex-col">
+            <div class="absolute inset-0 z-10 flex bg-background">
                 {#if tableNames.length > 0}
-                    <div class="flex-1 min-h-0">
+                    <div class="relative min-h-0 flex-1">
                         <SchemaGraph
                             tables={schemaTables}
                             edges={schemaEdges}
                             loading={schemaLoading}
                         />
                     </div>
-                    {#if canWrite && accessToken}
-                        <div
-                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[40%] overflow-y-auto space-y-6"
+                    {#if schemaToolsOpen}
+                        <aside
+                            class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-6"
                         >
                             <EntityRelationsPanel
                                 slug={$page.params.project ?? ""}
                                 {accessToken}
                                 {canWrite}
                             />
-                            <FkLinker
-                                {accessToken}
-                                slug={$page.params.project ?? ""}
-                                tables={schemaTables}
-                                edges={schemaEdges}
-                                onSaved={() => {
-                                    schemaLoaded = false;
-                                    void loadSchema();
-                                }}
-                            />
-                        </div>
-                    {:else}
-                        <div
-                            class="shrink-0 border-t border-border bg-card/80 px-4 py-4 max-h-[30%] overflow-y-auto"
-                        >
-                            <EntityRelationsPanel
-                                slug={$page.params.project ?? ""}
-                                {accessToken}
-                                canWrite={false}
-                            />
-                        </div>
+                            {#if canWrite && accessToken}
+                                <FkLinker
+                                    {accessToken}
+                                    slug={$page.params.project ?? ""}
+                                    tables={schemaTables}
+                                    edges={schemaEdges}
+                                    onSaved={() => {
+                                        schemaLoaded = false;
+                                        void loadSchema();
+                                    }}
+                                />
+                            {/if}
+                        </aside>
                     {/if}
                 {:else}
+                    <div class="flex flex-1 items-center justify-center p-5">
                     <div
-                        class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                        class="flex w-full max-w-md flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
                     >
                         <LayersIcon
                             class="size-10 text-muted-foreground/30 mb-3"
@@ -842,6 +881,7 @@
                                 >Import CSV or GeoJSON</a
                             >
                         {/if}
+                    </div>
                     </div>
                 {/if}
             </div>

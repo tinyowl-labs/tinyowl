@@ -40,21 +40,21 @@
 
 <div class="flex flex-col gap-0">
     {#each diffs as diff, i (diff.id)}
-        <div class="flex gap-3">
+        <div class="flex gap-2.5">
             <!-- Timeline rail -->
-            <div class="flex flex-col items-center shrink-0 w-8">
+            <div class="flex flex-col items-center shrink-0 w-6">
                 <div
-                    class="size-2.5 rounded-full shrink-0 mt-2 bg-primary"
+                    class="size-2 rounded-full shrink-0 mt-2 bg-primary"
                 ></div>
                 {#if i < diffs.length - 1}
-                    <div class="flex-1 w-px min-h-8 bg-border"></div>
+                    <div class="flex-1 w-px min-h-6 bg-border"></div>
                 {/if}
             </div>
 
             <!-- Diff card -->
-            <div class="flex-1 min-w-0 pb-3">
+            <div class="flex-1 min-w-0 pb-2">
                 <div
-                    class="rounded-lg border bg-card px-3.5 py-2.5 transition-colors duration-120"
+                    class="rounded-lg border bg-card px-3 py-2 transition-colors duration-120"
                 >
                     <div class="flex items-start justify-between gap-2">
                         <div class="min-w-0 flex-1">

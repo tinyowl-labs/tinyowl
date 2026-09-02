@@ -51,10 +51,17 @@
 
 <header
     class={cn(
-        "glass-dock flex h-11 shrink-0 items-center justify-between px-4 border-b border-border text-foreground",
-        fixed ? "fixed top-0 inset-x-0 z-50" : "relative z-20",
+        "isolate h-11 shrink-0 overflow-visible text-foreground",
+        fixed ? "fixed top-0 inset-x-0 z-50" : "relative z-50",
     )}
 >
+    <div
+        class="glass-dock pointer-events-none absolute inset-0 border-b border-border"
+        aria-hidden="true"
+    ></div>
+    <div
+        class="relative flex h-11 items-center justify-between overflow-visible px-4"
+    >
     <div class="flex min-w-0 items-center gap-2">
         <a
             href="/"
@@ -167,4 +174,5 @@
             >
         {/if}
     </nav>
+    </div>
 </header>

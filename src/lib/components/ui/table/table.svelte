@@ -11,10 +11,10 @@
 </script>
 
 <div
-    class={cn("relative w-full overflow-auto", className)}
+    class={cn("relative w-full", className)}
     {...restProps}
 >
-    <table class="w-full caption-bottom text-sm">
+    <table class="w-max min-w-full caption-bottom text-sm">
         {@render children?.()}
     </table>
 </div>
