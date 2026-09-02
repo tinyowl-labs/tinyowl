@@ -26,14 +26,12 @@
             : (user?.email ?? "User"),
     );
 
-    let collapsed = $state(!browser || (browser && window.innerWidth < 768));
     let mobileOpen = $state(false);
 
     $effect(() => {
         if (!browser) return;
         const onResize = () => {
             if (window.innerWidth >= 768) mobileOpen = false;
-            if (window.innerWidth < 768) collapsed = true;
         };
         window.addEventListener("resize", onResize);
         return () => window.removeEventListener("resize", onResize);
@@ -50,20 +48,13 @@
 <svelte:head><title>Profile — echidna</title></svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
-    <Header
-        subtitle="Profile"
-        {hasSession}
-        sidebarCollapsed={collapsed}
-        onSidebarToggle={() => (collapsed = !collapsed)}
-    />
+    <Header subtitle="Profile" {hasSession} />
 
     {#if user}
         <div class="flex flex-1 min-h-0">
             <!-- Desktop left sidebar: Your projects -->
             <aside
-                class="hidden md:flex shrink-0 overflow-hidden border-r border-border transition-[width] duration-200 ease-out {collapsed
-                    ? 'w-12'
-                    : 'w-64'}"
+                class="hidden md:flex w-64 shrink-0 overflow-hidden border-r border-border"
             >
                 <div class="glass-panel flex h-full w-full min-w-0 flex-col">
                     <div
@@ -78,9 +69,7 @@
                             <PlusIcon class="size-3.5" />
                         </button>
                         <h2
-                            class="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-opacity duration-150 {collapsed
-                                ? 'opacity-0'
-                                : 'opacity-100 delay-100'}"
+                            class="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground"
                         >
                             Your projects
                         </h2>
@@ -88,11 +77,7 @@
 
                     <nav class="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">
                         {#if projects.length === 0}
-                            <div
-                                class="px-2 py-6 text-center transition-opacity duration-150 {collapsed
-                                    ? 'opacity-0'
-                                    : 'opacity-100 delay-100'}"
-                            >
+                            <div class="px-2 py-6 text-center">
                                 <UsersIcon
                                     class="mx-auto mb-2 size-5 text-muted-foreground"
                                 />
@@ -115,11 +100,7 @@
                                     class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-muted-foreground no-underline transition-colors hover:bg-secondary/50 hover:text-foreground"
                                 >
                                     <UsersIcon class="size-4 shrink-0" />
-                                    <span
-                                        class="min-w-0 flex-1 transition-opacity duration-150 {collapsed
-                                            ? 'pointer-events-none opacity-0'
-                                            : 'opacity-100 delay-100'}"
-                                    >
+                                    <span class="min-w-0 flex-1">
                                         <span
                                             class="block truncate font-medium text-foreground"
                                             >{project.title}</span

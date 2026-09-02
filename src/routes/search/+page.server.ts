@@ -118,6 +118,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
       similarItems: [] as SimilarMediaItem[],
       similarStatus: "" as string,
       projects: [] as SearchProject[],
+      placeName: null as string | null,
       accessToken,
     };
   }
@@ -254,6 +255,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
     similarItems,
     similarStatus,
     projects,
+    placeName: parsed.placeName,
     accessToken,
   };
 };

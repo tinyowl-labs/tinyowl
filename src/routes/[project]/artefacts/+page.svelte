@@ -22,6 +22,7 @@
     import { entityLayersHref } from "$lib/project/entityLink";
     import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
     import ArtefactMicroViewer from "$lib/components/artefacts/ArtefactMicroViewer.svelte";
+    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
     import { goto } from "$app/navigation";
     import {
         bboxFromGeoJSON,
@@ -670,23 +671,21 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="flex flex-col h-full px-6 py-4">
-    <div class="shrink-0 mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div class="min-w-0">
-            <div class="flex items-center gap-2">
-                <ArchiveIcon class="size-4 text-muted-foreground" />
-                <h1 class="text-lg font-semibold tracking-tight text-foreground">
-                    Artefacts
-                </h1>
-                {#if totalItems || items.length}
-                    <span class="text-xs text-muted-foreground tabular-nums">
-                        {totalItems || items.length}
-                    </span>
-                {/if}
-            </div>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
+<div class="flex h-full min-h-0 flex-col">
+    <WorkspaceToolbar>
+        {#snippet meta()}
+            {#if totalItems || items.length}
+                <span class="tabular-nums"
+                    >{totalItems || items.length} artefact{(totalItems ||
+                        items.length) === 1
+                        ? ""
+                        : "s"}</span
+                >
+            {:else}
+                <span>Artefacts</span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
             {#if canUpload}
                 <MediaUpload
                     projectSlug={$page.params.project ?? ""}
@@ -712,7 +711,7 @@
                 />
             {/if}
             <div
-                class="flex items-center rounded-md border border-border overflow-hidden"
+                class="flex items-center overflow-hidden rounded-md border border-border"
             >
                 {#each filterTabs as tab}
                     {@const count = filterCount(tab.id)}
@@ -733,12 +732,12 @@
                     </button>
                 {/each}
             </div>
-        </div>
-    </div>
+        {/snippet}
+    </WorkspaceToolbar>
 
     {#if integrityChecked && (isMember || canUpload) && (integrityError || missingCount > 0 || orphanCount > 0)}
         <div
-            class="mb-3 flex items-start gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground"
+            class="mb-0 flex items-start gap-2 border-b border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground"
         >
             <AlertTriangleIcon class="size-4 shrink-0 text-muted-foreground mt-0.5" />
             <p>
@@ -779,9 +778,9 @@
     {/if}
 
     <div
-        class="flex-1 min-h-0 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:items-stretch"
+        class="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:items-stretch"
     >
-        <div class="min-h-0 overflow-y-auto">
+        <div class="min-h-0 overflow-y-auto p-3">
             {#if loading && items.length === 0}
                 <div
                     class="flex items-center justify-center h-64 text-sm text-muted-foreground"
@@ -956,7 +955,7 @@
 
         <!-- Detail panel -->
         <aside
-            class="hidden lg:flex min-h-0 flex-col rounded-lg border border-border bg-secondary/15 overflow-hidden"
+            class="hidden min-h-0 flex-col overflow-hidden border-l border-border bg-secondary/15 lg:flex"
         >
             {#if selected}
                 {@const isImage = selected.media_type.startsWith("image/")}

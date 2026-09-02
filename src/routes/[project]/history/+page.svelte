@@ -2,9 +2,9 @@
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
     import { browser } from "$app/environment";
-    import HistoryIcon from "@lucide/svelte/icons/history";
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
     import ReviewMap from "$lib/components/dashboard/ReviewMap.svelte";
+    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
 
     let { data } = $props();
 
@@ -179,17 +179,11 @@
     <title>History — {slug} — echidna</title>
 </svelte:head>
 
-<article class="absolute inset-0 flex flex-col overflow-hidden">
-    <header
-        class="relative z-10 shrink-0 flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-border bg-background"
-    >
-        <div class="min-w-0">
-            <div class="flex items-center gap-2">
-                <HistoryIcon class="size-5 text-muted-foreground" />
-                <h1 class="text-lg font-medium text-foreground">Time machine</h1>
-            </div>
-            <p class="text-sm text-muted-foreground mt-0.5">
-                {#if selected}
+<article class="flex h-full min-h-0 flex-col overflow-hidden">
+    <WorkspaceToolbar>
+        {#snippet meta()}
+            {#if selected}
+                <span class="min-w-0 truncate">
                     #{selected.seq}
                     {selected.message?.trim() || "(no message)"}
                     {#if entitySummary.length}
@@ -208,13 +202,13 @@
                                 >{/if}
                         {/each}
                     {/if}
-                {:else}
-                    No applied changesets yet
-                {/if}
-            </p>
-        </div>
-        {#if maxSeq > 0}
-            <div class="flex items-center gap-3 min-w-[240px]">
+                </span>
+            {:else}
+                <span>No applied changesets yet</span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
+            {#if maxSeq > 0}
                 <label
                     for="history-seq"
                     class="text-xs text-muted-foreground shrink-0">seq {seq}</label
@@ -231,9 +225,9 @@
                         ))}
                     class="w-48"
                 />
-            </div>
-        {/if}
-    </header>
+            {/if}
+        {/snippet}
+    </WorkspaceToolbar>
 
     {#if loadErr}
         <p class="px-4 py-2 text-sm text-destructive border-b border-border">

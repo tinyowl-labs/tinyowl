@@ -5,6 +5,7 @@
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import DownloadIcon from "@lucide/svelte/icons/download";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
+    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
     import { DataTable } from "$lib/components/ui/data-table/index.js";
     import { renderComponent } from "$lib/components/ui/data-table/render-helpers.js";
     import MediaCell from "$lib/components/ui/media-cell.svelte";
@@ -588,87 +589,84 @@
     <title>Layers — echidna</title>
 </svelte:head>
 
-<div class="flex flex-col h-full px-6 py-4">
-    <div class="shrink-0 mb-4">
-        <div class="flex items-center gap-2.5">
-            <LayersIcon class="size-5 text-muted-foreground" />
-            <h1 class="text-xl font-bold tracking-tight text-foreground">
-                Layers
-            </h1>
-            <div class="flex items-center gap-1 -mb-1">
-                {#if gpkgUri}
-                    <a
-                        href={gpkgUri}
-                        class="text-muted-foreground hover:text-foreground transition-colors"
-                        title="Download GeoPackage"
-                    >
-                        <DownloadIcon class="size-5" />
-                    </a>
-                {/if}
-                <div
-                    class="ml-2 flex items-center rounded-md border border-border overflow-hidden"
+<div class="flex h-full min-h-0 flex-col">
+    <WorkspaceToolbar>
+        {#snippet meta()}
+            <span>
+                {tableNames.length}
+                {tableNames.length === 1 ? "table" : "tables"}
+                {#if entityCount != null}
+                    · {entityCount} entities{/if}
+                {#if viewMode === "schema" && schemaEdges.length > 0}
+                    · {schemaEdges.length} relations{/if}
+                {#if viewMode === "map" && mapDim === "3d" && tilesets.length > 0}
+                    · {tilesets.filter((t) => t.ingest_status === "ready")
+                        .length}
+                    3D model{tilesets.filter((t) => t.ingest_status === "ready")
+                        .length === 1
+                        ? ""
+                        : "s"}{/if}
+                {#if viewMode === "map" && coverages.filter((c) => c.role !== "tileset").length > 0}
+                    · {coverages.filter((c) => c.role !== "tileset").length}
+                    coverage{coverages.filter((c) => c.role !== "tileset")
+                        .length === 1
+                        ? ""
+                        : "s"}{/if}
+            </span>
+        {/snippet}
+        {#snippet actions()}
+            {#if gpkgUri}
+                <a
+                    href={gpkgUri}
+                    class="text-muted-foreground hover:text-foreground transition-colors"
+                    title="Download GeoPackage"
                 >
-                    <button
-                        onclick={() => setViewMode("map")}
-                        class="px-2.5 py-1 text-xs {viewMode === 'map'
-                            ? 'bg-secondary text-foreground font-medium'
-                            : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                        title="Map view"
-                    >
-                        <MapIcon class="size-3.5" />
-                    </button>
-                    <button
-                        onclick={() => setViewMode("table")}
-                        class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
-                        'table'
-                            ? 'bg-secondary text-foreground font-medium'
-                            : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                        title="Table view"
-                    >
-                        <TableIcon class="size-3.5" />
-                    </button>
-                    <button
-                        onclick={() => setViewMode("schema")}
-                        class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
-                        'schema'
-                            ? 'bg-secondary text-foreground font-medium'
-                            : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                        title="Schema graph"
-                    >
-                        <WaypointsIcon class="size-3.5" />
-                    </button>
-                </div>
+                    <DownloadIcon class="size-4" />
+                </a>
+            {/if}
+            <div
+                class="flex items-center overflow-hidden rounded-md border border-border"
+            >
+                <button
+                    onclick={() => setViewMode("map")}
+                    class="px-2.5 py-1 text-xs {viewMode === 'map'
+                        ? 'bg-secondary text-foreground font-medium'
+                        : 'text-muted-foreground hover:text-foreground'} transition-colors"
+                    title="Map view"
+                >
+                    <MapIcon class="size-3.5" />
+                </button>
+                <button
+                    onclick={() => setViewMode("table")}
+                    class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
+                    'table'
+                        ? 'bg-secondary text-foreground font-medium'
+                        : 'text-muted-foreground hover:text-foreground'} transition-colors"
+                    title="Table view"
+                >
+                    <TableIcon class="size-3.5" />
+                </button>
+                <button
+                    onclick={() => setViewMode("schema")}
+                    class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
+                    'schema'
+                        ? 'bg-secondary text-foreground font-medium'
+                        : 'text-muted-foreground hover:text-foreground'} transition-colors"
+                    title="Schema graph"
+                >
+                    <WaypointsIcon class="size-3.5" />
+                </button>
             </div>
-        </div>
-        <p class="mt-0.5 text-sm text-muted-foreground">
-            {tableNames.length}
-            {tableNames.length === 1 ? " table" : " tables"}
-            {#if entityCount != null}
-                · {entityCount} entities{/if}
-            {#if viewMode === "schema" && schemaEdges.length > 0}
-                · {schemaEdges.length} relations{/if}
-            {#if viewMode === "map" && mapDim === "3d" && tilesets.length > 0}
-                · {tilesets.filter((t) => t.ingest_status === "ready").length}
-                3D model{tilesets.filter((t) => t.ingest_status === "ready")
-                    .length === 1
-                    ? ""
-                    : "s"}{/if}
-            {#if viewMode === "map" && coverages.filter((c) => c.role !== "tileset").length > 0}
-                · {coverages.filter((c) => c.role !== "tileset").length}
-                coverage{coverages.filter((c) => c.role !== "tileset")
-                    .length === 1
-                    ? ""
-                    : "s"}{/if}
-        </p>
-    </div>
+        {/snippet}
+    </WorkspaceToolbar>
 
     <!-- Stable content shell: Cesium stays mounted (lamina-style). Table/schema
          overlay it — never {#if}-destroy the Viewer on tab or CZML load. -->
-    <div class="flex-1 min-h-0 relative">
+    <div class="relative min-h-0 flex-1">
         <div
             bind:this={mapChrome}
-            class="absolute inset-0 rounded-lg overflow-hidden border border-border bg-background {mapFullscreen
-                ? 'rounded-none border-0 z-50'
+            class="absolute inset-0 overflow-hidden bg-background {mapFullscreen
+                ? 'z-50'
                 : ''} {viewMode === 'map'
                 ? 'z-10'
                 : 'invisible pointer-events-none z-0'}"

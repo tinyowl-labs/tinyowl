@@ -5,6 +5,7 @@
     import XIcon from "@lucide/svelte/icons/x";
     import MessageSquareIcon from "@lucide/svelte/icons/message-square";
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
+    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
 
     let { data } = $props();
 
@@ -78,22 +79,18 @@
     <title>Review — {slug} — echidna</title>
 </svelte:head>
 
-<article class="absolute inset-0 flex flex-col overflow-hidden">
-    <header
-        class="shrink-0 flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-border"
-    >
-        <div class="min-w-0 max-w-3xl">
-            <h1 class="text-lg font-medium text-foreground truncate">
+<article class="flex h-full min-h-0 flex-col overflow-hidden">
+    <WorkspaceToolbar>
+        {#snippet meta()}
+            <span class="min-w-0 truncate text-foreground">
                 {changeset?.message?.trim() || "Changeset review"}
-            </h1>
-            <p class="text-sm text-muted-foreground mt-0.5">
-                <span class="capitalize">{changeset?.status ?? ""}</span>
-                <span class="mx-1.5">·</span>
-                <span class="font-mono text-xs"
-                    >{changeset?.sha256?.slice(0, 10) ?? ""}</span
-                >
-                {#if entitySummary.length}
-                    <span class="mx-1.5">·</span>
+            </span>
+            <span class="capitalize">{changeset?.status ?? ""}</span>
+            <span class="font-mono"
+                >{changeset?.sha256?.slice(0, 10) ?? ""}</span
+            >
+            {#if entitySummary.length}
+                <span>
                     {#each entitySummary as s, i}
                         {#if i > 0}<span class="mx-1">·</span>{/if}
                         <span class="text-foreground">{s.table}</span>
@@ -107,43 +104,43 @@
                                 >−{s.delete}</span
                             >{/if}
                     {/each}
-                {/if}
-            </p>
-        </div>
-        {#if open}
-            <div class="flex flex-wrap items-center gap-2">
+                </span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
+            {#if open}
                 <input
-                    class="h-9 w-56 rounded-md border border-border bg-background px-3 text-sm"
+                    class="h-8 w-56 rounded-md border border-border bg-background px-3 text-xs"
                     placeholder="Note (for request changes)"
                     bind:value={note}
                 />
                 <button
-                    class="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50"
+                    class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs text-primary-foreground disabled:opacity-50"
                     disabled={busy}
                     onclick={() => act("approve")}
                 >
-                    <CheckIcon class="size-4" />
+                    <CheckIcon class="size-3.5" />
                     Approve
                 </button>
                 <button
-                    class="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-border text-sm disabled:opacity-50"
+                    class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs disabled:opacity-50"
                     disabled={busy}
                     onclick={() => act("request-changes")}
                 >
-                    <MessageSquareIcon class="size-4" />
+                    <MessageSquareIcon class="size-3.5" />
                     Request changes
                 </button>
                 <button
-                    class="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-destructive/40 text-destructive text-sm disabled:opacity-50"
+                    class="inline-flex h-8 items-center gap-1.5 rounded-md border border-destructive/40 px-3 text-xs text-destructive disabled:opacity-50"
                     disabled={busy}
                     onclick={() => act("reject")}
                 >
-                    <XIcon class="size-4" />
+                    <XIcon class="size-3.5" />
                     Reject
                 </button>
-            </div>
-        {/if}
-    </header>
+            {/if}
+        {/snippet}
+    </WorkspaceToolbar>
 
     {#if errorMsg}
         <p class="px-4 py-2 text-sm text-destructive border-b border-border">

@@ -30,6 +30,8 @@ export type SearchParams = {
   mediaHash: string | null;
   /** Temp query-by-image session (`?image=1`); results live in sessionStorage. */
   imageQuery: boolean;
+  /** Gazetteer label for a point filter (`?place=`), display-only. */
+  placeName: string | null;
 };
 
 export const DEFAULT_SEARCH_RADIUS = 5000;
@@ -114,6 +116,7 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     semantic,
     mediaHash,
     imageQuery,
+    placeName: (sp.get("place") ?? "").trim() || null,
   };
 }
 
@@ -131,6 +134,7 @@ export function buildSearchParams(input: {
   semantic?: boolean | null;
   mediaHash?: string | null;
   imageQuery?: boolean | null;
+  placeName?: string | null;
 }): URLSearchParams {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
@@ -158,6 +162,8 @@ export function buildSearchParams(input: {
         ? Number(input.radius)
         : DEFAULT_SEARCH_RADIUS;
     params.set("radius", String(r));
+    const place = (input.placeName ?? "").trim();
+    if (place) params.set("place", place);
   }
 
   const df =
@@ -288,4 +294,8 @@ export function formatDateSpan(
 export function formatRadius(m: number): string {
   if (m < 1000) return `${m}m`;
   return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)}km`;
+}
+
+export function formatLatLng(lat: number, lng: number, digits = 2): string {
+  return `${lat.toFixed(digits)}, ${lng.toFixed(digits)}`;
 }

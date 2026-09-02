@@ -48,7 +48,11 @@
         if (!Number.isFinite(start) || end <= start) {
             return { start: 0, end: all[0]?.length ?? 0 };
         }
-        if (compact && start + 1 < end) start += 1;
+        if (compact) {
+            const extra = Math.min(3, Math.max(0, Math.floor((end - start) * 0.06)));
+            start = Math.min(start + extra, end - 8);
+            end = Math.max(end - extra, start + 8);
+        }
         return { start, end };
     }
 
@@ -69,21 +73,25 @@
             if (!wrapEl || !preEl || !frameText) return;
             // Stable geometry: size from column count, not per-frame scrollWidth.
             const cols = frameText.split("\n")[0]?.length || 100;
+            const rows = frameText.split("\n").length;
             const avail = wrapEl.clientWidth || 1;
-            const target = compact ? avail * 0.78 : avail;
-            const maxPx = compact ? 8 : 10.5;
-            const minPx = compact ? 4 : 4.5;
-            // ~0.6em average advance for monospace at 10px reference.
-            const px = Math.max(
-                minPx,
-                Math.min(maxPx, target / Math.max(cols * 0.62, 1)),
-            );
+            const target = compact ? avail * 0.72 : avail;
+            const maxPx = compact ? 6 : 10.5;
+            const minPx = compact ? 2.5 : 4.5;
+            const pxW = target / Math.max(cols * 0.62, 1);
+            const maxH = compact
+                ? Math.round((window.innerHeight || 800) * 0.14)
+                : Infinity;
+            const pxH = Number.isFinite(maxH)
+                ? maxH / Math.max(rows * 1.02, 1)
+                : maxPx;
+            const px = Math.max(minPx, Math.min(maxPx, pxW, pxH));
             if (Math.abs(px - fittedPx) < 0.05) return;
             fittedPx = px;
             preEl.style.fontSize = `${px}px`;
-            // Lock wrap height so first paint / font swaps can't shove the page.
-            const rows = frameText.split("\n").length;
-            wrapEl.style.minHeight = `${Math.ceil(rows * px * 1.02)}px`;
+            const h = Math.ceil(rows * px * 1.02);
+            wrapEl.style.height = `${h}px`;
+            wrapEl.style.minHeight = `${h}px`;
         };
 
         const paint = (t: number) => {
@@ -149,11 +157,13 @@
             ro = new ResizeObserver(() => fit());
             ro.observe(wrapEl);
         }
+        window.addEventListener("resize", fit);
 
         return () => {
             alive = false;
             cancelAnimationFrame(raf);
             ro?.disconnect();
+            window.removeEventListener("resize", fit);
         };
     });
 </script>

@@ -1,5 +1,7 @@
 /** Shared Cesium.js global loader for secondary 2D maps. */
 
+import { OSM_MAX_ZOOM, OSM_TILE_SUBDOMAINS, OSM_TILE_URL } from "./osmTiles";
+
 let loadPromise: Promise<any> | null = null;
 
 export function loadCesiumGlobal(): Promise<any> {
@@ -175,9 +177,9 @@ export function createCesiumMap(
         useBrowserRecommendedResolution: false,
         baseLayer: new Cesium.ImageryLayer(
             new Cesium.UrlTemplateImageryProvider({
-                url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png",
-                subdomains: ["a", "b", "c", "d"],
-                maximumLevel: 19,
+                url: OSM_TILE_URL,
+                subdomains: OSM_TILE_SUBDOMAINS,
+                maximumLevel: OSM_MAX_ZOOM,
                 credit: "",
             }),
         ),
@@ -185,7 +187,7 @@ export function createCesiumMap(
     if (opts.scene2D !== false) {
         viewer.scene.mode = Cesium.SceneMode.SCENE2D;
     }
-    // Drop any default ion/Carto key-required layer Cesium may still add.
+    // Drop any default ion layer Cesium may still add.
     while (viewer.imageryLayers.length > 1) {
         viewer.imageryLayers.remove(viewer.imageryLayers.get(0), true);
     }
@@ -248,7 +250,7 @@ export function tuneCesiumBasemap(viewer: any, Cesium: any, dark: boolean) {
         layer.gamma = 0.96;
     } else {
         layer.brightness = 1;
-        layer.saturation = 1.08;
+        layer.saturation = 1;
         layer.contrast = 1;
         layer.gamma = 1;
     }
@@ -264,7 +266,7 @@ export function destroyCesiumViewer(viewer: any) {
 
 /**
  * High-contrast entity/measure labels for light (and dimmed-light) basemaps.
- * Outline alone washes out on CARTO — use a dark pill background.
+ * Outline alone washes out on OSM — use a dark pill background.
  */
 export function cesiumMapLabel(
     Cesium: any,

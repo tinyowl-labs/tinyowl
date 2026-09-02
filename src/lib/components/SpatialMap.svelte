@@ -8,10 +8,9 @@
         formatRadius,
         type SearchBBox,
     } from "$lib/search/params";
-    import LocateFixedIcon from "@lucide/svelte/icons/locate-fixed";
-    import Maximize2Icon from "@lucide/svelte/icons/maximize-2";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import MapIcon from "@lucide/svelte/icons/map";
+    import XIcon from "@lucide/svelte/icons/x";
     import type { LayerGroup, Map as LeafletMap, MarkerClusterGroup } from "leaflet";
     import {
         createClusterGroup,
@@ -30,7 +29,9 @@
     type ResultMarker = {
         slug: string;
         title: string;
-        bbox: string | null;
+        bbox?: string | null;
+        lat?: number | null;
+        lng?: number | null;
     };
 
     type SpatialMode = "none" | "area" | "point";
@@ -43,7 +44,10 @@
         radius: number;
         searchBBox: SearchBBox | null;
         results: ResultMarker[];
-        onChange: () => void;
+        onChange?: () => void;
+        /** Fit the map to result markers when no spatial filter is set. */
+        fitResults?: boolean;
+        class?: string;
     };
 
     let {
@@ -53,6 +57,8 @@
         searchBBox = $bindable(null),
         results = [],
         onChange,
+        fitResults = false,
+        class: klass = "",
     }: Props = $props();
 
     const MIN_RADIUS_M = 200;
@@ -69,11 +75,11 @@
     let previewRadius = $state<number | null>(null);
 
     const mode = $derived<SpatialMode>(
-        searchBBox
-            ? "area"
-            : centerLat != null && centerLng != null && pointStep === "idle"
-              ? "point"
-              : pointStep !== "idle"
+        pointStep !== "idle"
+            ? "point"
+            : searchBBox
+              ? "area"
+              : centerLat != null && centerLng != null
                 ? "point"
                 : "none",
     );
@@ -181,10 +187,23 @@
         const stroke = colors.stroke || "#1d4ed8";
 
         for (const r of results) {
-            if (!r.bbox) continue;
-            const c = bboxCentroid(r.bbox);
-            if (!c) continue;
-            const marker = L.circleMarker([c.lat, c.lng], {
+            let lat = r.lat ?? null;
+            let lng = r.lng ?? null;
+            if ((lat == null || lng == null) && r.bbox) {
+                const c = bboxCentroid(r.bbox);
+                if (c) {
+                    lat = c.lat;
+                    lng = c.lng;
+                }
+            }
+            if (
+                lat == null ||
+                lng == null ||
+                !Number.isFinite(lat) ||
+                !Number.isFinite(lng)
+            )
+                continue;
+            const marker = L.circleMarker([lat, lng], {
                 radius: 6,
                 color: "#fff",
                 weight: 2,
@@ -210,7 +229,7 @@
         }
     }
 
-    function fitToContent() {
+    function fitSpatialFilter(animate = false) {
         const L = Lref;
         if (!map || !L) return;
         if (searchBBox) {
@@ -219,22 +238,39 @@
                     [searchBBox.south, searchBBox.west],
                     [searchBBox.north, searchBBox.east],
                 ],
-                { padding: [16, 16], maxZoom: 12, animate: false },
+                { padding: [16, 16], maxZoom: 12, animate },
             );
             return;
         }
         if (centerLat != null && centerLng != null) {
-            const circle = L.circle([centerLat, centerLng], { radius });
-            map.fitBounds(circle.getBounds(), {
-                padding: [24, 24],
-                maxZoom: 12,
-                animate: false,
-            });
+            const bounds = L.circle(
+                [centerLat, centerLng],
+                { radius },
+            ).getBounds();
+            if (animate) {
+                map.flyToBounds(bounds, {
+                    padding: [28, 28],
+                    maxZoom: 16,
+                    duration: 0.55,
+                });
+            } else {
+                map.fitBounds(bounds, {
+                    padding: [28, 28],
+                    maxZoom: 16,
+                    animate: false,
+                });
+            }
             return;
         }
-        const rb = resultsCluster?.getBounds();
-        if (rb?.isValid()) {
-            map.fitBounds(rb, { padding: [40, 40], maxZoom: 8, animate: false });
+        if (fitResults) {
+            const rb = resultsCluster?.getBounds();
+            if (rb?.isValid()) {
+                map.fitBounds(rb, {
+                    padding: [40, 40],
+                    maxZoom: 8,
+                    animate,
+                });
+            }
         }
     }
 
@@ -252,18 +288,13 @@
         centerLat = null;
         centerLng = null;
         syncSpatialGraphics();
-        onChange();
+        onChange?.();
     }
 
     function startPointMode() {
-        searchBBox = null;
-        centerLat = null;
-        centerLng = null;
         previewRadius = null;
-        radius = DEFAULT_SEARCH_RADIUS;
         pointStep = "centre";
         syncSpatialGraphics();
-        onChange();
     }
 
     function clearSpatial() {
@@ -274,15 +305,11 @@
         pointStep = "idle";
         previewRadius = null;
         syncSpatialGraphics();
-        onChange();
+        onChange?.();
     }
 
     function handleMapClick(lat: number, lng: number) {
-        if (pointStep === "idle" && mode !== "point") return;
-
-        if (pointStep === "idle") {
-            pointStep = "centre";
-        }
+        if (pointStep === "idle") return;
 
         if (pointStep === "centre") {
             searchBBox = null;
@@ -300,7 +327,7 @@
             previewRadius = null;
             pointStep = "idle";
             syncSpatialGraphics();
-            onChange();
+            onChange?.();
         }
     }
 
@@ -356,7 +383,7 @@
 
                 syncResultMarkers();
                 syncSpatialGraphics();
-                fitToContent();
+                fitSpatialFilter();
                 if (!cancelled) mapReady = true;
 
                 cleanup = () => {
@@ -404,126 +431,100 @@
         }
     });
 
+    /** Refit when a committed filter arrives (e.g. a Pleiades place), not while drafting. */
+    let lastFitKey = "";
+    $effect(() => {
+        const key = searchBBox
+            ? `b:${searchBBox.west},${searchBBox.south},${searchBBox.east},${searchBBox.north}`
+            : centerLat != null && centerLng != null && pointStep === "idle"
+              ? `p:${centerLat},${centerLng},${radius}`
+              : "";
+        if (!key) lastFitKey = "";
+        if (!map || !Lref || pointStep !== "idle") return;
+        if (key && key !== lastFitKey) {
+            lastFitKey = key;
+            fitSpatialFilter(true);
+        }
+    });
+
     $effect(() => {
         if (!map) return;
         map.getContainer().style.cursor = drafting ? "crosshair" : "";
     });
 </script>
 
-<div class="space-y-2">
+<div class="relative min-h-0 {klass || 'h-full'}">
     <div
-        class="grid grid-cols-2 gap-1 rounded-lg border border-border bg-muted/40 p-1"
-    >
-        <button
-            type="button"
-            onclick={useMapArea}
-            class="inline-flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors {mode ===
-            'area'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'}"
-            title="Search projects intersecting the visible map area"
-        >
-            <MapIcon class="size-3" />
-            Map area
-        </button>
-        <button
-            type="button"
-            onclick={startPointMode}
-            class="inline-flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors {mode ===
-                'point' || drafting
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'}"
-            title="Click once for the centre, again for the radius"
-        >
-            <CrosshairIcon class="size-3" />
-            Point + radius
-        </button>
-    </div>
-
-    <div class="flex flex-wrap items-center gap-1.5">
-        {#if mode === "area"}
-            <button
-                type="button"
-                onclick={useMapArea}
-                class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                title="Update area to the current viewport"
-            >
-                <LocateFixedIcon class="size-3" />
-                Update to view
-            </button>
-        {/if}
-        <button
-            type="button"
-            onclick={fitToContent}
-            class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-            <Maximize2Icon class="size-3" />
-            Fit
-        </button>
-        {#if mode !== "none" || drafting}
-            <button
-                type="button"
-                onclick={clearSpatial}
-                class="ml-auto text-[11px] text-muted-foreground hover:text-foreground"
-            >
-                Clear
-            </button>
-        {/if}
-    </div>
-
-    <div
-        class="leaflet-locator relative rounded-lg border border-border overflow-hidden bg-secondary/20 h-72 {drafting
+        class="leaflet-locator relative h-full min-h-0 overflow-hidden rounded-lg border border-border bg-secondary/20 {drafting
             ? 'ring-2 ring-primary/40 cursor-crosshair'
             : ''}"
     >
-        <div bind:this={container} class="w-full h-full"></div>
+        <div bind:this={container} class="absolute inset-0"></div>
         {#if !mapReady}
             <MapLoading />
         {/if}
         {#if mapReady}
             <MapAttribution />
         {/if}
-        {#if mode === "none" || drafting}
-            <div
-                class="leaflet-map-chrome pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-background/90 to-transparent px-3 pb-3 pt-8"
-            >
-                <p class="text-xs text-muted-foreground">
-                    {#if pointStep === "centre"}
-                        Click to set the search centre
-                    {:else if pointStep === "radius"}
-                        Click again to set the radius
-                        {#if previewRadius != null}
-                            <span class="text-foreground font-medium">
-                                ({formatRadius(previewRadius)})</span
-                            >
-                        {/if}
-                    {:else}
-                        Choose Map area or Point + radius
-                    {/if}
-                </p>
-            </div>
-        {/if}
-    </div>
 
-    {#if mode === "area" && searchBBox}
-        <p class="text-[11px] text-muted-foreground">
-            Searching the visible map rectangle
-            <span class="tabular-nums"
-                >({searchBBox.west.toFixed(1)}…{searchBBox.east.toFixed(1)},
-                {searchBBox.south.toFixed(1)}…{searchBBox.north.toFixed(1)})</span
+        <div
+            class="leaflet-map-chrome pointer-events-auto absolute inset-x-2 top-2 z-10 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-0.5 text-[11px] shadow-sm backdrop-blur-sm"
+        >
+            <div
+                class="grid min-w-0 flex-1 grid-cols-2 gap-0.5 rounded-md bg-muted/50 p-0.5"
             >
-        </p>
-    {:else if mode === "point" && centerLat != null && centerLng != null && pointStep === "idle"}
-        <p class="text-[11px] tabular-nums text-muted-foreground">
-            Centre {centerLat.toFixed(4)}, {centerLng.toFixed(4)} · radius
-            <span class="text-foreground font-medium">{formatRadius(radius)}</span>
-            <button
-                type="button"
-                onclick={startPointMode}
-                class="ml-2 text-muted-foreground hover:text-foreground"
-            >
-                Redraw
-            </button>
-        </p>
-    {/if}
+                <button
+                    type="button"
+                    onclick={useMapArea}
+                    class="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 font-medium transition-colors {mode ===
+                    'area'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'}"
+                    title={mode === "area"
+                        ? "Update search to this view"
+                        : "Search the visible map rectangle"}
+                >
+                    <MapIcon class="size-3 shrink-0" />
+                    Area
+                </button>
+                <button
+                    type="button"
+                    onclick={startPointMode}
+                    class="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 font-medium transition-colors {mode ===
+                        'point' || drafting
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'}"
+                    title="Click once for the centre, again for the radius"
+                >
+                    <CrosshairIcon class="size-3 shrink-0" />
+                    Point
+                </button>
+            </div>
+            {#if pointStep === "centre"}
+                <span class="hidden shrink-0 px-1.5 text-muted-foreground sm:inline"
+                    >Click centre</span
+                >
+            {:else if pointStep === "radius"}
+                <span
+                    class="hidden shrink-0 px-1.5 tabular-nums text-muted-foreground sm:inline"
+                    >{formatRadius(previewRadius ?? radius)}</span
+                >
+            {:else if mode === "point"}
+                <span
+                    class="hidden shrink-0 px-1.5 tabular-nums text-muted-foreground sm:inline"
+                    >{formatRadius(radius)}</span
+                >
+            {/if}
+            {#if mode !== "none" || drafting}
+                <button
+                    type="button"
+                    onclick={clearSpatial}
+                    class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                    title="Clear spatial filter"
+                >
+                    <XIcon class="size-3.5" />
+                </button>
+            {/if}
+        </div>
+    </div>
 </div>

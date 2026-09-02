@@ -73,10 +73,6 @@
         themePrefs.bgBase;
         const list = centroids.filter(hasCoord);
         if (!mounted || !container || !browser) return;
-        if (list.length === 0) {
-            mapReady = true;
-            return;
-        }
 
         let cancelled = false;
         let cleanup: (() => void) | undefined;
@@ -101,7 +97,8 @@
                 tuneLeafletBasemap(map, isDark());
                 map.invalidateSize();
 
-                const colors = mapColors();
+                if (list.length > 0) {
+                    const colors = mapColors();
                 const fill = colors.marker || "#3b82f6";
                 const showLabels = list.length <= 40;
                 const latlngs: [number, number][] = [];
@@ -163,6 +160,7 @@
                         });
                     }
                 }
+                }
 
                 if (!cancelled) mapReady = true;
 
@@ -184,9 +182,9 @@
 
 <div class="relative {klass}">
     <div
-        class="leaflet-locator relative rounded-xl border border-border overflow-hidden bg-secondary/20 h-full min-h-70"
+        class="leaflet-locator relative h-full min-h-0 overflow-hidden rounded-xl border border-border bg-secondary/20"
     >
-        <div bind:this={container} class="w-full h-full min-h-70"></div>
+        <div bind:this={container} class="h-full min-h-0 w-full"></div>
         {#if !mapReady && !error}
             <MapLoading />
         {/if}

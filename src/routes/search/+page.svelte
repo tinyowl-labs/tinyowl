@@ -66,6 +66,7 @@
         similarItems: SimilarMediaItem[];
         similarStatus: string;
         projects: SearchProject[];
+        placeName: string | null;
     };
 
     let { data }: { data: PageData } = $props();
@@ -116,6 +117,7 @@
             semantic: data.semantic,
             mediaHash: data.mediaHash,
             imageQuery: data.imageQuery,
+            placeName: data.placeName,
         } satisfies SearchParams),
     );
 
@@ -272,6 +274,7 @@
                 // Catalogue seed and temp upload are mutually exclusive.
                 imageQuery: nextMediaHash ? false : nextImageQuery,
                 // Preserve quiet opt-out from the URL; never write semantic=1.
+                placeName: nextBBox ? null : data.placeName,
                 semantic: data.semantic ? undefined : false,
             }),
         );
@@ -311,21 +314,6 @@
         dateFrom = from != null ? String(from) : "";
         dateTo = to != null ? String(to) : "";
         navigateWith({ dateFrom, dateTo });
-    }
-
-    function updateSpatial() {
-        navigateWith({
-            bbox: searchBBox,
-            lat: searchBBox ? null : centerLat,
-            lng: searchBBox ? null : centerLng,
-            radius: searchBBox ? null : radius,
-        });
-    }
-
-    let spatialTimeout: ReturnType<typeof setTimeout>;
-    function onLatChange() {
-        clearTimeout(spatialTimeout);
-        spatialTimeout = setTimeout(updateSpatial, 400);
     }
 
     function formatDistance(m: number): string {
@@ -444,15 +432,16 @@
                 bind:value={query}
                 {tags}
                 {vocabularies}
-                lat={centerLat}
-                lng={centerLng}
-                {radius}
-                bbox={searchBBox}
+                bind:lat={centerLat}
+                bind:lng={centerLng}
+                bind:radius
+                bind:bbox={searchBBox}
                 {dateFrom}
                 {dateTo}
                 semantic={data.semantic}
                 mediaHash={mediaHash}
                 imageQuery={imageQuery}
+                placeLabel={data.placeName}
                 accessToken={data.accessToken}
                 autofocus={!activeQuery}
             />
@@ -490,7 +479,8 @@
                         bind:radius
                         bind:searchBBox
                         results={resultMarkers}
-                        onChange={onLatChange}
+                        fitResults
+                        class="h-72 min-h-72 w-full"
                     />
                 </section>
             </aside>

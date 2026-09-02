@@ -65,6 +65,11 @@
         type MeasureVertex,
     } from "$lib/measure";
     import { cesiumMapLabel } from "$lib/components/cesiumBoot";
+    import {
+        OSM_MAX_ZOOM,
+        OSM_TILE_SUBDOMAINS,
+        OSM_TILE_URL,
+    } from "$lib/components/osmTiles";
 
     type EntityMeta = {
         layerName: string;
@@ -1771,8 +1776,7 @@
     }
 
     function basemapTemplateUrl(): string {
-        // CARTO Voyager — stable single basemap (no provider swap on theme).
-        return "https://basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png";
+        return OSM_TILE_URL;
     }
 
     function tuneBasemapLayer(layer: { brightness: number; saturation: number; contrast: number; gamma: number; minificationFilter?: unknown; magnificationFilter?: unknown }, dark: boolean) {
@@ -1788,7 +1792,7 @@
             layer.gamma = 0.96;
         } else {
             layer.brightness = 1;
-            layer.saturation = 1.08;
+            layer.saturation = 1;
             layer.contrast = 1;
             layer.gamma = 1;
         }
@@ -1830,7 +1834,8 @@
         const layer = layers.addImageryProvider(
             new Cesium.UrlTemplateImageryProvider({
                 url,
-                maximumLevel: 19,
+                subdomains: OSM_TILE_SUBDOMAINS,
+                maximumLevel: OSM_MAX_ZOOM,
                 credit: "",
             }),
         );
@@ -1967,7 +1972,8 @@
             baseLayer: new Cesium.ImageryLayer(
                 new Cesium.UrlTemplateImageryProvider({
                     url: basemapTemplateUrl(),
-                    maximumLevel: 19,
+                    subdomains: OSM_TILE_SUBDOMAINS,
+                    maximumLevel: OSM_MAX_ZOOM,
                     credit: "",
                 }),
             ),

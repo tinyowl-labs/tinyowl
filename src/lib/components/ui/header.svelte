@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { goto } from "$app/navigation";
+    import type { Snippet } from "svelte";
     import {
         isDark,
         setPreference,
@@ -14,8 +14,6 @@
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
-    import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-    import { buttonVariants } from "$lib/components/ui/button/button.svelte";
     import { cn } from "$lib/utils.js";
     import EchidnaLogo from "$lib/components/ui/echidna-logo.svelte";
 
@@ -28,6 +26,8 @@
         onSidebarToggle,
         /** Visibility class for the toggle (match the sidebar breakpoint). */
         sidebarToggleClass = "hidden md:inline-flex",
+        /** Extra content after the brand/subtitle (e.g. project nav dropdowns). */
+        leading,
     }: {
         subtitle?: string;
         hasSession?: boolean;
@@ -35,6 +35,7 @@
         sidebarCollapsed?: boolean;
         onSidebarToggle?: () => void;
         sidebarToggleClass?: string;
+        leading?: Snippet;
     } = $props();
 
     const dark = $derived(isDark());
@@ -87,9 +88,14 @@
         {/if}
         {#if subtitle}
             <span class="w-px h-4 shrink-0 bg-border"></span>
-            <span class="text-sm font-medium truncate text-foreground"
+            <span class="min-w-0 text-sm font-medium truncate text-foreground"
                 >{subtitle}</span
             >
+        {/if}
+        {#if leading}
+            <div class="flex min-w-0 shrink-0 items-center">
+                {@render leading()}
+            </div>
         {/if}
     </div>
 
@@ -107,49 +113,52 @@
                 class="absolute size-4 scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
             />
         </button>
-        <a
-            href="/docs"
-            class="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-            >Docs</a
-        >
         {#if hasSession}
-            <a
-                href="/digitize"
-                class="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                >Digitize</a
-            >
-            <DropdownMenu.Root>
-                <DropdownMenu.Trigger
-                    class={cn(
-                        buttonVariants({ variant: "ghost", size: "sm" }),
-                        "text-muted-foreground gap-1",
-                    )}
+            <div class="group/profile relative">
+                <a
+                    href="/profile"
+                    class="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground group-hover/profile:bg-accent group-hover/profile:text-foreground group-focus-within/profile:bg-accent group-focus-within/profile:text-foreground"
                 >
                     <UserIcon class="size-3.5" />
                     Profile
                     <ChevronDownIcon class="size-3 opacity-60" />
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content class="w-48" align="end">
-                    <DropdownMenu.Group>
-                        <DropdownMenu.Label>Account</DropdownMenu.Label>
-                        <DropdownMenu.Item onSelect={() => goto("/profile")}>
-                            <UserIcon />
-                            Profile overview
-                        </DropdownMenu.Item>
-                        <DropdownMenu.Item onSelect={() => goto("/settings")}>
-                            <SettingsIcon />
+                </a>
+                <div
+                    class="invisible absolute right-0 top-full z-50 min-w-48 pt-1 opacity-0 transition-none group-hover/profile:visible group-hover/profile:opacity-100 group-focus-within/profile:visible group-focus-within/profile:opacity-100"
+                >
+                    <div
+                        class="rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+                    >
+                        <p
+                            class="px-2 py-1.5 text-xs font-medium text-muted-foreground"
+                        >
+                            Account
+                        </p>
+                        <a
+                            href="/profile"
+                            class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
+                        >
+                            <UserIcon class="size-3.5 shrink-0" />
+                            Projects
+                        </a>
+                        <a
+                            href="/settings"
+                            class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
+                        >
+                            <SettingsIcon class="size-3.5 shrink-0" />
                             Settings
-                        </DropdownMenu.Item>
-                    </DropdownMenu.Group>
-                    <DropdownMenu.Separator />
-                    <DropdownMenu.Group>
-                        <DropdownMenu.Item onSelect={() => goto("/auth/logout")}>
-                            <LogOutIcon />
+                        </a>
+                        <div class="my-1 h-px bg-border"></div>
+                        <a
+                            href="/auth/logout"
+                            class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
+                        >
+                            <LogOutIcon class="size-3.5 shrink-0" />
                             Log out
-                        </DropdownMenu.Item>
-                    </DropdownMenu.Group>
-                </DropdownMenu.Content>
-            </DropdownMenu.Root>
+                        </a>
+                    </div>
+                </div>
+            </div>
         {:else}
             <a
                 href="/auth/login"

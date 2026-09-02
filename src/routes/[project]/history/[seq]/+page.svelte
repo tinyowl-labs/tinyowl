@@ -1,6 +1,7 @@
 <script lang="ts">
     import { page } from "$app/stores";
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
+    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
 
     let { data } = $props();
 
@@ -22,25 +23,20 @@
     <title>Seq {seq} — {slug} — echidna</title>
 </svelte:head>
 
-<article class="absolute inset-0 flex flex-col overflow-hidden">
-    <header
-        class="shrink-0 flex flex-wrap items-start justify-between gap-3 px-4 py-3 border-b border-border"
-    >
-        <div class="min-w-0 max-w-3xl">
-            <p class="text-xs text-muted-foreground mb-1">
-                <a href="/{slug}/history" class="hover:underline">History</a>
-                <span class="mx-1">/</span>
-                seq {seq}
-            </p>
-            <h1 class="text-lg font-medium text-foreground truncate">
+<article class="flex h-full min-h-0 flex-col overflow-hidden">
+    <WorkspaceToolbar>
+        {#snippet meta()}
+            <a href="/{slug}/history" class="hover:text-foreground hover:underline"
+                >History</a
+            >
+            <span>/</span>
+            <span>seq {seq}</span>
+            <span class="min-w-0 truncate text-foreground">
                 {diffMeta?.message?.trim() || `Changeset #${seq}`}
-            </h1>
-            <p class="text-sm text-muted-foreground mt-0.5">
-                <span class="font-mono text-xs"
-                    >{diffMeta?.sha256?.slice(0, 10) ?? ""}</span
-                >
-                {#if entitySummary.length}
-                    <span class="mx-1.5">·</span>
+            </span>
+            <span class="font-mono">{diffMeta?.sha256?.slice(0, 10) ?? ""}</span>
+            {#if entitySummary.length}
+                <span>
                     {#each entitySummary as s, i}
                         {#if i > 0}<span class="mx-1">·</span>{/if}
                         <span class="text-foreground">{s.table}</span>
@@ -54,9 +50,9 @@
                                 >−{s.delete}</span
                             >{/if}
                     {/each}
-                {/if}
-            </p>
-        </div>
-    </header>
+                </span>
+            {/if}
+        {/snippet}
+    </WorkspaceToolbar>
     <ChangesetInspect {geodiff} />
 </article>

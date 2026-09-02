@@ -7,6 +7,7 @@ import type {
 	MarkerClusterGroup,
 	MarkerClusterGroupOptions,
 } from "leaflet";
+import { OSM_MAX_ZOOM, OSM_TILE_SUBDOMAINS, OSM_TILE_URL } from "./osmTiles";
 
 export type LeafletNS = typeof import("leaflet");
 
@@ -19,9 +20,6 @@ export type ClusterOpts = {
 	disableClusteringAtZoom?: number;
 	maxClusterRadius?: number;
 };
-
-const CARTO_VOYAGER =
-	"https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png";
 
 let loadPromise: Promise<LeafletNS> | null = null;
 
@@ -102,9 +100,9 @@ export function createLeafletMap(
 	};
 	const map = L.map(el, mapOpts);
 	map.setView([20, 0], 2);
-	L.tileLayer(CARTO_VOYAGER, {
-		subdomains: "abcd",
-		maxZoom: 19,
+	L.tileLayer(OSM_TILE_URL, {
+		subdomains: OSM_TILE_SUBDOMAINS,
+		maxZoom: OSM_MAX_ZOOM,
 	}).addTo(map);
 
 	if (!interactive) {
@@ -128,8 +126,8 @@ export function tuneLeafletBasemap(map: LeafletMap, dark: boolean) {
 	const pane = map.getPane("tilePane");
 	if (!pane) return;
 	pane.style.filter = dark
-		? "brightness(0.84) saturate(0.92) contrast(1.04)"
-		: "brightness(1) saturate(1.08) contrast(1)";
+		? "brightness(0.82) saturate(0.78) contrast(1.06)"
+		: "";
 }
 
 export function destroyLeafletMap(map: LeafletMap | null | undefined) {

@@ -17,13 +17,6 @@
         target="_blank"
         rel="noopener noreferrer">© OpenStreetMap</a
     >
-    <span class="opacity-40">·</span>
-    <a
-        class="hover:text-foreground hover:underline"
-        href="https://carto.com/attributions"
-        target="_blank"
-        rel="noopener noreferrer">CARTO</a
-    >
     {#if ion}
         <span class="opacity-40">·</span>
         <a
