@@ -67,10 +67,10 @@
 </script>
 
 {#if showRail}
-    <div class="flex items-start gap-2">
+    <div class="relative">
         {#if pickerOpen && showPicker}
             <div
-                class="flex w-52 flex-col gap-0.5 rounded-lg border border-border bg-background/95 p-1 text-xs shadow-lg backdrop-blur-sm"
+                class="absolute top-0 left-full z-30 ml-2 flex w-52 flex-col gap-0.5 rounded-lg border border-border bg-background/95 p-1 text-xs shadow-lg backdrop-blur-sm"
             >
                 {#if onSetImagery}
                     <div
@@ -172,6 +172,20 @@
                     {/if}
                 </button>
             {/if}
+            {#if showPicker}
+                <button
+                    type="button"
+                    class="{railBtn} {pickerOpen
+                        ? 'bg-primary/15 text-foreground'
+                        : ''}"
+                    title="Basemap and terrain"
+                    aria-label="Basemap and terrain"
+                    aria-pressed={pickerOpen}
+                    onclick={() => (pickerOpen = !pickerOpen)}
+                >
+                    <Layers2Icon class="size-3.5" />
+                </button>
+            {/if}
             {#if onToggleFullscreen}
                 <button
                     type="button"
@@ -185,20 +199,6 @@
                     {:else}
                         <MaximizeIcon class="size-3.5" />
                     {/if}
-                </button>
-            {/if}
-            {#if showPicker}
-                <button
-                    type="button"
-                    class="{railBtn} {pickerOpen
-                        ? 'bg-primary/15 text-foreground'
-                        : ''}"
-                    title="Basemap and terrain"
-                    aria-label="Basemap and terrain"
-                    aria-pressed={pickerOpen}
-                    onclick={() => (pickerOpen = !pickerOpen)}
-                >
-                    <Layers2Icon class="size-3.5" />
                 </button>
             {/if}
         </div>

@@ -17,6 +17,7 @@
     import EyeIcon from "@lucide/svelte/icons/eye";
     import FocusIcon from "@lucide/svelte/icons/focus";
     import CopyIcon from "@lucide/svelte/icons/copy";
+    import type { Snippet } from "svelte";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
     import { measureHint } from "$lib/measure";
     import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
@@ -54,6 +55,8 @@
         canEnterEdit?: boolean;
         onEnterEdit?: () => void;
         onExitEdit?: () => void;
+        /** Extra rail stacked under zoom / home (view chrome). */
+        extraRail?: Snippet;
     };
 
     let {
@@ -87,6 +90,7 @@
         canEnterEdit = false,
         onEnterEdit,
         onExitEdit,
+        extraRail,
     }: Props = $props();
 
     let selectionOpen = $state(false);
@@ -349,6 +353,7 @@
                 </button>
             {/if}
         </div>
+        {@render extraRail?.()}
     </div>
 
     {#if selectionOpen}

@@ -572,9 +572,6 @@
             console.warn("[LayerScene] imagery provider failed", e);
             providerError =
                 e instanceof Error ? e.message : "Imagery provider failed";
-            if (imageryId !== next) {
-                // keep the previous working layer
-            }
         } finally {
             if (gen === imageryGen) imageryBusy = false;
         }
@@ -3412,6 +3409,8 @@
             );
         }
     }
+
+    function tuneBasemapLayer(layer: { brightness: number; saturation: number; contrast: number; gamma: number; minificationFilter?: unknown; magnificationFilter?: unknown }, dark: boolean) {
         // LINEAR (no mipmaps) avoids WebGL generateMipmap lazy-init jank on zoom.
         if (Cesium?.TextureMinificationFilter) {
             layer.minificationFilter = Cesium.TextureMinificationFilter.LINEAR;
@@ -3428,50 +3427,6 @@
             layer.contrast = 1;
             layer.gamma = 1;
         }
-    }
-
-    function applyBasemapTheme() {
-        if (!viewer || !Cesium) return;
-        const dark = isDark();
-        const is3d =
-            appliedDim === "3d" ||
-            viewer.scene.mode === Cesium.SceneMode.SCENE3D;
-        const colors = mapColors();
-        const bg =
-            cesiumColorFromCss(colors.card, dark ? "#1a1a1a" : "#f5f5f5") ??
-            (dark ? Cesium.Color.BLACK : Cesium.Color.WHITE);
-        viewer.scene.backgroundColor = bg;
-        viewer.scene.globe.baseColor = bg;
-        if (viewer.scene.skyAtmosphere) {
-            viewer.scene.skyAtmosphere.show = is3d && !dark;
-        }
-        if (viewer.scene.sun) viewer.scene.sun.show = is3d && !dark;
-        if (viewer.scene.moon) viewer.scene.moon.show = is3d && !dark;
-        if (viewer.scene.skyBox) viewer.scene.skyBox.show = is3d && !dark;
-        if (viewer.scene.globe) {
-            viewer.scene.globe.showGroundAtmosphere = is3d;
-        }
-
-        const url = basemapTemplateUrl();
-        const layers = viewer.imageryLayers;
-        const existing = layers.length > 0 ? layers.get(0) : null;
-        const currentUrl = existing?.imageryProvider?.url as string | undefined;
-        if (currentUrl === url && existing) {
-            tuneBasemapLayer(existing, dark);
-            return;
-        }
-        while (layers.length > 0) {
-            layers.remove(layers.get(0), true);
-        }
-        const layer = layers.addImageryProvider(
-            new Cesium.UrlTemplateImageryProvider({
-                url,
-                subdomains: OSM_TILE_SUBDOMAINS,
-                maximumLevel: OSM_MAX_ZOOM,
-                credit: "",
-            }),
-        );
-        tuneBasemapLayer(layer, dark);
     }
 
     let morphRemover: (() => void) | null = null;
@@ -3595,10 +3550,17 @@
         scratchSphere = new Cesium.BoundingSphere();
         const token = publicEnv.PUBLIC_CESIUM_ION_ACCESS_TOKEN ?? "";
         if (token) Cesium.Ion.defaultAccessToken = token;
+        ionAvailable = Boolean(token);
+        const nextImagery = resolveImageryId(readStoredImageryId(), ionAvailable);
+        const nextTerrain = resolveTerrainId(readStoredTerrainId(), ionAvailable);
 
         // Viewer first on ellipsoid — same as injalak. Do NOT pass
         // Terrain.fromWorldTerrain() here: that helper swaps the provider
         // asynchronously after ready, so early height samples land at Z≈0.
+        const initialImagery =
+            nextImagery === "none"
+                ? false
+                : new Cesium.ImageryLayer(createOsmImageryProvider(Cesium));
         viewer = new Cesium.Viewer(el, {
             animation: false,
             timeline: false,
@@ -3617,15 +3579,18 @@
             // Default true → 1× CSS pixels (soft/aliased on HiDPI).
             useBrowserRecommendedResolution: false,
             msaaSamples: 4,
-            baseLayer: new Cesium.ImageryLayer(
-                new Cesium.UrlTemplateImageryProvider({
-                    url: basemapTemplateUrl(),
-                    subdomains: OSM_TILE_SUBDOMAINS,
-                    maximumLevel: OSM_MAX_ZOOM,
-                    credit: "",
-                }),
-            ),
+            baseLayer: initialImagery,
         });
+        if (nextImagery === "none") {
+            while (viewer.imageryLayers.length > 0) {
+                viewer.imageryLayers.remove(viewer.imageryLayers.get(0), true);
+            }
+            basemapLayer = null;
+        } else {
+            basemapLayer = viewer.imageryLayers.length
+                ? viewer.imageryLayers.get(0)
+                : null;
+        }
         try {
             viewer.resize();
             viewer.scene.postProcessStages.fxaa.enabled = true;
@@ -3647,8 +3612,15 @@
             /* ignore */
         }
 
+        if (nextImagery !== "osm" && nextImagery !== "none") {
+            await applyImagery(nextImagery);
+        } else {
+            imageryId = nextImagery;
+            persistImageryId(nextImagery);
+            hasIonTerrain = usesIon(nextImagery, nextTerrain);
+        }
         // Terrain must be live before syncLayers / sampleTerrainMostDetailed.
-        await attachWorldTerrain(token);
+        await applyTerrain(nextTerrain);
         // Start in requested dim without morph flash on first paint.
         appliedDim = dim;
         viewer.scene.mode =
@@ -4899,6 +4871,7 @@
             /* ignore */
         }
         viewer = null;
+        basemapLayer = null;
     });
 
     function onSceneKey(ev: KeyboardEvent) {
@@ -5428,7 +5401,24 @@
             onClear={() => void clearMeasurements()}
             onFinish={finishDraft3d}
             onRemove={(id) => void removeMeasurement(id)}
-        />
+        >
+            {#snippet extraRail()}
+                <MapViewChrome
+                    {dim}
+                    {fullscreen}
+                    onSetDim={onDimChange}
+                    {onToggleFullscreen}
+                    {imageryId}
+                    {terrainId}
+                    {ionAvailable}
+                    {imageryBusy}
+                    {terrainBusy}
+                    {providerError}
+                    onSetImagery={(id) => void applyImagery(id)}
+                    onSetTerrain={(id) => void applyTerrain(id)}
+                />
+            {/snippet}
+        </MapToolsRail>
         {#if commentsEnabled && presenceMember}
             <CommentPanel
                 {comments}
@@ -5595,18 +5585,9 @@
         <CesiumLoading />
     {/if}
 
-    <div class="absolute top-2 right-2 z-20">
-        <MapViewChrome
-            {dim}
-            {fullscreen}
-            onSetDim={onDimChange}
-            {onToggleFullscreen}
-        />
-    </div>
-
     {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
         <div
-            class="pointer-events-none absolute top-2 right-12 bottom-2 z-10 flex items-start gap-2"
+            class="pointer-events-none absolute top-2 right-2 bottom-2 z-10 flex items-start gap-2"
         >
             {#if styleLayerIdx !== null && layers[styleLayerIdx]}
                 {@const styleLayer = layers[styleLayerIdx]}
@@ -5954,7 +5935,10 @@
                 }}
             />
         {/if}
-    <CesiumAttribution ion={hasIonTerrain} />
+    <CesiumAttribution
+        credits={creditsFor(imageryId, terrainId)}
+        ion={hasIonTerrain}
+    />
     </div>
 </div>
 
