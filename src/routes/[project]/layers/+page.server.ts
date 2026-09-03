@@ -28,9 +28,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
       ? viewRaw === "3d"
         ? "map"
         : viewRaw
-      : highlight
-        ? "map"
-        : "";
+      : "map";
   const dim =
     viewRaw === "3d" || dimRaw === "3d"
       ? "3d"

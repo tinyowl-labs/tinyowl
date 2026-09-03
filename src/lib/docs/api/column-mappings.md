@@ -1,8 +1,8 @@
 # Mappings API
 
-Value-level concept links and column-level vocabulary / CRM annotations. Prefer these paths; `/column-mappings` remains a **compat alias** for the value endpoints.
+Value-level concept links and column-level vocabulary opt-in. Prefer these paths; `/column-mappings` remains a **compat alias** for the value endpoints.
 
-Canonical model: workspace [mappings-model.md](../../../../docs/mappings-model.md) (if browsing the monorepo `docs/` tree).
+**Column annotation** = opt a field into a namespace (`periodo` / `aat` / `crm` for shared meaning; empty or unknown names stay local). **Value mapping** = bind a local label to a `concept_uri` so projects interoperate even when they do not share wording.
 
 ## Overview
 
@@ -13,7 +13,7 @@ Two tables after migration `019` / `024`:
 | `value_mappings` | Distinct cell values → optional `concept_uri` (project-canonical) |
 | `column_annotations` | Per-column `vocabulary`, `crm_property`, `crm_range` (mostly TOML-owned) |
 
-On push the server upserts annotations from TOML, scans distinct values into `value_mappings`, and never clears manual `concept_uri` on auto re-scan. TOML / auto upserts skip rows with `source = 'manual'`.
+On push the server upserts annotations from TOML, scans distinct values into `value_mappings` for columns that declare any vocabulary, and never clears manual `concept_uri` on auto re-scan. Unmapped-concept warnings apply only to shared vocabs (`periodo`, `aat`, `crm`). TOML / auto upserts skip rows with `source = 'manual'`. Search (`vocab=` and mapped `q=` hits) joins on `concept_uri`, not identical local strings.
 
 ---
 
@@ -129,7 +129,7 @@ PUT /api/v1/projects/{slug}/column-annotations
 }
 ```
 
-PUT sets `source = 'manual'` and can override TOML until the next TOML push that is allowed to win (TOML upserts skip `source = 'manual'`).
+PUT sets `source = 'manual'` and can override TOML until the next TOML push that is allowed to win (TOML upserts skip `source = 'manual'`). Setting `vocabulary` to `periodo`, `aat`, or `crm` opts the column into the shared-meaning queue; clearing it (or using a local name such as `find-type`) keeps values project-local. `crm_property` is optional metadata.
 
 ---
 

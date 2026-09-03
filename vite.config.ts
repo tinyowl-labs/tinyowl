@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import tailwindcss from "@tailwindcss/vite";
 import adapterNode from "@sveltejs/adapter-node";
 import adapterStatic from "@sveltejs/adapter-static";
@@ -19,7 +23,55 @@ const cesiumBuildRoot = path.resolve(
 const cesiumTargetRoot = path.resolve(projectRoot, "static/cesium");
 const cesiumFolders = ["Assets", "ThirdParty", "Workers", "Widgets"];
 const cesiumFiles = ["Cesium.js"];
+/** OSM basemap; no Viewer chrome; skyBox off; no ICRF astronomy. */
+const cesiumSkip = [
+  `${path.sep}IAU2006_XYS`,
+  `${path.sep}NaturalEarthII`,
+  `${path.sep}SkyBox`,
+  `${path.sep}LensFlare`,
+  `${path.sep}Widgets${path.sep}Images`,
+];
+const gzipAsync = promisify(gzip);
 let cesiumCopyInFlight: Promise<void> | null = null;
+
+function shouldCopyCesiumPath(src: string): boolean {
+  return !cesiumSkip.some((seg) => src.includes(seg));
+}
+
+async function gzipCesiumJs() {
+  const jsPath = path.join(cesiumTargetRoot, "Cesium.js");
+  const gzPath = `${jsPath}.gz`;
+  const buf = await fs.readFile(jsPath);
+  await fs.writeFile(gzPath, await gzipAsync(buf, { level: 9 }));
+}
+
+function cesiumJsGzipMiddleware(
+  req: IncomingMessage,
+  res: ServerResponse,
+  next: () => void,
+) {
+  const url = req.url?.split("?")[0] ?? "";
+  if (url !== "/cesium/Cesium.js") {
+    next();
+    return;
+  }
+  const accept = req.headers["accept-encoding"] ?? "";
+  if (!String(accept).includes("gzip")) {
+    next();
+    return;
+  }
+  const gzPath = path.join(cesiumTargetRoot, "Cesium.js.gz");
+  void fs.stat(gzPath).then(
+    (st) => {
+      res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("Content-Length", String(st.size));
+      res.setHeader("Vary", "Accept-Encoding");
+      createReadStream(gzPath).pipe(res);
+    },
+    () => next(),
+  );
+}
 
 async function copyCesiumAssets() {
   if (cesiumCopyInFlight) return cesiumCopyInFlight;
@@ -30,7 +82,11 @@ async function copyCesiumAssets() {
         fs.cp(
           path.join(cesiumBuildRoot, folder),
           path.join(cesiumTargetRoot, folder),
-          { recursive: true, force: true },
+          {
+            recursive: true,
+            force: true,
+            filter: shouldCopyCesiumPath,
+          },
         ),
       ),
       ...cesiumFiles.map((file) =>
@@ -41,6 +97,21 @@ async function copyCesiumAssets() {
         ),
       ),
     ]);
+    await Promise.all(
+      [
+        "Assets/IAU2006_XYS",
+        "Assets/Textures/NaturalEarthII",
+        "Assets/Textures/SkyBox",
+        "Assets/Textures/LensFlare",
+        "Widgets/Images",
+      ].map((rel) =>
+        fs.rm(path.join(cesiumTargetRoot, rel), {
+          recursive: true,
+          force: true,
+        }),
+      ),
+    );
+    await gzipCesiumJs();
   })();
   try {
     await cesiumCopyInFlight;
@@ -57,11 +128,18 @@ function ensureCesiumAssetsPlugin() {
     },
     configureServer(server: {
       config: { logger: { error: (message: string) => void } };
+      middlewares: { use: (fn: typeof cesiumJsGzipMiddleware) => void };
     }) {
+      server.middlewares.use(cesiumJsGzipMiddleware);
       void copyCesiumAssets().catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         server.config.logger.error(`Failed to copy Cesium assets: ${message}`);
       });
+    },
+    configurePreviewServer(server: {
+      middlewares: { use: (fn: typeof cesiumJsGzipMiddleware) => void };
+    }) {
+      server.middlewares.use(cesiumJsGzipMiddleware);
     },
   };
 }

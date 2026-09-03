@@ -49,6 +49,44 @@ export function coverageTilesUrlTemplate(
     return url;
 }
 
+export function looksGeographic(
+    west: number,
+    south: number,
+    east: number,
+    north: number,
+): boolean {
+    return (
+        west >= -180 &&
+        east <= 180 &&
+        south >= -90 &&
+        north <= 90 &&
+        west < east &&
+        south < north
+    );
+}
+
+export function rectangleFromMeta(
+    cov: ProjectCoverage,
+): { west: number; south: number; east: number; north: number } | null {
+    if (cov.bbox_wgs84 && cov.bbox_wgs84.length === 4) {
+        const [west, south, east, north] = cov.bbox_wgs84;
+        if (looksGeographic(west, south, east, north)) {
+            return { west, south, east, north };
+        }
+    }
+    return null;
+}
+
+/** Prefer tiled COG provider for larger files or when a COG was baked. */
+export function shouldUseCogProvider(cov: ProjectCoverage): boolean {
+    const meta = cov.meta ?? {};
+    if (typeof meta.cog_path === "string" && meta.cog_path.length > 0) {
+        return true;
+    }
+    const size = cov.file_size ?? 0;
+    return size > 5_000_000;
+}
+
 /** Raster coverages only (exclude tilesets/models — those use Cesium3DTileset). */
 export function rasterCoverages(list: ProjectCoverage[]): ProjectCoverage[] {
     return list.filter((c) => c.role !== "tileset" && c.role !== "model");

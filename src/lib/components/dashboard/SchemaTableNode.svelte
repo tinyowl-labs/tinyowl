@@ -72,10 +72,19 @@
                 {#if linked}
                     <span class="absolute inset-y-0 left-0 w-0.5 bg-primary"
                     ></span>
+                    <span class="absolute inset-y-0 right-0 w-0.5 bg-primary"
+                    ></span>
                 {/if}
                 <Handle
                     type="target"
-                    id={col.name}
+                    id={`${col.name}__tl`}
+                    position={Position.Left}
+                    class="schema-handle !absolute !left-0 !top-1/2 !size-2 !border-0 !bg-transparent"
+                    style="transform: translate(-50%, -50%)"
+                />
+                <Handle
+                    type="source"
+                    id={`${col.name}__sl`}
                     position={Position.Left}
                     class="schema-handle !absolute !left-0 !top-1/2 !size-2 !border-0 !bg-transparent"
                     style="transform: translate(-50%, -50%)"
@@ -96,8 +105,15 @@
                     >{shortType(col.type)}</span
                 >
                 <Handle
+                    type="target"
+                    id={`${col.name}__tr`}
+                    position={Position.Right}
+                    class="schema-handle !absolute !right-0 !left-auto !top-1/2 !size-2 !border-0 !bg-transparent"
+                    style="transform: translate(50%, -50%)"
+                />
+                <Handle
                     type="source"
-                    id={col.name}
+                    id={`${col.name}__sr`}
                     position={Position.Right}
                     class="schema-handle !absolute !right-0 !left-auto !top-1/2 !size-2 !border-0 !bg-transparent"
                     style="transform: translate(50%, -50%)"

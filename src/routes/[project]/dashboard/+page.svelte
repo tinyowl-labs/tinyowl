@@ -274,7 +274,7 @@
 
     <!-- Bbox map -->
     {#if bbox}
-        <BboxMap {bbox} href={`/${slug}/layers`} class="h-64 mb-8" />
+        <BboxMap {bbox} href={`/${slug}/layers?view=map`} class="h-64 mb-8" />
     {/if}
 
     <!-- Entity breakdown -->

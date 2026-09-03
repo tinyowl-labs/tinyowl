@@ -591,10 +591,6 @@
 
     <main class="flex-1 min-h-0 overflow-y-auto bg-background">
         <div class="mx-auto w-full max-w-5xl px-6 py-6">
-            <p class="mb-5 text-sm text-muted-foreground">
-                Account, integrations, and preferences
-            </p>
-
             <Tabs
                 value={activeTab}
                 {tabs}
@@ -1474,7 +1470,7 @@
                                                         · truncated
                                                     {/if}
                                                 </span>
-                                                {#if live.job_log || jobIsActive(live)}
+                                                {#if jobIsActive(live) || live.import_status === "failed"}
                                                     <div class="mt-2">
                                                         <JobLog
                                                             log={live.job_log ||

@@ -3,8 +3,11 @@
     import LinkIcon from "@lucide/svelte/icons/link";
     import SearchIcon from "@lucide/svelte/icons/search";
     import LoaderIcon from "@lucide/svelte/icons/loader";
+    import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import * as Popover from "$lib/components/ui/popover/index.js";
-    import { Button } from "$lib/components/ui/button/index.js";
+    import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+    import { Button, buttonVariants } from "$lib/components/ui/button/index.js";
+    import { cn } from "$lib/utils.js";
 
     export type ValueMappingRow = {
         entity_type: string;
@@ -29,6 +32,22 @@
         crm_range: string | null;
     };
 
+    const SHARED_VOCABS = ["periodo", "aat", "crm"] as const;
+
+    function sharedVocabName(name: string | null | undefined): string | null {
+        const v = (name ?? "").trim().toLowerCase();
+        if (v === "periodo" || v === "aat" || v === "crm") return v;
+        return null;
+    }
+
+    function isSharedVocab(name: string | null | undefined): boolean {
+        return sharedVocabName(name) !== null;
+    }
+
+    function colKey(entity: string, column: string): string {
+        return `${entity}|${column}`.toLowerCase();
+    }
+
     type VocabResult = {
         uri: string;
         label: string;
@@ -38,14 +57,14 @@
     };
 
     let {
-        mode,
-        rows,
-        description = "",
+        columns = [],
+        values = [],
+        samples = {},
         form = null as any,
     }: {
-        mode: "values" | "columns";
-        rows: ValueMappingRow[] | ColumnMappingRow[];
-        description?: string;
+        columns?: ColumnMappingRow[];
+        values?: ValueMappingRow[];
+        samples?: Record<string, string[]>;
         form?: any;
     } = $props();
 
@@ -56,7 +75,6 @@
         );
     }
 
-    /** Prefer FK label; fall back to raw exploded element. */
     function valueDisplay(row: ValueMappingRow): string {
         const label = row.display_label?.trim();
         if (label) return label;
@@ -82,60 +100,59 @@
     const selectClass =
         "h-8 rounded-md border border-input bg-background px-2.5 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-    function isMapped(row: ValueMappingRow | ColumnMappingRow): boolean {
-        if (mode === "values") {
-            return !!(row as ValueMappingRow).concept_uri;
-        }
-        return !!columnProperty(row as ColumnMappingRow);
-    }
-
-    /** Real CRM/property URI — never the vocabulary name itself. */
-    function columnProperty(c: ColumnMappingRow): string | null {
-        const prop = c.crm_property?.trim() || null;
-        if (!prop) return null;
-        const vocab = (c.vocabulary ?? "").trim().toLowerCase();
-        if (prop.toLowerCase() === vocab) return null;
-        if (["crm", "aat", "periodo", "getty", "wikidata"].includes(prop.toLowerCase())) {
-            return null;
-        }
-        return prop;
-    }
-
-    function conceptLabel(row: ValueMappingRow | ColumnMappingRow): string {
-        if (mode === "values") {
-            return (row as ValueMappingRow).concept_uri ?? "";
-        }
-        return columnProperty(row as ColumnMappingRow) ?? "";
-    }
-
-    function rowKey(row: ValueMappingRow | ColumnMappingRow): string {
-        if (mode === "values") {
-            const v = row as ValueMappingRow;
-            return `${v.entity_type}|${v.column_name}|${v.local_value}`;
-        }
-        const c = row as ColumnMappingRow;
-        return `${c.entity_type}|${c.column_name}`;
-    }
-
-    function searchQuery(row: ValueMappingRow | ColumnMappingRow): string {
-        if (mode === "values") {
-            const v = row as ValueMappingRow;
-            // Prefer human label for vocab search (e.g. "GeoSlam" over "2").
-            return v.display_label?.trim() || v.local_value;
-        }
-        // Prefer humanized column name for CRM property search.
-        return (row as ColumnMappingRow).column_name.replace(/_/g, " ");
-    }
+    const navSelectClass = cn(
+        buttonVariants({ variant: "ghost", size: "sm" }),
+        "gap-1 text-xs font-medium bg-secondary text-foreground hover:bg-secondary max-w-[16rem]",
+    );
 
     const tableOptions = $derived(
-        [...new Set(rows.map((r) => r.entity_type))].sort(),
+        [...new Set(columns.map((c) => c.entity_type))].sort(),
     );
 
     let tableFilter = $state("");
     let columnFilter = $state("");
     let statusFilter = $state<"all" | "unmapped">("all");
+    let expandedKey = $state<string | null>(null);
 
-    // Require exactly one table — default to first available.
+    const valuesByColumn = $derived.by(() => {
+        const map = new Map<string, ValueMappingRow[]>();
+        for (const v of values) {
+            if (isCompositeLeftover(v)) continue;
+            const key = colKey(v.entity_type, v.column_name);
+            const list = map.get(key);
+            if (list) list.push(v);
+            else map.set(key, [v]);
+        }
+        return map;
+    });
+
+    function valuesFor(col: ColumnMappingRow): ValueMappingRow[] {
+        return valuesByColumn.get(colKey(col.entity_type, col.column_name)) ?? [];
+    }
+
+    function displayRows(col: ColumnMappingRow): ValueMappingRow[] {
+        const mapped = valuesFor(col);
+        const seen = new Set(mapped.map((m) => m.local_value.toLowerCase()));
+        const out = [...mapped];
+        for (const s of samples[colKey(col.entity_type, col.column_name)] ?? []) {
+            if (seen.has(s.toLowerCase())) continue;
+            seen.add(s.toLowerCase());
+            out.push({
+                entity_type: col.entity_type,
+                column_name: col.column_name,
+                local_value: s,
+                concept_uri: null,
+            });
+        }
+        return out;
+    }
+
+    function columnNeedsWork(col: ColumnMappingRow): boolean {
+        if (!isSharedVocab(col.vocabulary)) return false;
+        const rows = valuesFor(col);
+        return rows.length === 0 || rows.some((v) => !v.concept_uri);
+    }
+
     $effect(() => {
         if (!tableFilter && tableOptions.length > 0) {
             tableFilter = tableOptions[0];
@@ -148,50 +165,62 @@
         }
     });
 
-    const columnOptions = $derived.by(() => {
-        if (mode !== "values" || !tableFilter) return [] as string[];
-        return [
-            ...new Set(
-                (rows as ValueMappingRow[])
-                    .filter((r) => r.entity_type === tableFilter)
-                    .map((r) => r.column_name),
-            ),
-        ].sort();
-    });
-
-    const tableRows = $derived(
-        rows.filter((r) => {
-            if (!tableFilter || r.entity_type === tableFilter) {
-                if (mode === "values" && isCompositeLeftover(r as ValueMappingRow)) {
-                    return false;
-                }
-                return true;
-            }
-            return false;
-        }),
+    const tableColumns = $derived(
+        columns.filter((c) => !tableFilter || c.entity_type === tableFilter),
     );
 
-    const mappedInTable = $derived(tableRows.filter(isMapped).length);
-    const unmappedInTable = $derived(tableRows.length - mappedInTable);
-    const pctMapped = $derived(
-        tableRows.length > 0
-            ? Math.round((mappedInTable / tableRows.length) * 100)
-            : 0,
-    );
-
-    const filteredRows = $derived(
-        tableRows.filter((r) => {
-            if (statusFilter === "unmapped" && isMapped(r)) return false;
-            if (
-                mode === "values" &&
-                columnFilter &&
-                (r as ValueMappingRow).column_name !== columnFilter
-            ) {
-                return false;
-            }
+    const queueColumns = $derived(tableColumns.filter(columnNeedsWork));
+    const filteredColumns = $derived(
+        tableColumns.filter((c) => {
+            if (columnFilter && c.column_name !== columnFilter) return false;
+            if (statusFilter === "unmapped" && !columnNeedsWork(c)) return false;
             return true;
         }),
     );
+
+    function exampleLabels(col: ColumnMappingRow, limit = 3): string {
+        const fromSamples = samples[colKey(col.entity_type, col.column_name)] ?? [];
+        const fromMapped = valuesFor(col).map(valueDisplay).filter(Boolean);
+        const labels = [...new Set([...fromSamples, ...fromMapped])];
+        if (labels.length === 0) return "";
+        const shown = labels.slice(0, limit);
+        return shown.join(", ") + (labels.length > limit ? "…" : "");
+    }
+
+    const queueValues = $derived(
+        tableColumns.flatMap((c) =>
+            isSharedVocab(c.vocabulary) ? valuesFor(c) : [],
+        ),
+    );
+    const mappedInTable = $derived(
+        queueValues.filter((v) => !!v.concept_uri).length,
+    );
+    const unmappedInTable = $derived(queueValues.length - mappedInTable);
+    const pctMapped = $derived(
+        queueValues.length > 0
+            ? Math.round((mappedInTable / queueValues.length) * 100)
+            : 0,
+    );
+
+    $effect(() => {
+        const keys = new Set(
+            filteredColumns.map((c) => colKey(c.entity_type, c.column_name)),
+        );
+        if (expandedKey && !keys.has(expandedKey)) {
+            expandedKey = null;
+        }
+    });
+
+    const selectedExamples = $derived.by(() => {
+        if (!columnFilter) return "";
+        const col = tableColumns.find((c) => c.column_name === columnFilter);
+        return col ? exampleLabels(col) : "";
+    });
+
+    function toggleExpand(col: ColumnMappingRow) {
+        const key = colKey(col.entity_type, col.column_name);
+        expandedKey = expandedKey === key ? null : key;
+    }
 
     let editingKey = $state<string | null>(null);
     let editConcept = $state("");
@@ -199,9 +228,11 @@
     let vocabLoading = $state(false);
     let manualSearchQuery = $state("");
     let pickerMode = $state<"search" | "manual">("search");
+    let pickerVocabs = $state<string[]>([...SHARED_VOCABS]);
     let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
-    let hiddenForm = $state<HTMLFormElement | null>(null);
+    let annotationForm = $state<HTMLFormElement | null>(null);
+    let mappingForm = $state<HTMLFormElement | null>(null);
     let formData = $state({
         entity_type: "",
         column_name: "",
@@ -235,6 +266,7 @@
         vocabLoading = false;
         manualSearchQuery = "";
         pickerMode = "search";
+        pickerVocabs = [...SHARED_VOCABS];
         if (searchTimer) clearTimeout(searchTimer);
     }
 
@@ -263,30 +295,29 @@
             }
         }
 
-        // Columns map to CRM properties; values search across concept vocabs.
-        if (mode === "columns") {
-            const crm = await fetchVocab("crm");
-            vocabResults = [...crm].sort(
-                (a: VocabResult, b: VocabResult) => b.score - a.score,
-            );
-        } else {
-            const [periodo, aat, crm] = await Promise.all([
-                fetchVocab("periodo"),
-                fetchVocab("aat"),
-                fetchVocab("crm"),
-            ]);
-            vocabResults = [...periodo, ...aat, ...crm].sort(
-                (a: VocabResult, b: VocabResult) => b.score - a.score,
-            );
-        }
+        const lists = await Promise.all(pickerVocabs.map((v) => fetchVocab(v)));
+        vocabResults = lists
+            .flat()
+            .sort((a: VocabResult, b: VocabResult) => b.score - a.score);
         vocabLoading = false;
     }
 
-    function openPicker(row: ValueMappingRow | ColumnMappingRow) {
-        editingKey = rowKey(row);
-        editConcept = conceptLabel(row);
+    function vocabsForValue(row: ValueMappingRow, col: ColumnMappingRow): string[] {
+        const shared =
+            sharedVocabName(col.vocabulary) ?? sharedVocabName(row.vocabulary);
+        return shared ? [shared] : [...SHARED_VOCABS];
+    }
+
+    function valueKey(row: ValueMappingRow): string {
+        return `${row.entity_type}|${row.column_name}|${row.local_value}`;
+    }
+
+    function openPicker(row: ValueMappingRow, col: ColumnMappingRow) {
+        editingKey = valueKey(row);
+        editConcept = row.concept_uri ?? "";
         pickerMode = "search";
-        const auto = searchQuery(row);
+        pickerVocabs = vocabsForValue(row, col);
+        const auto = row.display_label?.trim() || row.local_value;
         manualSearchQuery = auto;
         void searchVocab(auto);
     }
@@ -307,88 +338,57 @@
     }
 
     function applyResult(
-        row: ValueMappingRow | ColumnMappingRow,
+        row: ValueMappingRow,
         result: VocabResult,
     ) {
         const confidence = String(Math.round(result.score * 100) / 100);
-        if (mode === "values") {
-            const v = row as ValueMappingRow;
-            formData = {
-                entity_type: v.entity_type,
-                column_name: v.column_name,
-                local_value: v.local_value,
-                concept_uri: result.uri,
-                vocabulary: result.vocabulary,
-                crm_property: "",
-                crm_range: "",
-                confidence,
-            };
-            const similar = (rows as ValueMappingRow[]).filter(
-                (m) =>
-                    !m.concept_uri &&
-                    m.local_value === v.local_value &&
-                    m.column_name === v.column_name &&
-                    m.entity_type !== v.entity_type,
-            );
-            pendingBulk =
-                similar.length > 0
-                    ? {
-                          local_value: v.local_value,
-                          column_name: v.column_name,
-                          count: similar.length,
-                          concept_uri: result.uri,
-                          vocabulary: result.vocabulary,
-                          confidence,
-                      }
-                    : null;
-        } else {
-            const c = row as ColumnMappingRow;
-            formData = {
-                entity_type: c.entity_type,
-                column_name: c.column_name,
-                local_value: "",
-                concept_uri: "",
-                vocabulary: c.vocabulary || result.vocabulary || "crm",
-                crm_property: result.uri,
-                crm_range: c.crm_range ?? "",
-                confidence: "",
-            };
-            pendingBulk = null;
-        }
+        formData = {
+            entity_type: row.entity_type,
+            column_name: row.column_name,
+            local_value: row.local_value,
+            concept_uri: result.uri,
+            vocabulary: result.vocabulary,
+            crm_property: "",
+            crm_range: "",
+            confidence,
+        };
+        const similar = values.filter(
+            (m) =>
+                !m.concept_uri &&
+                m.local_value === row.local_value &&
+                m.column_name === row.column_name &&
+                m.entity_type !== row.entity_type,
+        );
+        pendingBulk =
+            similar.length > 0
+                ? {
+                      local_value: row.local_value,
+                      column_name: row.column_name,
+                      count: similar.length,
+                      concept_uri: result.uri,
+                      vocabulary: result.vocabulary,
+                      confidence,
+                  }
+                : null;
         closePicker();
-        setTimeout(() => hiddenForm?.requestSubmit(), 0);
+        setTimeout(() => mappingForm?.requestSubmit(), 0);
     }
 
-    function submitManual(row: ValueMappingRow | ColumnMappingRow) {
+    function submitManual(row: ValueMappingRow, col: ColumnMappingRow) {
         const uri = editConcept.trim();
         if (!uri) return;
-        if (mode === "values") {
-            const v = row as ValueMappingRow;
-            formData = {
-                entity_type: v.entity_type,
-                column_name: v.column_name,
-                local_value: v.local_value,
-                concept_uri: uri,
-                vocabulary: "",
-                crm_property: "",
-                crm_range: "",
-                confidence: "1",
-            };
-        } else {
-            const c = row as ColumnMappingRow;
-            formData = {
-                entity_type: c.entity_type,
-                column_name: c.column_name,
-                local_value: "",
-                concept_uri: "",
-                vocabulary: c.vocabulary ?? "",
-                crm_property: uri,
-                crm_range: c.crm_range ?? "",
-                confidence: "",
-            };
-        }
+        formData = {
+            entity_type: row.entity_type,
+            column_name: row.column_name,
+            local_value: row.local_value,
+            concept_uri: uri,
+            vocabulary: sharedVocabName(col.vocabulary) ?? sharedVocabName(row.vocabulary) ?? "",
+            crm_property: "",
+            crm_range: "",
+            confidence: "1",
+        };
         closePicker();
-        setTimeout(() => hiddenForm?.requestSubmit(), 0);
+        setTimeout(() => mappingForm?.requestSubmit(), 0);
     }
 
     async function doBulkApply() {
@@ -408,116 +408,154 @@
         window.location.reload();
     }
 
-    const formAction = $derived(
-        mode === "values" ? "?/updateMapping" : "?/updateAnnotation",
-    );
-    const formFlag = $derived(
-        mode === "values" ? form?.mappingAction : form?.annotationAction,
-    );
-    const emptyTitle = $derived(
-        mode === "values" ? "No value mappings yet" : "No columns yet",
-    );
-    const emptyHint = $derived(
-        mode === "values"
-            ? "Run tinyowl push to index distinct values (array cells are exploded per element), then map them here."
-            : "Push a project with tables to annotate columns.",
-    );
-    const conceptHeader = $derived(mode === "values" ? "Concept" : "Property");
-    const unmappedLabel = $derived(
-        mode === "values" ? "unmapped" : "no property",
-    );
-    const uriPlaceholder = $derived(
-        mode === "columns" ? "CRM property URI" : "concept URI",
-    );
+    function setColumnVocabulary(row: ColumnMappingRow, vocabulary: string) {
+        formData = {
+            entity_type: row.entity_type,
+            column_name: row.column_name,
+            local_value: "",
+            concept_uri: "",
+            vocabulary,
+            crm_property: row.crm_property ?? "",
+            crm_range: row.crm_range ?? "",
+            confidence: "",
+        };
+        setTimeout(() => annotationForm?.requestSubmit(), 0);
+    }
+
+    const searchPlaceholder = $derived.by(() => {
+        if (pickerVocabs.length === 1) {
+            const names: Record<string, string> = {
+                periodo: "PeriodO",
+                aat: "AAT",
+                crm: "CRM",
+            };
+            return `Search ${names[pickerVocabs[0]] ?? pickerVocabs[0]}…`;
+        }
+        return "Search PeriodO, AAT, CRM…";
+    });
 </script>
 
 <div>
     <form
         method="POST"
-        action={formAction}
+        action="?/updateAnnotation"
         use:enhance
-        bind:this={hiddenForm}
+        bind:this={annotationForm}
         class="hidden"
     >
         <input type="hidden" name="entity_type" value={formData.entity_type} />
         <input type="hidden" name="column_name" value={formData.column_name} />
-        {#if mode === "values"}
-            <input
-                type="hidden"
-                name="local_value"
-                value={formData.local_value}
-            />
-            <input
-                type="hidden"
-                name="concept_uri"
-                value={formData.concept_uri}
-            />
-            <input
-                type="hidden"
-                name="vocabulary"
-                value={formData.vocabulary}
-            />
-            <input
-                type="hidden"
-                name="confidence"
-                value={formData.confidence}
-            />
-        {:else}
-            <input
-                type="hidden"
-                name="vocabulary"
-                value={formData.vocabulary}
-            />
-            <input
-                type="hidden"
-                name="crm_property"
-                value={formData.crm_property}
-            />
-            <input type="hidden" name="crm_range" value={formData.crm_range} />
-        {/if}
+        <input type="hidden" name="vocabulary" value={formData.vocabulary} />
+        <input type="hidden" name="crm_property" value={formData.crm_property} />
+        <input type="hidden" name="crm_range" value={formData.crm_range} />
+    </form>
+    <form
+        method="POST"
+        action="?/updateMapping"
+        use:enhance
+        bind:this={mappingForm}
+        class="hidden"
+    >
+        <input type="hidden" name="entity_type" value={formData.entity_type} />
+        <input type="hidden" name="column_name" value={formData.column_name} />
+        <input type="hidden" name="local_value" value={formData.local_value} />
+        <input type="hidden" name="concept_uri" value={formData.concept_uri} />
+        <input type="hidden" name="vocabulary" value={formData.vocabulary} />
+        <input type="hidden" name="confidence" value={formData.confidence} />
     </form>
 
-    {#if description}
-        <p class="mb-4 text-sm text-muted-foreground">{description}</p>
-    {/if}
-
-    {#if rows.length === 0}
+    {#if columns.length === 0 && values.length === 0}
         <div
             class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
         >
             <LinkIcon class="size-8 text-muted-foreground/40 mb-3" />
-            <p class="text-sm text-muted-foreground mb-1">{emptyTitle}</p>
+            <p class="text-sm text-muted-foreground mb-1">No columns yet</p>
             <p class="text-xs text-muted-foreground max-w-sm text-center">
-                {emptyHint}
+                Push a project with tables, then opt columns into PeriodO, AAT,
+                or CRM and map their labels here.
             </p>
         </div>
     {:else}
         <div
             class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-secondary/20 px-3 py-2.5"
         >
-            <select
-                bind:value={tableFilter}
-                onchange={() => (columnFilter = "")}
-                class="{selectClass} min-w-[10rem]"
-                aria-label="Table"
-            >
-                {#each tableOptions as t}
-                    <option value={t}>{t}</option>
-                {/each}
-            </select>
-
-            {#if mode === "values"}
-                <select
-                    bind:value={columnFilter}
-                    class="{selectClass} min-w-[8rem]"
-                    aria-label="Column"
+            <DropdownMenu.Root>
+                <DropdownMenu.Trigger class={navSelectClass} aria-label="Table">
+                    <span class="truncate">{tableFilter || "Table"}</span>
+                    <ChevronDownIcon class="size-3 shrink-0 opacity-60" />
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content
+                    align="start"
+                    class="max-h-72 min-w-44 overflow-y-auto"
                 >
-                    <option value="">All columns</option>
-                    {#each columnOptions as c}
-                        <option value={c}>{c}</option>
+                    {#each tableOptions as t}
+                        <DropdownMenu.Item
+                            class={t === tableFilter
+                                ? "bg-secondary font-medium"
+                                : ""}
+                            onSelect={() => {
+                                tableFilter = t;
+                                columnFilter = "";
+                                expandedKey = null;
+                            }}
+                        >
+                            {t}
+                        </DropdownMenu.Item>
                     {/each}
-                </select>
-            {/if}
+                </DropdownMenu.Content>
+            </DropdownMenu.Root>
+
+            <DropdownMenu.Root>
+                <DropdownMenu.Trigger class={navSelectClass} aria-label="Column">
+                    <span class="min-w-0 truncate text-left">
+                        {#if columnFilter}
+                            {columnFilter}
+                            {#if selectedExamples}
+                                <span class="font-normal text-muted-foreground">
+                                    · {selectedExamples}</span
+                                >
+                            {/if}
+                        {:else}
+                            All columns
+                        {/if}
+                    </span>
+                    <ChevronDownIcon class="size-3 shrink-0 opacity-60" />
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content
+                    align="start"
+                    class="max-h-80 min-w-72 overflow-y-auto"
+                >
+                    <DropdownMenu.Item
+                        class={!columnFilter ? "bg-secondary font-medium" : ""}
+                        onSelect={() => (columnFilter = "")}
+                    >
+                        All columns
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Separator />
+                    {#each tableColumns as col (colKey(col.entity_type, col.column_name))}
+                        {@const examples = exampleLabels(col)}
+                        <DropdownMenu.Item
+                            class={cn(
+                                "items-start",
+                                columnFilter === col.column_name
+                                    ? "bg-secondary font-medium"
+                                    : "",
+                            )}
+                            onSelect={() => (columnFilter = col.column_name)}
+                        >
+                            <span class="flex min-w-0 flex-col gap-0.5">
+                                <span class="truncate">{col.column_name}</span>
+                                {#if examples}
+                                    <span
+                                        class="truncate font-normal text-muted-foreground"
+                                        >{examples}</span
+                                    >
+                                {/if}
+                            </span>
+                        </DropdownMenu.Item>
+                    {/each}
+                </DropdownMenu.Content>
+            </DropdownMenu.Root>
 
             <div class="flex items-center gap-0.5 rounded-md bg-secondary p-0.5">
                 <button
@@ -554,19 +592,19 @@
                 <span
                     class="text-xs text-muted-foreground tabular-nums whitespace-nowrap"
                 >
-                    {mappedInTable}/{tableRows.length}
+                    {mappedInTable}/{queueValues.length}
                 </span>
             </div>
         </div>
 
-        {#if form?.error && formFlag}
+        {#if form?.error && (form?.mappingAction || form?.annotationAction)}
             <p
                 class="mb-4 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
             >
                 {form.error}
             </p>
         {/if}
-        {#if form?.success && formFlag}
+        {#if form?.success && (form?.mappingAction || form?.annotationAction)}
             <p
                 class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
             >
@@ -594,241 +632,338 @@
 
         <div class="rounded-lg border border-border overflow-hidden">
             <div
-                class="grid {mode === 'values'
-                    ? 'grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,0.45fr)_minmax(0,1.3fr)_auto]'
-                    : 'grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,1.4fr)_auto]'} gap-3 px-4 py-2 bg-secondary/40 border-b border-border text-[11px] font-medium text-muted-foreground uppercase tracking-wide"
+                class="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,10rem)_minmax(0,5rem)] gap-3 px-4 py-2 bg-secondary/40 border-b border-border text-[11px] font-medium text-muted-foreground uppercase tracking-wide"
             >
-                {#if mode === "values"}
-                    <span>Value</span>
-                    <span>Column</span>
-                    <span>Count</span>
-                {:else}
-                    <span>Column</span>
-                    <span>Vocabulary</span>
-                {/if}
-                <span>{conceptHeader}</span>
                 <span class="w-7"></span>
+                <span>Column</span>
+                <span>Shared vocabulary</span>
+                <span>Values</span>
             </div>
 
-            <div class="divide-y divide-border">
-                {#each filteredRows as row (rowKey(row))}
-                    {@const key = rowKey(row)}
-                    {@const editing = editingKey === key}
-                    {@const mapped = isMapped(row)}
-                    {@const concept = conceptLabel(row)}
-
-                    <div
-                        class="grid {mode === 'values'
-                            ? 'grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,0.45fr)_minmax(0,1.3fr)_auto]'
-                            : 'grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,1.4fr)_auto]'} gap-3 items-center px-4 py-2.5 text-sm"
+            {#if filteredColumns.length === 0}
+                <div class="flex flex-col items-center justify-center py-12">
+                    <p class="text-sm text-muted-foreground">
+                        {statusFilter === "unmapped" &&
+                        queueColumns.length === 0
+                            ? "No shared-vocabulary columns need URIs. Opt a column in, then push to index values."
+                            : "No columns match this filter"}
+                    </p>
+                    <button
+                        type="button"
+                        onclick={() => {
+                            statusFilter = "all";
+                            columnFilter = "";
+                        }}
+                        class="mt-1 text-xs text-primary hover:underline"
                     >
-                        {#if mode === "values"}
-                            {@const v = row as ValueMappingRow}
-                            <div class="min-w-0">
-                                <span class="truncate font-medium text-foreground block"
-                                    >{valueDisplay(v)}</span
+                        Show all columns
+                    </button>
+                </div>
+            {:else}
+                <div class="divide-y divide-border">
+                    {#each filteredColumns as col (colKey(col.entity_type, col.column_name))}
+                        {@const key = colKey(col.entity_type, col.column_name)}
+                        {@const open = expandedKey === key}
+                        {@const colValues = displayRows(col)}
+                        {@const unmapped = colValues.filter((v) => !v.concept_uri)}
+                        {@const shared = isSharedVocab(col.vocabulary)}
+                        <div>
+                            <div
+                                class="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,10rem)_minmax(0,5rem)] gap-3 items-center px-4 py-2.5 text-sm"
+                            >
+                                <button
+                                    type="button"
+                                    class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                                    aria-expanded={open}
+                                    aria-label={open
+                                        ? "Collapse values"
+                                        : "Show values"}
+                                    onclick={() => toggleExpand(col)}
                                 >
-                                {#if valueSubtext(v)}
-                                    <span class="truncate text-[11px] text-muted-foreground font-mono"
-                                        >{valueSubtext(v)}</span
-                                    >
-                                {/if}
-                            </div>
-                            <div class="min-w-0 flex items-center gap-1.5">
-                                <span class="truncate text-muted-foreground"
-                                    >{v.column_name}</span
+                                    <ChevronDownIcon
+                                        class="size-3.5 transition-transform {open
+                                            ? 'rotate-180'
+                                            : ''}"
+                                    />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="min-w-0 text-left truncate font-medium text-foreground hover:underline"
+                                    onclick={() => toggleExpand(col)}
                                 >
-                                {#if isArrayColumn(v)}
-                                    <span
-                                        class="shrink-0 rounded border border-border px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
-                                        title="Array / multi-value column — values are exploded per element"
-                                        >multi</span
-                                    >
-                                {/if}
-                            </div>
-                            <span class="tabular-nums text-muted-foreground text-xs"
-                                >{v.entity_count ?? "—"}</span
-                            >
-                        {:else}
-                            <span class="truncate font-medium text-foreground"
-                                >{(row as ColumnMappingRow).column_name}</span
-                            >
-                            <span class="truncate text-muted-foreground"
-                                >{(row as ColumnMappingRow).vocabulary ??
-                                    "—"}</span
-                            >
-                        {/if}
-
-                        <span
-                            class="truncate {mapped
-                                ? 'font-mono text-xs text-foreground'
-                                : 'italic text-xs text-muted-foreground/50'}"
-                        >
-                            {mapped ? concept : unmappedLabel}
-                        </span>
-
-                        <Popover.Root
-                            open={editing}
-                            onOpenChange={(open) => {
-                                if (open) openPicker(row);
-                                else if (editingKey === rowKey(row)) closePicker();
-                            }}
-                        >
-                            <Popover.Trigger
-                                class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                                title={mapped
-                                    ? "Edit mapping"
-                                    : "Search vocabularies"}
-                            >
-                                <SearchIcon class="size-3.5" />
-                            </Popover.Trigger>
-                            <Popover.Content
-                                class="w-80 p-0"
-                                align="end"
-                                sideOffset={6}
-                            >
-                                <div class="border-b border-border p-2.5 space-y-2">
-                                    <div class="flex items-center gap-1.5">
-                                        <button
-                                            type="button"
-                                            onclick={() => (pickerMode = "search")}
-                                            class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
-                                            'search'
-                                                ? 'bg-foreground text-background'
-                                                : 'text-muted-foreground hover:bg-muted'}"
+                                    {col.column_name}
+                                </button>
+                                <select
+                                    class="{selectClass} min-w-0 max-w-full"
+                                    value={col.vocabulary ?? ""}
+                                    aria-label="Shared vocabulary for {col.column_name}"
+                                    onchange={(e) =>
+                                        setColumnVocabulary(
+                                            col,
+                                            (
+                                                e.currentTarget as HTMLSelectElement
+                                            ).value,
+                                        )}
+                                >
+                                    <option value="">Local (none)</option>
+                                    {#if col.vocabulary && !shared}
+                                        <option value={col.vocabulary}
+                                            >{col.vocabulary} (local)</option
                                         >
-                                            Search
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onclick={startManualEdit}
-                                            class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
-                                            'manual'
-                                                ? 'bg-foreground text-background'
-                                                : 'text-muted-foreground hover:bg-muted'}"
-                                        >
-                                            Manual
-                                        </button>
-                                    </div>
-                                    {#if pickerMode === "search"}
-                                        <div class="relative">
-                                            <SearchIcon
-                                                class="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                                            />
-                                            <input
-                                                type="search"
-                                                value={manualSearchQuery}
-                                                oninput={(e) =>
-                                                    onManualQueryInput(
-                                                        (
-                                                            e.currentTarget as HTMLInputElement
-                                                        ).value,
-                                                    )}
-                                                placeholder="Search PeriodO, AAT, CRM…"
-                                                class="h-8 w-full rounded-md border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                            />
-                                        </div>
-                                    {:else}
-                                        <input
-                                            type="text"
-                                            bind:value={editConcept}
-                                            placeholder={uriPlaceholder}
-                                            class="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                        />
-                                        <div class="flex justify-end gap-1.5">
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="xs"
-                                                onclick={closePicker}
-                                            >
-                                                Cancel
-                                            </Button>
-                                            <Button
-                                                type="button"
-                                                size="xs"
-                                                onclick={() => submitManual(row)}
-                                            >
-                                                Save
-                                            </Button>
-                                        </div>
                                     {/if}
-                                </div>
+                                    <option value="periodo">PeriodO</option>
+                                    <option value="aat">AAT</option>
+                                    <option value="crm">CIDOC CRM</option>
+                                </select>
+                                <span
+                                    class="text-xs text-muted-foreground tabular-nums"
+                                >
+                                    {#if colValues.length === 0}
+                                        {shared ? "not indexed" : "—"}
+                                    {:else}
+                                        {colValues.length - unmapped.length}/{colValues.length}
+                                    {/if}
+                                </span>
+                            </div>
 
-                                {#if pickerMode === "search"}
-                                    <div class="max-h-56 overflow-y-auto p-1.5">
-                                        {#if vocabLoading}
+                            {#if open}
+                                <div
+                                    class="border-t border-border bg-secondary/10 px-4 py-3"
+                                >
+                    {#if colValues.length === 0}
+                        <p class="text-xs text-muted-foreground">
+                            No values found in this column.
+                        </p>
+                    {:else}
+                                    <div
+                                        class="grid grid-cols-[minmax(0,1.4fr)_minmax(0,0.4fr)_minmax(0,1.4fr)_auto] gap-3 px-1 pb-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wide"
+                                    >
+                                        <span>Value</span>
+                                        <span>Count</span>
+                                        <span>Concept</span>
+                                        <span class="w-7"></span>
+                                    </div>
+                                    <div class="divide-y divide-border/60">
+                                        {#each colValues as row (valueKey(row))}
+                                            {@const vKey = valueKey(row)}
+                                            {@const editing = editingKey === vKey}
+                                            {@const mapped = !!row.concept_uri}
+
                                             <div
-                                                class="flex items-center gap-2 px-2 py-4 text-xs text-muted-foreground"
+                                                class="grid grid-cols-[minmax(0,1.4fr)_minmax(0,0.4fr)_minmax(0,1.4fr)_auto] gap-3 items-center py-2 text-sm"
                                             >
-                                                <LoaderIcon
-                                                    class="size-3.5 animate-spin"
-                                                />
-                                                Searching…
-                                            </div>
-                                        {:else if vocabResults.length > 0}
-                                            {#each vocabResults as result}
-                                                <button
-                                                    type="button"
-                                                    onclick={() =>
-                                                        applyResult(row, result)}
-                                                    class="w-full flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
-                                                >
-                                                    <div class="min-w-0">
-                                                        <span
-                                                            class="font-medium text-foreground truncate block"
-                                                            >{result.label}</span
-                                                        >
-                                                        <span
-                                                            class="text-muted-foreground"
-                                                            >{result.vocabulary}{#if result.context}
-                                                                — {result.context}{/if}</span
-                                                        >
-                                                    </div>
+                                                <div class="min-w-0">
                                                     <span
-                                                        class="shrink-0 text-muted-foreground font-mono text-[10px]"
-                                                        >{Math.round(
-                                                            result.score * 100,
-                                                        )}%</span
+                                                        class="truncate font-medium text-foreground block"
+                                                        >{valueDisplay(row)}</span
                                                     >
-                                                </button>
-                                            {/each}
-                                        {:else}
-                                            <p
-                                                class="px-2 py-4 text-xs text-muted-foreground"
-                                            >
-                                                {manualSearchQuery.trim()
-                                                    ? "No matching terms. Try another query or switch to Manual."
-                                                    : "Type to search vocabularies."}
-                                            </p>
-                                        {/if}
+                                                    {#if valueSubtext(row)}
+                                                        <span
+                                                            class="truncate text-[11px] text-muted-foreground font-mono"
+                                                            >{valueSubtext(
+                                                                row,
+                                                            )}</span
+                                                        >
+                                                    {/if}
+                                                    {#if isArrayColumn(row)}
+                                                        <span
+                                                            class="mt-0.5 inline-block rounded border border-border px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                                                            >multi</span
+                                                        >
+                                                    {/if}
+                                                </div>
+                                                <span
+                                                    class="tabular-nums text-muted-foreground text-xs"
+                                                    >{row.entity_count ?? "—"}</span
+                                                >
+                                                <span
+                                                    class="truncate {mapped
+                                                        ? 'font-mono text-xs text-foreground'
+                                                        : 'italic text-xs text-muted-foreground/50'}"
+                                                >
+                                                    {mapped
+                                                        ? row.concept_uri
+                                                        : "unmapped"}
+                                                </span>
+
+                                                <Popover.Root
+                                                    open={editing}
+                                                    onOpenChange={(next) => {
+                                                        if (next)
+                                                            openPicker(row, col);
+                                                        else if (
+                                                            editingKey === vKey
+                                                        )
+                                                            closePicker();
+                                                    }}
+                                                >
+                                                    <Popover.Trigger
+                                                        class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                                                        title={mapped
+                                                            ? "Edit concept URI"
+                                                            : "Link local label to a shared concept"}
+                                                    >
+                                                        <SearchIcon
+                                                            class="size-3.5"
+                                                        />
+                                                    </Popover.Trigger>
+                                                    <Popover.Content
+                                                        class="w-80 p-0"
+                                                        align="end"
+                                                        sideOffset={6}
+                                                    >
+                                                        <div
+                                                            class="border-b border-border p-2.5 space-y-2"
+                                                        >
+                                                            <div
+                                                                class="flex items-center gap-1.5"
+                                                            >
+                                                                <button
+                                                                    type="button"
+                                                                    onclick={() =>
+                                                                        (pickerMode =
+                                                                            "search")}
+                                                                    class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
+                                                                    'search'
+                                                                        ? 'bg-foreground text-background'
+                                                                        : 'text-muted-foreground hover:bg-muted'}"
+                                                                >
+                                                                    Search
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onclick={startManualEdit}
+                                                                    class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
+                                                                    'manual'
+                                                                        ? 'bg-foreground text-background'
+                                                                        : 'text-muted-foreground hover:bg-muted'}"
+                                                                >
+                                                                    Manual
+                                                                </button>
+                                                            </div>
+                                                            {#if pickerMode === "search"}
+                                                                <div
+                                                                    class="relative"
+                                                                >
+                                                                    <SearchIcon
+                                                                        class="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                                                                    />
+                                                                    <input
+                                                                        type="search"
+                                                                        value={manualSearchQuery}
+                                                                        oninput={(e) =>
+                                                                            onManualQueryInput(
+                                                                                (
+                                                                                    e.currentTarget as HTMLInputElement
+                                                                                )
+                                                                                    .value,
+                                                                            )}
+                                                                        placeholder={searchPlaceholder}
+                                                                        class="h-8 w-full rounded-md border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                                    />
+                                                                </div>
+                                                            {:else}
+                                                                <input
+                                                                    type="text"
+                                                                    bind:value={editConcept}
+                                                                    placeholder="concept URI"
+                                                                    class="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                                />
+                                                                <div
+                                                                    class="flex justify-end gap-1.5"
+                                                                >
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="ghost"
+                                                                        size="xs"
+                                                                        onclick={closePicker}
+                                                                    >
+                                                                        Cancel
+                                                                    </Button>
+                                                                    <Button
+                                                                        type="button"
+                                                                        size="xs"
+                                                                        onclick={() =>
+                                                                            submitManual(
+                                                                                row,
+                                                                                col,
+                                                                            )}
+                                                                    >
+                                                                        Save
+                                                                    </Button>
+                                                                </div>
+                                                            {/if}
+                                                        </div>
+
+                                                        {#if pickerMode === "search"}
+                                                            <div
+                                                                class="max-h-56 overflow-y-auto p-1.5"
+                                                            >
+                                                                {#if vocabLoading}
+                                                                    <div
+                                                                        class="flex items-center gap-2 px-2 py-4 text-xs text-muted-foreground"
+                                                                    >
+                                                                        <LoaderIcon
+                                                                            class="size-3.5 animate-spin"
+                                                                        />
+                                                                        Searching…
+                                                                    </div>
+                                                                {:else if vocabResults.length > 0}
+                                                                    {#each vocabResults as result}
+                                                                        <button
+                                                                            type="button"
+                                                                            onclick={() =>
+                                                                                applyResult(
+                                                                                    row,
+                                                                                    result,
+                                                                                )}
+                                                                            class="w-full flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
+                                                                        >
+                                                                            <div
+                                                                                class="min-w-0"
+                                                                            >
+                                                                                <span
+                                                                                    class="font-medium text-foreground truncate block"
+                                                                                    >{result.label}</span
+                                                                                >
+                                                                                <span
+                                                                                    class="text-muted-foreground"
+                                                                                    >{result.vocabulary}{#if result.context}
+                                                                                        — {result.context}{/if}</span
+                                                                                >
+                                                                            </div>
+                                                                            <span
+                                                                                class="shrink-0 text-muted-foreground font-mono text-[10px]"
+                                                                                >{Math.round(
+                                                                                    result.score *
+                                                                                        100,
+                                                                                )}%</span
+                                                                            >
+                                                                        </button>
+                                                                    {/each}
+                                                                {:else}
+                                                                    <p
+                                                                        class="px-2 py-4 text-xs text-muted-foreground"
+                                                                    >
+                                                                        {manualSearchQuery.trim()
+                                                                            ? "No matching terms. Try another query or switch to Manual."
+                                                                            : "Type to search vocabularies."}
+                                                                    </p>
+                                                                {/if}
+                                                            </div>
+                                                        {/if}
+                                                    </Popover.Content>
+                                                </Popover.Root>
+                                            </div>
+                                        {/each}
                                     </div>
                                 {/if}
-                            </Popover.Content>
-                        </Popover.Root>
-                    </div>
-                {/each}
-
-                {#if filteredRows.length === 0}
-                    <div
-                        class="flex flex-col items-center justify-center py-12"
-                    >
-                        <p class="text-sm text-muted-foreground">
-                            No terms match this filter
-                        </p>
-                        <button
-                            type="button"
-                            onclick={() => {
-                                statusFilter = "all";
-                                columnFilter = "";
-                            }}
-                            class="mt-1 text-xs text-primary hover:underline"
-                        >
-                            Clear filters
-                        </button>
-                    </div>
-                {/if}
-            </div>
+                                </div>
+                            {/if}
+                        </div>
+                    {/each}
+                </div>
+            {/if}
         </div>
     {/if}
 </div>

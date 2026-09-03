@@ -10,6 +10,9 @@
  */
 import { fromUrl, type GeoTIFF, type GeoTIFFImage } from "geotiff";
 import type { ProjectCoverage } from "./coverageTypes";
+import { shouldUseCogProvider } from "./coverageTypes";
+
+export { shouldUseCogProvider };
 
 export type CogRect = {
     west: number;
@@ -501,12 +504,3 @@ export async function createCogImageryProvider(
     };
 }
 
-/** Prefer tiled COG provider for larger files or when a COG was baked. */
-export function shouldUseCogProvider(cov: ProjectCoverage): boolean {
-    const meta = cov.meta ?? {};
-    if (typeof meta.cog_path === "string" && meta.cog_path.length > 0) {
-        return true;
-    }
-    const size = cov.file_size ?? 0;
-    return size > 5_000_000;
-}

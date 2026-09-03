@@ -269,14 +269,6 @@
                 {#if updated}<span class="text-muted-foreground/40">·</span>{/if}
                 <span>{dateRangeText}</span>
             {/if}
-            {#if project?.entity_count != null || project?.table_count != null}
-                <span class="text-muted-foreground/40">·</span>
-                <span>
-                    {#if project?.entity_count != null}{project.entity_count} entities{/if}
-                    {#if project?.entity_count != null && project?.table_count != null} · {/if}
-                    {#if project?.table_count != null}{project.table_count} tables{/if}
-                </span>
-            {/if}
         </div>
     </div>
 
@@ -286,7 +278,7 @@
                 <section class="mb-8">
                     <BboxMap
                         bbox={(project as any).bbox}
-                        href={`/${project?.slug}/layers`}
+                        href={`/${project?.slug}/layers?view=map`}
                         class="h-48"
                     />
                 </section>

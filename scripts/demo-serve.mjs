@@ -113,8 +113,29 @@ if (autoStartApp) {
 }
 
 const server = http.createServer((req, res) => {
-  const urlPath = req.url || "/";
-  proxy(req, res, proxyTarget(urlPath));
+  const urlPath = (req.url || "").split("?")[0];
+  if (urlPath === "/cesium/Cesium.js") {
+    const accept = req.headers["accept-encoding"] || "";
+    if (String(accept).includes("gzip")) {
+      const candidates = [
+        path.join(root, "build", "client", "cesium", "Cesium.js.gz"),
+        path.join(root, "static", "cesium", "Cesium.js.gz"),
+      ];
+      for (const gzPath of candidates) {
+        if (!fs.existsSync(gzPath)) continue;
+        const st = fs.statSync(gzPath);
+        res.writeHead(200, {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Content-Encoding": "gzip",
+          "Content-Length": st.size,
+          Vary: "Accept-Encoding",
+        });
+        fs.createReadStream(gzPath).pipe(res);
+        return;
+      }
+    }
+  }
+  proxy(req, res, proxyTarget(req.url || "/"));
 });
 
 server.listen(port, "0.0.0.0", () => {

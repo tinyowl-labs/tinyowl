@@ -263,30 +263,20 @@
         </button>
 
         {#if onSetDim}
-            <!-- 2D / 3D — above fullscreen -->
             <button
                 type="button"
-                class="{railBtn} border-b border-border {dim === '2d'
-                    ? 'bg-secondary text-foreground'
-                    : ''}"
-                title="2D map"
-                aria-label="2D map"
-                aria-pressed={dim === "2d"}
-                onclick={() => onSetDim("2d")}
+                class="{railBtn} border-b border-border bg-secondary text-foreground"
+                title={dim === "3d" ? "Switch to 2D" : "Switch to 3D"}
+                aria-label={dim === "3d"
+                    ? "3D view, switch to 2D"
+                    : "2D map, switch to 3D"}
+                onclick={() => onSetDim(dim === "3d" ? "2d" : "3d")}
             >
-                <MapIcon class="size-3.5" />
-            </button>
-            <button
-                type="button"
-                class="{railBtn} border-b border-border {dim === '3d'
-                    ? 'bg-secondary text-foreground'
-                    : ''}"
-                title="3D view"
-                aria-label="3D view"
-                aria-pressed={dim === "3d"}
-                onclick={() => onSetDim("3d")}
-            >
-                <BoxIcon class="size-3.5" />
+                {#if dim === "3d"}
+                    <BoxIcon class="size-3.5" />
+                {:else}
+                    <MapIcon class="size-3.5" />
+                {/if}
             </button>
         {/if}
 

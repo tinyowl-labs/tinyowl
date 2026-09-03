@@ -81,12 +81,54 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		}
 	} catch (_) {}
 
+	const samples: Record<string, string[]> = {};
+	const dump = new Set([
+		"geom",
+		"geometry",
+		"fid",
+		"pk",
+		"photo",
+		"photomodel",
+		"scan_3d",
+		"media",
+		"source_id",
+	]);
+	await Promise.all(
+		Object.keys(tables).map(async (table) => {
+			try {
+				const res = await fetch(
+					`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${encodeURIComponent(table)}/rows?limit=80`,
+					{ headers: { Authorization: `Bearer ${accessToken}` } },
+				);
+				if (!res.ok) return;
+				const data = await res.json();
+				const rows: Record<string, unknown>[] = data.rows ?? [];
+				for (const row of rows) {
+					for (const [col, raw] of Object.entries(row)) {
+						const n = col.toLowerCase();
+						if (dump.has(n) || n.endsWith("_photo") || n.endsWith("_geom")) {
+							continue;
+						}
+						if (raw == null || typeof raw === "object") continue;
+						const s = String(raw).trim();
+						if (!s || s.length > 80) continue;
+						const key = `${table}|${col}`.toLowerCase();
+						const list = samples[key] ?? (samples[key] = []);
+						if (list.length >= 40 || list.includes(s)) continue;
+						list.push(s);
+					}
+				}
+			} catch (_) {}
+		}),
+	);
+
 	return {
 		accessToken: accessToken ?? "",
 		role,
 		mappings,
 		annotations,
 		tables,
+		samples,
 		slug,
 	};
 };

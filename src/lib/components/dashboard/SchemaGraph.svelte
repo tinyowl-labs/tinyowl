@@ -6,6 +6,7 @@
         MiniMap,
         Panel,
         MarkerType,
+        ConnectionMode,
         type Node,
         type Edge,
         type NodeTypes,
@@ -65,6 +66,62 @@
         return HEADER_H + t.columns.length * ROW_H + 4;
     }
 
+    function nodeCenterX(n: Node): number {
+        const w = n.measured?.width ?? NODE_W;
+        return n.position.x + w / 2;
+    }
+
+    function sideHandles(
+        sourceCol: string,
+        targetCol: string,
+        source: Node,
+        target: Node,
+    ): { sourceHandle: string; targetHandle: string } {
+        const dx = nodeCenterX(target) - nodeCenterX(source);
+        if (Math.abs(dx) < NODE_W * 0.35) {
+            return {
+                sourceHandle: `${sourceCol}__sr`,
+                targetHandle: `${targetCol}__tr`,
+            };
+        }
+        if (dx >= 0) {
+            return {
+                sourceHandle: `${sourceCol}__sr`,
+                targetHandle: `${targetCol}__tl`,
+            };
+        }
+        return {
+            sourceHandle: `${sourceCol}__sl`,
+            targetHandle: `${targetCol}__tr`,
+        };
+    }
+
+    function applySides(nodes: Node[], flowEdges: Edge[]): Edge[] {
+        const byId = new Map(nodes.map((n) => [n.id, n]));
+        let changed = false;
+        const next = flowEdges.map((e) => {
+            const sourceCol = String(
+                (e.data as { sourceCol?: string } | undefined)?.sourceCol ?? "",
+            );
+            const targetCol = String(
+                (e.data as { targetCol?: string } | undefined)?.targetCol ?? "",
+            );
+            const s = byId.get(e.source);
+            const t = byId.get(e.target);
+            if (!s || !t || !sourceCol || !targetCol) return e;
+            const handles = sideHandles(sourceCol, targetCol, s, t);
+            if (
+                e.sourceHandle === handles.sourceHandle &&
+                e.targetHandle === handles.targetHandle
+            ) {
+                return e;
+            }
+            changed = true;
+            return { ...e, ...handles };
+        });
+        return changed ? next : flowEdges;
+    }
+
     function layout(
         tables: SchemaTable[],
         edges: SchemaEdge[],
@@ -112,47 +169,130 @@
             if (!ranks.has(t.name)) ranks.set(t.name, 0);
         }
 
+        const linked = new Set<string>();
+        for (const e of edges) {
+            linked.add(e.source);
+            linked.add(e.target);
+        }
+        const connected = tables.filter((t) => linked.has(t.name));
+        const isolated = tables.filter((t) => !linked.has(t.name));
+
+        function makeNode(
+            t: SchemaTable,
+            x: number,
+            y: number,
+        ): Node {
+            return {
+                id: t.name,
+                type: "schemaTable",
+                position: { x, y },
+                style: `width:${NODE_W}px`,
+                data: {
+                    label: t.label || t.name,
+                    columns: t.columns,
+                    count: t.count,
+                    highlighted: [...(highlighted.get(t.name) ?? [])],
+                },
+            };
+        }
+
+        function columnHeight(list: SchemaTable[]): number {
+            if (!list.length) return 0;
+            let h = 0;
+            for (const t of list) h += nodeHeight(t) + GAP_Y;
+            return h - GAP_Y;
+        }
+
+        function placeColumn(
+            list: SchemaTable[],
+            colIndex: number,
+            y0: number,
+        ): Node[] {
+            const x = colIndex * (NODE_W + GAP_X);
+            let y = y0;
+            const out: Node[] = [];
+            for (const t of list) {
+                out.push(makeNode(t, x, y));
+                y += nodeHeight(t) + GAP_Y;
+            }
+            return out;
+        }
+
+        /** Prefer landscape: cap how many tables stack in one column. */
+        const maxStack = Math.max(
+            2,
+            Math.ceil(Math.sqrt(Math.max(tables.length, 1))),
+        );
+
+        const columns: SchemaTable[][] = [];
         const byRank = new Map<number, SchemaTable[]>();
-        for (const t of tables) {
+        for (const t of connected) {
             const r = ranks.get(t.name) ?? 0;
             if (!byRank.has(r)) byRank.set(r, []);
             byRank.get(r)!.push(t);
         }
         for (const list of byRank.values()) {
-            list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+            list.sort(
+                (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+            );
         }
-
-        const rankHeights = new Map<number, number>();
-        for (const [rank, list] of byRank) {
-            let h = 0;
-            for (const t of list) h += nodeHeight(t) + GAP_Y;
-            rankHeights.set(rank, Math.max(0, h - GAP_Y));
-        }
-        const maxH = Math.max(0, ...rankHeights.values());
-
-        const nodes: Node[] = [];
-        for (const [rank, list] of [...byRank.entries()].sort(
-            (a, b) => a[0] - b[0],
-        )) {
-            const colH = rankHeights.get(rank) ?? 0;
-            let y = (maxH - colH) / 2;
-            for (const t of list) {
-                const h = nodeHeight(t);
-                nodes.push({
-                    id: t.name,
-                    type: "schemaTable",
-                    position: { x: rank * (NODE_W + GAP_X), y },
-                    style: `width:${NODE_W}px`,
-                    data: {
-                        label: t.label || t.name,
-                        columns: t.columns,
-                        count: t.count,
-                        highlighted: [...(highlighted.get(t.name) ?? [])],
-                    },
-                });
-                y += h + GAP_Y;
+        for (const rank of [...byRank.keys()].sort((a, b) => a - b)) {
+            let bucket: SchemaTable[] = [];
+            columns.push(bucket);
+            for (const t of byRank.get(rank) ?? []) {
+                if (bucket.length >= maxStack) {
+                    bucket = [];
+                    columns.push(bucket);
+                }
+                bucket.push(t);
             }
         }
+
+        isolated.sort(
+            (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+        );
+        if (isolated.length) {
+            const isoCols = Math.min(
+                isolated.length,
+                Math.max(2, Math.ceil(Math.sqrt(isolated.length * 1.6))),
+            );
+            const isoBuckets: SchemaTable[][] = Array.from(
+                { length: isoCols },
+                () => [],
+            );
+            isolated.forEach((t, i) => {
+                isoBuckets[i % isoCols]!.push(t);
+            });
+            for (const bucket of isoBuckets) {
+                if (bucket.length) columns.push(bucket);
+            }
+        }
+
+        if (columns.length === 0 && tables.length) {
+            const cols = Math.min(
+                tables.length,
+                Math.max(2, Math.ceil(Math.sqrt(tables.length * 1.6))),
+            );
+            const buckets: SchemaTable[][] = Array.from(
+                { length: cols },
+                () => [],
+            );
+            const sorted = [...tables].sort(
+                (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+            );
+            sorted.forEach((t, i) => buckets[i % cols]!.push(t));
+            for (const bucket of buckets) {
+                if (bucket.length) columns.push(bucket);
+            }
+        }
+
+        const colHeights = columns.map(columnHeight);
+        const maxH = Math.max(0, ...colHeights);
+        const nodes: Node[] = [];
+        columns.forEach((list, i) => {
+            const y0 = (maxH - (colHeights[i] ?? 0)) / 2;
+            nodes.push(...placeColumn(list, i, y0));
+        });
 
         const tableSet = new Set(tables.map((t) => t.name));
         const colByTable = new Map(
@@ -180,16 +320,25 @@
         const flowEdges: Edge[] = edges
             .filter((e) => tableSet.has(e.source) && tableSet.has(e.target))
             .map((e) => {
-                const sourceHandle = resolveHandle(
+                const sourceCol = resolveHandle(
                     e.source,
                     e.source_column,
                     e.source_column,
                 );
-                const targetHandle = resolveHandle(
+                const targetCol = resolveHandle(
                     e.target,
                     e.target_column,
                     "source_id",
                 );
+                const srcNode = nodes.find((n) => n.id === e.source);
+                const tgtNode = nodes.find((n) => n.id === e.target);
+                const handles =
+                    srcNode && tgtNode
+                        ? sideHandles(sourceCol, targetCol, srcNode, tgtNode)
+                        : {
+                              sourceHandle: `${sourceCol}__sr`,
+                              targetHandle: `${targetCol}__tl`,
+                          };
                 const label =
                     e.label ||
                     (e.count
@@ -205,8 +354,8 @@
                     id: e.id,
                     source: e.source,
                     target: e.target,
-                    sourceHandle,
-                    targetHandle,
+                    sourceHandle: handles.sourceHandle,
+                    targetHandle: handles.targetHandle,
                     label,
                     type: "smoothstep",
                     animated: e.kind === "relation",
@@ -224,6 +373,7 @@
                         "fill: var(--color-background); fill-opacity: 0.88;",
                     labelBgPadding: [3, 5] as [number, number],
                     labelBgBorderRadius: 4,
+                    data: { sourceCol, targetCol, kind: e.kind },
                 } as Edge;
             });
 
@@ -237,6 +387,18 @@
         const built = layout(tables, schemaEdges);
         nodes = built.nodes;
         edges = built.flowEdges;
+    });
+
+    $effect(() => {
+        const key = nodes
+            .map(
+                (n) =>
+                    `${n.id}:${Math.round(n.position.x)}:${Math.round(n.position.y)}`,
+            )
+            .join("|");
+        void key;
+        const routed = applySides(nodes, edges);
+        if (routed !== edges) edges = routed;
     });
 </script>
 
@@ -267,6 +429,7 @@
             nodesDraggable={true}
             nodesConnectable={false}
             elementsSelectable={true}
+            connectionMode={ConnectionMode.Loose}
             defaultEdgeOptions={{ type: "smoothstep" }}
             proOptions={{ hideAttribution: true }}
             colorMode={flowColorMode}

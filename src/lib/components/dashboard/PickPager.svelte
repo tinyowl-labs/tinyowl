@@ -96,7 +96,7 @@
 
 {#if open && current}
     <div
-        class="pointer-events-auto z-1000 w-64 max-w-[min(16rem,calc(100%-1.5rem))] overflow-hidden rounded-lg border border-border bg-background/98 text-xs shadow-lg backdrop-blur-sm {placement ===
+        class="pointer-events-auto z-[1100] w-64 max-w-[min(16rem,calc(100%-1.5rem))] overflow-hidden rounded-lg border border-border bg-background/98 text-xs shadow-lg backdrop-blur-sm {placement ===
         'pinned'
             ? 'absolute bottom-12 left-3'
             : 'absolute'}"
@@ -105,6 +105,8 @@
             : undefined}
         role="dialog"
         aria-label="Picked entity"
+        onpointerdown={(e) => e.stopPropagation()}
+        onclick={(e) => e.stopPropagation()}
     >
         <div
             class="flex items-start gap-2 border-b border-border px-2.5 py-2"

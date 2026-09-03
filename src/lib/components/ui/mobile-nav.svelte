@@ -6,12 +6,14 @@
     let {
         open = $bindable(false),
         title = "",
+        titleHref = "",
         /** Visibility class for the FAB and overlay (match the desktop nav breakpoint). */
         toggleClass = "lg:hidden",
         children,
     }: {
         open?: boolean;
         title?: string;
+        titleHref?: string;
         toggleClass?: string;
         children: import("svelte").Snippet;
     } = $props();
@@ -46,7 +48,16 @@
         <div
             class="flex items-center justify-between px-4 h-11 border-b border-border shrink-0"
         >
-            <span class="text-sm font-semibold">{title}</span>
+            {#if titleHref}
+                <a
+                    href={titleHref}
+                    onclick={close}
+                    class="min-w-0 truncate text-sm font-semibold text-foreground no-underline"
+                    >{title}</a
+                >
+            {:else}
+                <span class="text-sm font-semibold">{title}</span>
+            {/if}
             <button
                 onclick={close}
                 class="flex items-center justify-center size-8 rounded-md text-muted-foreground hover:text-foreground transition-colors"

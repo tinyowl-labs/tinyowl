@@ -3,7 +3,13 @@
  * Uses geotiff.js (Range requests when the server supports them).
  */
 import { fromUrl, type GeoTIFFImage } from "geotiff";
-import type { ProjectCoverage } from "./coverageTypes";
+import {
+    looksGeographic,
+    rectangleFromMeta,
+    type ProjectCoverage,
+} from "./coverageTypes";
+
+export { looksGeographic, rectangleFromMeta };
 
 export type CoverageImageryResult = {
     hash: string;
@@ -23,34 +29,6 @@ function mediaUrl(
     if (!accessToken) return base;
     const sep = base.includes("?") ? "&" : "?";
     return `${base}${sep}token=${encodeURIComponent(accessToken)}`;
-}
-
-export function looksGeographic(
-    west: number,
-    south: number,
-    east: number,
-    north: number,
-): boolean {
-    return (
-        west >= -180 &&
-        east <= 180 &&
-        south >= -90 &&
-        north <= 90 &&
-        west < east &&
-        south < north
-    );
-}
-
-export function rectangleFromMeta(
-    cov: ProjectCoverage,
-): { west: number; south: number; east: number; north: number } | null {
-    if (cov.bbox_wgs84 && cov.bbox_wgs84.length === 4) {
-        const [west, south, east, north] = cov.bbox_wgs84;
-        if (looksGeographic(west, south, east, north)) {
-            return { west, south, east, north };
-        }
-    }
-    return null;
 }
 
 function rectangleFromCoverage(

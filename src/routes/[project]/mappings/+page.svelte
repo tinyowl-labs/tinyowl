@@ -1,7 +1,6 @@
 <script lang="ts">
     import { page } from "$app/stores";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
-    import { Tabs } from "$lib/components/ui/tabs/index.js";
     import MappingWorkbench from "$lib/components/settings/MappingWorkbench.svelte";
 
     let { data, form: rawForm } = $props();
@@ -15,12 +14,32 @@
     const tables = $derived(
         ((data as any)?.tables as Record<string, string[]>) ?? {},
     );
+    const samples = $derived(
+        ((data as any)?.samples as Record<string, string[]>) ?? {},
+    );
 
-    let activeTab = $state("values");
+    function isDumpColumn(name: string): boolean {
+        const n = name.toLowerCase();
+        return (
+            n === "geom" ||
+            n === "geometry" ||
+            n === "fid" ||
+            n === "pk" ||
+            n === "photo" ||
+            n === "photomodel" ||
+            n === "scan_3d" ||
+            n === "media" ||
+            n.endsWith("_photo") ||
+            n.endsWith("_geom")
+        );
+    }
 
     const columnRows = $derived.by(() => {
         const byKey = new Map(
-            annotations.map((a: any) => [`${a.entity_type}|${a.column_name}`, a]),
+            annotations.map((a: any) => [
+                `${a.entity_type}|${a.column_name}`.toLowerCase(),
+                a,
+            ]),
         );
         const rows: {
             entity_type: string;
@@ -33,7 +52,8 @@
 
         for (const [table, cols] of Object.entries(tables)) {
             for (const col of cols ?? []) {
-                const key = `${table}|${col}`;
+                if (isDumpColumn(col)) continue;
+                const key = `${table}|${col}`.toLowerCase();
                 seen.add(key);
                 const a = byKey.get(key) as any;
                 rows.push({
@@ -46,8 +66,10 @@
             }
         }
         for (const a of annotations) {
-            const key = `${a.entity_type}|${a.column_name}`;
-            if (seen.has(key)) continue;
+            const key = `${a.entity_type}|${a.column_name}`.toLowerCase();
+            if (seen.has(key) || isDumpColumn(String(a.column_name ?? ""))) {
+                continue;
+            }
             rows.push({
                 entity_type: a.entity_type,
                 column_name: a.column_name,
@@ -62,11 +84,6 @@
                 a.column_name.localeCompare(b.column_name),
         );
     });
-
-    const tabs = $derived([
-        { value: "values", label: "Values", count: mappings.length },
-        { value: "columns", label: "Columns", count: columnRows.length },
-    ]);
 </script>
 
 <svelte:head>
@@ -83,8 +100,9 @@
                 </h1>
             </div>
             <p class="mt-1 text-sm text-muted-foreground">
-                Link project columns and values to shared vocabularies and CRM
-                properties
+                Opt a column into PeriodO, AAT, or CRM, then link its local
+                labels to a shared concept URI. Other projects can use different
+                wording if they share the URI.
             </p>
         </div>
         <a
@@ -96,23 +114,10 @@
         </a>
     </div>
 
-    <Tabs bind:value={activeTab} {tabs}>
-        {#snippet children(tabValue: string)}
-            {#if tabValue === "values"}
-                <MappingWorkbench
-                    mode="values"
-                    rows={mappings}
-                    {form}
-                    description="Map distinct values to external concepts. Multi-value (array) cells are exploded into one row per element — FK lists show the related label when available. Manual UI mappings are preserved on TOML push."
-                />
-            {:else if tabValue === "columns"}
-                <MappingWorkbench
-                    mode="columns"
-                    rows={columnRows}
-                    {form}
-                    description="Assign a CRM property to each column (e.g. crm:P2_has_type). Vocabulary is separate — usually set from TOML."
-                />
-            {/if}
-        {/snippet}
-    </Tabs>
+    <MappingWorkbench
+        columns={columnRows}
+        values={mappings}
+        {samples}
+        {form}
+    />
 </article>

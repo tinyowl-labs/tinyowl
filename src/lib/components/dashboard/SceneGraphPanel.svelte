@@ -28,6 +28,7 @@
         modelVisible?: (hash: string) => boolean;
         coverageVisible?: (hash: string) => boolean;
         onToggleModel?: (hash: string) => void;
+        onSetModelsVisible?: (visible: boolean) => void;
         onToggleCoverage?: (hash: string) => void;
         onToggleLayer?: (idx: number) => void;
         onApplyHidden?: () => void;
@@ -35,6 +36,7 @@
         /** Fly camera to a whole layer's extent without requiring selection. */
         onFlyToLayer?: (layerName: string) => void;
         onFlyToCoverage?: (hash: string) => void;
+        onFlyToModel?: (hash: string) => void;
         pendingModels?: number;
         palette?: string[];
         inViewEntityKeys?: string[];
@@ -50,12 +52,14 @@
         modelVisible = () => true,
         coverageVisible = () => true,
         onToggleModel,
+        onSetModelsVisible,
         onToggleCoverage,
         onToggleLayer,
         onApplyHidden,
         onFlyTo,
         onFlyToLayer,
         onFlyToCoverage,
+        onFlyToModel,
         pendingModels = 0,
         palette = [],
         inViewEntityKeys = [],
@@ -64,7 +68,7 @@
     }: Props = $props();
 
     let query = $state("");
-    let modelsOpen = $state(false);
+    let modelsOpen = $state(true);
     let coveragesOpen = $state(true);
     let layerOpen = $state<Record<string, boolean>>({});
     let rangeAnchorKey = $state<string | null>(null);
@@ -76,6 +80,14 @@
         keys: string[];
     } | null>(null);
     let layerMenuEl = $state<HTMLDivElement>();
+    let tilesetMenu = $state<{
+        hash: string;
+        label: string;
+        x: number;
+        y: number;
+        visible: boolean;
+    } | null>(null);
+    let tilesetMenuEl = $state<HTMLDivElement>();
 
     const selectionSig = $derived(
         `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}`,
@@ -240,11 +252,27 @@
         keys: string[],
     ) {
         ev.preventDefault();
+        closeTilesetMenu();
         layerMenu = { name: layerName, idx, x: ev.clientX, y: ev.clientY, keys };
     }
 
     function closeLayerMenu() {
         layerMenu = null;
+    }
+
+    function openTilesetMenu(
+        ev: MouseEvent,
+        hash: string,
+        label: string,
+        visible: boolean,
+    ) {
+        ev.preventDefault();
+        closeLayerMenu();
+        tilesetMenu = { hash, label, x: ev.clientX, y: ev.clientY, visible };
+    }
+
+    function closeTilesetMenu() {
+        tilesetMenu = null;
     }
 
     function selectAllInLayer(keys: string[]) {
@@ -315,14 +343,21 @@
     });
 
     $effect(() => {
-        if (!layerMenu) return;
+        if (!layerMenu && !tilesetMenu) return;
         const onDoc = (ev: MouseEvent) => {
-            if (layerMenuEl && !layerMenuEl.contains(ev.target as Node)) {
+            const t = ev.target as Node;
+            if (layerMenuEl && !layerMenuEl.contains(t) && layerMenu) {
                 closeLayerMenu();
+            }
+            if (tilesetMenuEl && !tilesetMenuEl.contains(t) && tilesetMenu) {
+                closeTilesetMenu();
             }
         };
         const onKey = (ev: KeyboardEvent) => {
-            if (ev.key === "Escape") closeLayerMenu();
+            if (ev.key === "Escape") {
+                closeLayerMenu();
+                closeTilesetMenu();
+            }
         };
         const t = setTimeout(() => {
             document.addEventListener("mousedown", onDoc);
@@ -395,22 +430,39 @@
 
     <div class="min-h-0 flex-1 overflow-y-auto p-1">
         {#if models.length > 0}
-            <button
-                type="button"
-                class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-secondary"
-                onclick={() => (modelsOpen = !modelsOpen)}
+            {@const anyModelVisible = models.some((m) => modelVisible(m.hash))}
+            <div
+                class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
             >
-                <ChevronDownIcon
-                    class="size-3.5 shrink-0 transition-transform {modelsOpen
-                        ? ''
-                        : '-rotate-90'}"
-                />
-                <BoxIcon class="size-3.5 shrink-0" />
-                <span class="truncate">3D models</span>
-                <span class="ml-auto tabular-nums opacity-60"
-                    >{filteredModels.length}</span
+                <button
+                    type="button"
+                    class="flex min-w-0 flex-1 items-center gap-1 rounded-md px-0.5 py-0.5 text-left hover:bg-secondary"
+                    onclick={() => (modelsOpen = !modelsOpen)}
                 >
-            </button>
+                    <ChevronDownIcon
+                        class="size-3.5 shrink-0 transition-transform {modelsOpen
+                            ? ''
+                            : '-rotate-90'}"
+                    />
+                    <BoxIcon class="size-3.5 shrink-0" />
+                    <span class="truncate">3D models</span>
+                    <span class="ml-auto tabular-nums opacity-60"
+                        >{filteredModels.length}</span
+                    >
+                </button>
+                <button
+                    type="button"
+                    class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
+                    title={anyModelVisible ? "Hide all models" : "Show all models"}
+                    onclick={() => onSetModelsVisible?.(!anyModelVisible)}
+                >
+                    {#if anyModelVisible}
+                        <EyeIcon class="size-3" />
+                    {:else}
+                        <EyeOffIcon class="size-3 opacity-50" />
+                    {/if}
+                </button>
+            </div>
             {#if modelsOpen}
                 <div class="mb-1 space-y-0.5 {childIndent}">
                     {#each filteredModels as m, idx}
@@ -418,11 +470,18 @@
                         {@const local = isLocalTileset(m)}
                         <div
                             class="flex w-full items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary"
+                            oncontextmenu={(e) =>
+                                openTilesetMenu(
+                                    e,
+                                    m.hash,
+                                    m.label || m.hash.slice(0, 12),
+                                    visible,
+                                )}
                         >
                             <button
                                 type="button"
                                 class="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-0.5 text-left"
-                                onclick={() => onToggleModel?.(m.hash)}
+                                onclick={() => onFlyToModel?.(m.hash)}
                                 title={local
                                     ? `${m.label || m.hash} (not georeferenced)`
                                     : m.label || m.hash}
@@ -715,7 +774,7 @@
 {#if layerMenu}
     <div
         bind:this={layerMenuEl}
-        class="fixed z-10000 w-48 overflow-hidden rounded-lg border border-border bg-background/98 p-1 shadow-lg backdrop-blur-sm"
+        class="fixed z-[10000] w-48 overflow-hidden rounded-lg border border-border bg-background/98 p-1 shadow-lg backdrop-blur-sm"
         style="left: {layerMenu.x}px; top: {layerMenu.y}px"
         role="menu"
     >
@@ -768,6 +827,50 @@
             {:else}
                 <EyeIcon class="size-3.5 shrink-0 text-muted-foreground" />
                 Show layer
+            {/if}
+        </button>
+    </div>
+{/if}
+
+{#if tilesetMenu}
+    <div
+        bind:this={tilesetMenuEl}
+        class="fixed z-[10000] w-48 overflow-hidden rounded-lg border border-border bg-background/98 p-1 shadow-lg backdrop-blur-sm"
+        style="left: {tilesetMenu.x}px; top: {tilesetMenu.y}px"
+        role="menu"
+    >
+        <div
+            class="truncate px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+        >
+            {tilesetMenu.label}
+        </div>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={() => {
+                onFlyToModel?.(tilesetMenu!.hash);
+                closeTilesetMenu();
+            }}
+        >
+            <CrosshairIcon class="size-3.5 shrink-0 text-muted-foreground" />
+            Fly to
+        </button>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={() => {
+                onToggleModel?.(tilesetMenu!.hash);
+                closeTilesetMenu();
+            }}
+        >
+            {#if tilesetMenu.visible}
+                <EyeOffIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                Hide
+            {:else}
+                <EyeIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                Show
             {/if}
         </button>
     </div>

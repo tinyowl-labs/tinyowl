@@ -2,10 +2,11 @@
     import { page } from "$app/stores";
     import { browser } from "$app/environment";
     import type { Component } from "svelte";
-    import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
     import GaugeIcon from "@lucide/svelte/icons/gauge";
     import ArchiveIcon from "@lucide/svelte/icons/archive";
-    import LayersIcon from "@lucide/svelte/icons/layers";
+    import MapIcon from "@lucide/svelte/icons/map";
+    import TableIcon from "@lucide/svelte/icons/table";
+    import DownloadIcon from "@lucide/svelte/icons/download";
     import Settings from "@lucide/svelte/icons/settings";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -43,6 +44,12 @@
     const workspace = $derived(
         isWorkspacePath($page.url.pathname, data?.slug),
     );
+    const gpkgUri = $derived(
+        ((project as { gpkg_uri?: string | null })?.gpkg_uri as
+            | string
+            | null
+            | undefined) ?? null,
+    );
 
     type NavItem = {
         label: string;
@@ -59,22 +66,17 @@
         const slug = data?.slug;
         const groups: NavGroup[] = [
             {
-                label: "Details",
-                items: [
-                    {
-                        label: "Overview",
-                        href: `/${slug}`,
-                        icon: LayoutDashboardIcon,
-                    },
-                ],
-            },
-            {
                 label: "Data",
                 items: [
                     {
-                        label: "Layers",
-                        href: `/${slug}/layers`,
-                        icon: LayersIcon,
+                        label: "Map",
+                        href: `/${slug}/layers?view=map`,
+                        icon: MapIcon,
+                    },
+                    {
+                        label: "Tables",
+                        href: `/${slug}/layers?view=table`,
+                        icon: TableIcon,
                     },
                     {
                         label: "Artefacts",
@@ -87,6 +89,15 @@
                                   label: "Import",
                                   href: `/${slug}/import`,
                                   icon: FileUpIcon,
+                              },
+                          ]
+                        : []),
+                    ...(gpkgUri
+                        ? [
+                              {
+                                  label: "GeoPackage",
+                                  href: gpkgUri,
+                                  icon: DownloadIcon,
                               },
                           ]
                         : []),
@@ -128,10 +139,25 @@
     );
 
     function isActive(href: string) {
+        const slugRoot = `/${data?.slug}`;
+        const q = href.indexOf("?");
+        const hrefPath = q >= 0 ? href.slice(0, q) : href;
+        const hrefSearch = q >= 0 ? href.slice(q + 1) : "";
         const path = $page.url.pathname;
-        if (path === href) return true;
-        if (href !== `/${data?.slug}`) return path.startsWith(href + "/");
-        return false;
+
+        if (hrefPath === slugRoot) return path === hrefPath;
+        if (path !== hrefPath) return path.startsWith(hrefPath + "/");
+
+        if (hrefPath === `${slugRoot}/layers`) {
+            const want = new URLSearchParams(hrefSearch).get("view");
+            const cur = $page.url.searchParams.get("view") ?? "";
+            const onMap = cur === "map" || cur === "3d" || cur === "";
+            if (want === "map") return onMap;
+            if (want === "table") return cur === "table" || cur === "schema";
+            if (!want) return onMap;
+            return cur === want;
+        }
+        return true;
     }
 
     function isGroupActive(group: NavGroup) {
@@ -165,50 +191,66 @@
 </svelte:head>
 
 <div class="flex flex-col h-screen overflow-hidden">
-    <Header subtitle={project?.title} {hasSession}>
+    <Header
+        subtitle={project?.title}
+        subtitleHref={data?.slug ? `/${data.slug}` : ""}
+        {hasSession}
+    >
         {#snippet leading()}
             <nav
                 class="ml-1 hidden items-center gap-1.5 md:flex"
                 aria-label="Project"
             >
                 {#each navGroups as group}
-                    <div class="group/navitem relative">
+                    {#if group.items.length === 1}
                         <a
                             href={group.items[0].href}
-                            class={navTriggerClass(isGroupActive(group))}
-                            aria-haspopup="menu"
-                            aria-current={isGroupActive(group)
-                                ? "true"
+                            class={navTriggerClass(isActive(group.items[0].href))}
+                            aria-current={isActive(group.items[0].href)
+                                ? "page"
                                 : undefined}
                         >
-                            {group.label}
-                            <ChevronDownIcon class="size-3 opacity-60" />
+                            {group.items[0].label}
                         </a>
-                        <div
-                            role="menu"
-                            class="invisible absolute left-0 top-full z-50 min-w-44 pt-2 opacity-0 pointer-events-none group-hover/navitem:visible group-hover/navitem:opacity-100 group-hover/navitem:pointer-events-auto group-focus-within/navitem:visible group-focus-within/navitem:opacity-100 group-focus-within/navitem:pointer-events-auto"
-                        >
-                            <div
-                                class="rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+                    {:else}
+                        <div class="group/navitem relative">
+                            <a
+                                href={group.items[0].href}
+                                class={navTriggerClass(isGroupActive(group))}
+                                aria-haspopup="menu"
+                                aria-current={isGroupActive(group)
+                                    ? "true"
+                                    : undefined}
                             >
-                                {#each group.items as item}
-                                    <a
-                                        href={item.href}
-                                        role="menuitem"
-                                        class={cn(
-                                            "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-xs no-underline outline-none select-none [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
-                                            isActive(item.href)
-                                                ? "bg-secondary font-medium text-foreground"
-                                                : "text-popover-foreground hover:bg-accent hover:text-accent-foreground",
-                                        )}
-                                    >
-                                        <item.icon />
-                                        {item.label}
-                                    </a>
-                                {/each}
+                                {group.label}
+                                <ChevronDownIcon class="size-3 opacity-60" />
+                            </a>
+                            <div
+                                role="menu"
+                                class="invisible absolute left-0 top-full z-50 min-w-44 pt-2 opacity-0 pointer-events-none group-hover/navitem:visible group-hover/navitem:opacity-100 group-hover/navitem:pointer-events-auto group-focus-within/navitem:visible group-focus-within/navitem:opacity-100 group-focus-within/navitem:pointer-events-auto"
+                            >
+                                <div
+                                    class="rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+                                >
+                                    {#each group.items as item}
+                                        <a
+                                            href={item.href}
+                                            role="menuitem"
+                                            class={cn(
+                                                "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-xs no-underline outline-none select-none [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
+                                                isActive(item.href)
+                                                    ? "bg-secondary font-medium text-foreground"
+                                                    : "text-popover-foreground hover:bg-accent hover:text-accent-foreground",
+                                            )}
+                                        >
+                                            <item.icon />
+                                            {item.label}
+                                        </a>
+                                    {/each}
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    {/if}
                 {/each}
                 {#if settingsHref}
                     <a
@@ -228,34 +270,51 @@
     <MobileNav
         bind:open={mobileOpen}
         title={project?.title ?? "Project"}
+        titleHref={data?.slug ? `/${data.slug}` : ""}
         toggleClass="md:hidden"
     >
         {#snippet children()}
             <nav class="flex flex-col gap-3 p-3">
                 {#each navGroups as group}
-                    <div>
-                        <p
-                            class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
+                    {#if group.items.length === 1}
+                        {@const item = group.items[0]}
+                        <a
+                            href={item.href}
+                            onclick={() => (mobileOpen = false)}
+                            class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
+                                item.href,
+                            )
+                                ? 'bg-secondary text-foreground font-medium'
+                                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
                         >
-                            {group.label}
-                        </p>
-                        <div class="flex flex-col gap-0.5">
-                            {#each group.items as item}
-                                <a
-                                    href={item.href}
-                                    onclick={() => (mobileOpen = false)}
-                                    class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
-                                        item.href,
-                                    )
-                                        ? 'bg-secondary text-foreground font-medium'
-                                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
-                                >
-                                    <item.icon class="size-4 shrink-0" />
-                                    {item.label}
-                                </a>
-                            {/each}
+                            <item.icon class="size-4 shrink-0" />
+                            {item.label}
+                        </a>
+                    {:else}
+                        <div>
+                            <p
+                                class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
+                            >
+                                {group.label}
+                            </p>
+                            <div class="flex flex-col gap-0.5">
+                                {#each group.items as item}
+                                    <a
+                                        href={item.href}
+                                        onclick={() => (mobileOpen = false)}
+                                        class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
+                                            item.href,
+                                        )
+                                            ? 'bg-secondary text-foreground font-medium'
+                                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                                    >
+                                        <item.icon class="size-4 shrink-0" />
+                                        {item.label}
+                                    </a>
+                                {/each}
+                            </div>
                         </div>
-                    </div>
+                    {/if}
                 {/each}
                 {#if settingsHref}
                     <a

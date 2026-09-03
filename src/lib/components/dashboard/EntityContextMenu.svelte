@@ -12,6 +12,9 @@
         y?: number;
         layerName?: string;
         entityId?: string;
+        kind?: "entity" | "tileset";
+        /** Whether the tileset/entity is currently visible. */
+        targetVisible?: boolean;
         /** Total selected count (for multi block). */
         selectionCount?: number;
         /** Whether the context target is in the current multi-selection. */
@@ -20,6 +23,7 @@
         onFlyTo?: () => void;
         onCopyId?: () => void;
         onHide?: () => void;
+        onShow?: () => void;
         onHideAll?: () => void;
         onShowSelected?: () => void;
         onIsolate?: () => void;
@@ -34,12 +38,15 @@
         y = 0,
         layerName = "",
         entityId = "",
+        kind = "entity",
+        targetVisible = true,
         selectionCount = 0,
         targetInSelection = false,
         isolating = false,
         onFlyTo,
         onCopyId,
         onHide,
+        onShow,
         onHideAll,
         onShowSelected,
         onIsolate,
@@ -51,7 +58,10 @@
     let rootEl = $state<HTMLDivElement>();
     let copied = $state(false);
 
-    const showMulti = $derived(selectionCount > 1 && targetInSelection);
+    const isTileset = $derived(kind === "tileset");
+    const showMulti = $derived(
+        !isTileset && selectionCount > 1 && targetInSelection,
+    );
 
     $effect(() => {
         if (!open) {
@@ -94,17 +104,22 @@
 {#if open}
     <div
         bind:this={rootEl}
-        class="pointer-events-auto fixed z-10000 w-52 overflow-hidden rounded-lg border border-border bg-background/98 shadow-lg backdrop-blur-sm"
+        class="pointer-events-auto fixed z-[10000] w-52 overflow-hidden rounded-lg border border-border bg-background/98 shadow-lg backdrop-blur-sm"
         style="left: {x}px; top: {y}px"
         role="menu"
     >
         <div class="border-b border-border px-2.5 py-1.5">
             <div class="truncate text-[11px] font-medium text-foreground">
-                {layerName.replace(/_/g, " ") || "Entity"}
+                {layerName.replace(/_/g, " ") ||
+                    (isTileset ? "3D model" : "Entity")}
             </div>
-            <div class="truncate font-mono text-[10px] text-muted-foreground">
-                {entityId}
-            </div>
+            {#if entityId}
+                <div
+                    class="truncate font-mono text-[10px] text-muted-foreground"
+                >
+                    {entityId}
+                </div>
+            {/if}
         </div>
         {#if showMulti}
             <div
@@ -126,16 +141,18 @@
                 <CrosshairIcon class="size-3.5 shrink-0 text-muted-foreground" />
                 Fly to
             </button>
-            <button
-                type="button"
-                class={itemCls}
-                role="menuitem"
-                onclick={() => void copyId()}
-            >
-                <CopyIcon class="size-3.5 shrink-0 text-muted-foreground" />
-                {copied ? "Copied" : "Copy ID"}
-            </button>
-            {#if onHide}
+            {#if !isTileset}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => void copyId()}
+                >
+                    <CopyIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                    {copied ? "Copied" : "Copy ID"}
+                </button>
+            {/if}
+            {#if targetVisible && onHide}
                 <button
                     type="button"
                     class={itemCls}
@@ -147,6 +164,19 @@
                 >
                     <EyeOffIcon class="size-3.5 shrink-0 text-muted-foreground" />
                     Hide
+                </button>
+            {:else if !targetVisible && onShow}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => {
+                        onShow();
+                        onClose?.();
+                    }}
+                >
+                    <EyeIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                    Show
                 </button>
             {/if}
             {#if showMulti && onHideAll}
@@ -163,7 +193,7 @@
                     Hide all
                 </button>
             {/if}
-            {#if onShowSelected && (showMulti || targetInSelection)}
+            {#if !isTileset && onShowSelected && (showMulti || targetInSelection)}
                 <button
                     type="button"
                     class={itemCls}
@@ -177,7 +207,7 @@
                     Show selected
                 </button>
             {/if}
-            {#if onIsolate && (showMulti || targetInSelection || selectionCount > 0)}
+            {#if !isTileset && onIsolate && (showMulti || targetInSelection || selectionCount > 0)}
                 <button
                     type="button"
                     class={itemCls}
@@ -191,7 +221,7 @@
                     Isolate
                 </button>
             {/if}
-            {#if isolating && onExitIsolate}
+            {#if !isTileset && isolating && onExitIsolate}
                 <button
                     type="button"
                     class={itemCls}
@@ -205,7 +235,7 @@
                     Exit isolate
                 </button>
             {/if}
-            {#if onClear}
+            {#if !isTileset && onClear}
                 <button
                     type="button"
                     class="{itemCls} text-muted-foreground"

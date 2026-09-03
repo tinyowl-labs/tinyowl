@@ -217,12 +217,12 @@ Every column can carry optional annotations that enable data harmonisation:
 
 | Annotation | Purpose | Example |
 |---|---|---|
-| `vocabulary` | Controlled terminology namespace | `"periodo"`, `"aat"`, `"crm"` |
-| `property` | CIDOC CRM property URI | `"crm:P3_has_note"` |
+| `vocabulary` | Opt into a namespace. Shared interop: `"periodo"`, `"aat"`, `"crm"`. Local names (`"find-type"`) stay project-only. Omit entirely for recording-protocol enums. | `"periodo"` |
+| `property` | CIDOC CRM property URI (optional column metadata, not the search join) | `"crm:P3_has_note"` |
 | `range` | CIDOC CRM range class | `"crm:E62_String"` |
 | `references` | Foreign key to another table's `source_id` | `"Contexts.source_id"` |
 
-During push, the server upserts annotations into `column_annotations` (TOML-owned, `source: "toml"`), scans distinct values into `value_mappings` for vocabulary columns, and generates warnings for unmapped terms.
+During push, the server upserts annotations into `column_annotations` (TOML-owned, `source: "toml"`) and scans distinct values into `value_mappings` for columns that declare a vocabulary (including local names). Unmapped-concept warnings fire only for **shared** vocabularies (`periodo`, `aat`, `crm`). Bare enums and local namespaces are QField dropdowns, not a failed PeriodO task.
 
 ### System columns
 
@@ -269,17 +269,26 @@ Each media item can carry consent flags, managed via the web UI (Artefacts → c
 
 ## Column mappings
 
-Column mappings connect your local data values to external standard vocabularies. This is the key to making data **discoverable** and **interoperable** across projects.
+`type = "enum"` is the QField closed list, not a mapping type. Interoperability is a **column annotation** that names a shared namespace, plus **value rows** that bind local labels to the same `concept_uri`.
+
+| Kind | Example | TOML | Hub |
+|---|---|---|---|
+| Recording protocol | compaction, excavation method, `BLK` | `type = "enum"`, no `vocabulary` | Dropdown only. Not scanned into the unmapped-concept queue. |
+| Shared meaning | period, ware, site type | `vocabulary = "periodo"` / `"aat"` / `"crm"` | Distinct values → `value_mappings`. A URI makes the value comparable across projects. |
+
+Local namespaces such as `find-type` are **not** PeriodO/AAT. They may still be scanned for in-project counts; they do not raise unmapped-vocabulary warnings unless you later map a value to an AAT or PeriodO URI yourself.
 
 ### How it works
 
-1. **You declare** a column with `vocabulary = "periodo"` in the TOML
-2. **On push**, the server scans distinct values in that column and creates `value_mappings` rows
-3. **In the web UI** (Mappings → Values), you link local values to concept URIs:
-   - `"Iron Age"` → `periodo:p0v8k4r`
-   - `"Roman"` → `periodo:roman`
-4. **Bulk-apply** — map the same value across multiple tables at once
-5. **Export** — download confirmed mappings as `mappings.toml` for offline review or sharing
+1. **Opt in** — set `vocabulary = "periodo"` (or AAT / CRM) on the column in TOML, or in Mappings → Columns
+2. **On push**, the server scans distinct values into `value_mappings`
+3. **In the web UI** (Mappings → Values), link the local label to a concept URI:
+   - Project A `"barrow"` → `http://vocab.getty.edu/aat/300387599`
+   - Project B `"burial mound"` → the same URI
+4. **Search joins on the URI**, not on identical wording. `vocab=barrow` and `q=barrow` also find the burial-mound project once both rows share the URI
+5. **Bulk-apply** — map the same local value across tables; **export** confirmed rows as `mappings.toml`
+
+Unmapped local strings never become cross-project vocabulary hits.
 
 ### Mapping sources
 
@@ -295,8 +304,8 @@ Manual mappings are never overwritten by auto-scans. TOML annotations skip rows 
 
 | Table | What it holds | Example |
 |---|---|---|
-| `column_annotations` | Per-column vocabulary + CRM property/range | `Contexts.period` → `vocabulary: "periodo"` |
-| `value_mappings` | Per-value concept links | `Contexts.period = "Iron Age"` → `concept_uri: "periodo:p0v8k4r"` |
+| `column_annotations` | Namespace opt-in (`vocabulary`) plus optional CRM property/range | `Contexts.period` → `vocabulary: "periodo"` |
+| `value_mappings` | Local label → `concept_uri` (the cross-project join) | `"barrow"` and `"burial mound"` → the same AAT URI |
 
 ---
 

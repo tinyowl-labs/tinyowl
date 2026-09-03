@@ -19,6 +19,7 @@
 
     let {
         subtitle = "",
+        subtitleHref = "",
         hasSession = false,
         fixed = false,
         /** When set with onSidebarToggle, shows a panel control next to the brand. */
@@ -30,6 +31,8 @@
         leading,
     }: {
         subtitle?: string;
+        /** When set, the subtitle (project title) links here — used as Overview. */
+        subtitleHref?: string;
         hasSession?: boolean;
         fixed?: boolean;
         sidebarCollapsed?: boolean;
@@ -95,10 +98,19 @@
         {/if}
         {#if subtitle}
             <span class="h-4 w-px shrink-0 bg-border"></span>
-            <span
-                class="min-w-0 max-w-[12rem] shrink truncate text-sm font-medium text-foreground md:max-w-[18rem] lg:max-w-[22rem]"
-                title={subtitle}>{subtitle}</span
-            >
+            {#if subtitleHref}
+                <a
+                    href={subtitleHref}
+                    class="min-w-0 max-w-[12rem] shrink truncate text-sm font-medium text-foreground no-underline transition-colors hover:text-foreground/70 md:max-w-[18rem] lg:max-w-[22rem]"
+                    title={subtitle}
+                    >{subtitle}</a
+                >
+            {:else}
+                <span
+                    class="min-w-0 max-w-[12rem] shrink truncate text-sm font-medium text-foreground md:max-w-[18rem] lg:max-w-[22rem]"
+                    title={subtitle}>{subtitle}</span
+                >
+            {/if}
         {/if}
         {#if leading}
             <div class="flex shrink-0 items-center overflow-visible">

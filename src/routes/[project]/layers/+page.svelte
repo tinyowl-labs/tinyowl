@@ -1,16 +1,8 @@
 <script lang="ts">
     import LayersIcon from "@lucide/svelte/icons/layers";
     import TableIcon from "@lucide/svelte/icons/table";
-    import MapIcon from "@lucide/svelte/icons/map";
-    import WaypointsIcon from "@lucide/svelte/icons/waypoints";
-    import DownloadIcon from "@lucide/svelte/icons/download";
     import PanelRightIcon from "@lucide/svelte/icons/panel-right";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
-    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
-    import { DataTable } from "$lib/components/ui/data-table/index.js";
-    import { renderComponent } from "$lib/components/ui/data-table/render-helpers.js";
-    import MediaCell from "$lib/components/ui/media-cell.svelte";
-    import { type ColumnDef, createColumnHelper } from "@tanstack/table-core";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
     import { untrack } from "svelte";
@@ -21,20 +13,17 @@
         entityIdsFromPackets,
         parseNdjsonCzml,
     } from "$lib/components/dashboard/czmlLoad";
-    import SchemaGraph, {
-        type SchemaTable,
-        type SchemaEdge,
+    import type {
+        SchemaTable,
+        SchemaEdge,
     } from "$lib/components/dashboard/SchemaGraph.svelte";
-    import EntityRelationsPanel from "$lib/components/dashboard/EntityRelationsPanel.svelte";
-    import FkLinker from "$lib/components/digitize/FkLinker.svelte";
-    import RowNum from "$lib/components/ui/row-num.svelte";
     import { browser } from "$app/environment";
     import { onMount } from "svelte";
     import {
         layerSelection,
         toSelectionKey,
     } from "$lib/stores/layerSelection.svelte";
-    import LayerScene from "$lib/components/dashboard/LayerScene.svelte";
+    import CesiumLoading from "$lib/components/CesiumLoading.svelte";
 
     let { data } = $props();
 
@@ -44,8 +33,6 @@
             String((data as any)?.role ?? ($page.data as any)?.role ?? "viewer"),
         ),
     );
-    const gpkgUri = $derived(project?.gpkg_uri as string | null);
-    const entityCount = $derived(project?.entity_count as number | null);
     const tables = $derived(
         (data?.tables as Record<string, string[]> | null) ?? {},
     );
@@ -74,95 +61,7 @@
         return tableNames.find((t) => t.toLowerCase() === lower) ?? layerParam;
     });
 
-    const columnHelper = createColumnHelper<Record<string, unknown>>();
-
-    /** Format span / arch_date JSON (or leave plain strings) for table display. */
-    function formatArchDateCell(raw: string): string | null {
-        const s = raw.trim();
-        if (!s.startsWith("{")) return null;
-        try {
-            const ad = JSON.parse(s) as {
-                start?: number;
-                end?: number;
-                label?: string;
-            };
-            if (
-                ad == null ||
-                (ad.label == null && ad.start == null && ad.end == null)
-            ) {
-                return null;
-            }
-            const fmtYear = (y: number) =>
-                y < 0 ? `${Math.abs(y)} BCE` : `${y} CE`;
-            let span = "";
-            if (ad.start != null && ad.end != null && ad.start !== ad.end) {
-                span = `${fmtYear(ad.start)}–${fmtYear(ad.end)}`;
-            } else if (ad.start != null) {
-                span = fmtYear(ad.start);
-            } else if (ad.end != null) {
-                span = fmtYear(ad.end);
-            }
-            if (ad.label && span) return `${ad.label} (${span})`;
-            if (ad.label) return ad.label;
-            return span || s;
-        } catch {
-            return null;
-        }
-    }
-
-    function formatCellValue(val: unknown): string {
-        if (val === null || val === undefined) return "—";
-        if (typeof val === "object") return JSON.stringify(val);
-        const s = String(val);
-        return formatArchDateCell(s) ?? s;
-    }
-
-    function buildColumns(
-        tableName: string,
-    ): ColumnDef<Record<string, unknown>>[] {
-        const cols = tables[tableName] ?? [];
-
-        const mediaCol: ColumnDef<Record<string, unknown>> =
-            columnHelper.display({
-                id: "_media",
-                header: "",
-                cell: (info) => {
-                    const sourceId = (info.row.original.source_id ??
-                        info.row.original.SOURCE_ID ??
-                        "") as string;
-                    const key = `${tableName}:${sourceId}`;
-                    const entityMedia = mediaByEntity[key];
-                    if (!entityMedia || entityMedia.length === 0) return "";
-                    return renderComponent(MediaCell, {
-                        url: entityMedia[0].url,
-                        type: entityMedia[0].media_type,
-                        count: entityMedia.length,
-                    });
-                },
-                size: 50,
-            });
-
-        const dataCols = cols
-            .filter((col) => !/^_?geom/i.test(col))
-            .map((col) =>
-                columnHelper.accessor(col, {
-                    header: col,
-                    cell: (info) => {
-                        const val = info.getValue();
-                        return formatCellValue(val);
-                    },
-                }),
-            );
-
-        const rowNumCol = columnHelper.display({
-            id: "__row_number",
-            header: "#",
-            cell: (info) => renderComponent(RowNum, { n: info.row.index + 1 }),
-            size: 36,
-        });
-
-        return [rowNumCol, mediaCol, ...dataCols];
-    }
+    const SCHEMA_TAB = "__schema";
 
     const tabs = $derived(
         tableNames.map((name) => ({
@@ -172,16 +71,14 @@
         })),
     );
 
-    const columnsByTable = $derived.by(() => {
-        const out: Record<
-            string,
-            ColumnDef<Record<string, unknown>>[]
-        > = {};
-        for (const name of tableNames) {
-            out[name] = buildColumns(name);
-        }
-        return out;
-    });
+    const dataTabs = $derived([
+        {
+            value: SCHEMA_TAB,
+            label: "Schema",
+            separatorAfter: true,
+        },
+        ...tabs,
+    ]);
 
     let activeTab = $state(
         untrack(() =>
@@ -190,6 +87,28 @@
                 : (tableNames[0] ?? ""),
         ),
     );
+
+    const dataTabValue = $derived(
+        viewMode === "schema" ? SCHEMA_TAB : activeTab,
+    );
+
+    type LayersColumns = Record<
+        string,
+        ReturnType<typeof import("./tableColumns").buildColumns>
+    >;
+    let tableColumnBuilder = $state<
+        typeof import("./tableColumns").buildColumns | null
+    >(null);
+
+    const columnsByTable = $derived.by(() => {
+        const build = tableColumnBuilder;
+        const out: LayersColumns = {};
+        if (!build) return out;
+        for (const name of tableNames) {
+            out[name] = build(name, tables, mediaByEntity);
+        }
+        return out;
+    });
 
     // Keep tab in sync with ?layer= from media/search deep links.
     $effect(() => {
@@ -233,16 +152,19 @@
     }
 
     function handleTabChange(value: string) {
-        if (value === activeTab && value === resolvedLayer) return;
+        if (value === SCHEMA_TAB) {
+            setViewMode("schema");
+            return;
+        }
+        if (
+            viewMode === "table" &&
+            value === activeTab &&
+            value === resolvedLayer
+        ) {
+            return;
+        }
         activeTab = value;
-        goto(
-            `/${$page.params.project}/layers${layersSearch({
-                mode: viewMode === "schema" ? "table" : viewMode,
-                dim: mapDim,
-                layer: value,
-            })}`,
-            { replaceState: true, noScroll: true },
-        );
+        setViewMode("table");
     }
 
     /** Interactive selection — shared store (URL highlight seeds once). */
@@ -307,15 +229,78 @@
         if (viewMode === "map") mapEverShown = true;
     });
 
-    // Deep links (media / search) set view + highlight — honour them on nav.
+    type LazyCmp = any;
+    let LayerSceneCmp = $state<LazyCmp>(null);
+    let SchemaGraphCmp = $state<LazyCmp | null>(null);
+    let DataTableCmp = $state<LazyCmp | null>(null);
+    let EntityRelationsPanelCmp = $state<LazyCmp | null>(null);
+    let FkLinkerCmp = $state<LazyCmp | null>(null);
+
     $effect(() => {
+        if (!browser) return;
+        if (mapEverShown && !LayerSceneCmp) {
+            void import("$lib/components/dashboard/LayerScene.svelte").then(
+                (m) => {
+                    LayerSceneCmp = m.default;
+                },
+            );
+        }
+    });
+
+    $effect(() => {
+        if (!browser) return;
+        if (viewMode === "schema" && !SchemaGraphCmp) {
+            void import("$lib/components/dashboard/SchemaGraph.svelte").then(
+                (m) => {
+                    SchemaGraphCmp = m.default;
+                },
+            );
+        }
+        if (viewMode === "schema" && schemaToolsOpen && !EntityRelationsPanelCmp) {
+            void import(
+                "$lib/components/dashboard/EntityRelationsPanel.svelte"
+            ).then((m) => {
+                EntityRelationsPanelCmp = m.default;
+            });
+        }
         if (
-            viewParam === "map" ||
-            viewParam === "3d" ||
-            viewParam === "table" ||
-            viewParam === "schema"
+            viewMode === "schema" &&
+            schemaToolsOpen &&
+            canWrite &&
+            accessToken &&
+            !FkLinkerCmp
         ) {
-            viewMode = viewParam === "3d" ? "map" : viewParam;
+            void import("$lib/components/digitize/FkLinker.svelte").then(
+                (m) => {
+                    FkLinkerCmp = m.default;
+                },
+            );
+        }
+    });
+
+    $effect(() => {
+        if (!browser) return;
+        if (viewMode !== "table") return;
+        if (!DataTableCmp) {
+            void import("$lib/components/ui/data-table/index.js").then((m) => {
+                DataTableCmp = m.DataTable;
+            });
+        }
+        if (!tableColumnBuilder) {
+            void import("./tableColumns").then((m) => {
+                tableColumnBuilder = m.buildColumns;
+            });
+        }
+    });
+
+    // Deep links (media / search) set view + highlight — honour them on nav.
+    // Always apply: a missing view used to leave table mode stuck when returning
+    // from /layers?view=table to a bare /layers URL.
+    $effect(() => {
+        if (viewParam === "table" || viewParam === "schema") {
+            viewMode = viewParam;
+        } else {
+            viewMode = "map";
         }
     });
 
@@ -330,6 +315,8 @@
             { replaceState: true, noScroll: true },
         );
     }
+
+    const inTables = $derived(viewMode === "table" || viewMode === "schema");
 
     // Default 3D — matches the working terrain-sampled load path.
     let mapDim = $state<MapDim>(
@@ -411,6 +398,9 @@
     let mapLoading = $state(false);
     let czmlLoadGen = 0;
     let czmlContentKey = "";
+    /** Last completed CZML fetch identity — skip duplicate $effect runs. */
+    let czmlFetchedKey = "";
+    let czmlInFlightKey = "";
 
     let schemaTables = $state<SchemaTable[]>([]);
     let schemaEdges = $state<SchemaEdge[]>([]);
@@ -428,16 +418,24 @@
     }
 
     async function loadAllCzml() {
+        const slug = $page.params.project;
+        const names = untrack(() => tableNames);
+        const colsByTable = untrack(() => tables);
+        const spatial = names.filter((name) =>
+            (colsByTable[name] ?? []).some((c) => /^_?geom/i.test(c)),
+        );
+        const fetchKey = `${slug}\0${spatial.join("\0")}`;
+        if (fetchKey === czmlFetchedKey || fetchKey === czmlInFlightKey) return;
+
         const gen = ++czmlLoadGen;
+        czmlInFlightKey = fetchKey;
         // Only show the loading gate on the first fetch — flipping mapLoading
         // later would destroy/recreate LayerScene (full Cesium remount).
         const initial = mapLayers.length === 0;
         if (initial) mapLoading = true;
-        const slug = $page.params.project;
-        const names = untrack(() => tableNames);
         const results: LayerData[] = [];
 
-        for (const name of names) {
+        for (const name of spatial) {
             if (gen !== czmlLoadGen) return;
             try {
                 const res = await fetch(
@@ -459,12 +457,17 @@
             } catch (_) {}
         }
 
-        if (gen !== czmlLoadGen) return;
+        if (gen !== czmlLoadGen) {
+            if (czmlInFlightKey === fetchKey) czmlInFlightKey = "";
+            return;
+        }
         const key = layersContentKey(results);
         if (key !== czmlContentKey) {
             czmlContentKey = key;
             mapLayers = results;
         }
+        czmlFetchedKey = fetchKey;
+        czmlInFlightKey = "";
         if (initial) mapLoading = false;
     }
 
@@ -615,89 +618,6 @@
 </svelte:head>
 
 <div class="flex h-full min-h-0 flex-col">
-    <WorkspaceToolbar>
-        {#snippet meta()}
-            <span>
-                {tableNames.length}
-                {tableNames.length === 1 ? "table" : "tables"}
-                {#if entityCount != null}
-                    · {entityCount} entities{/if}
-                {#if viewMode === "schema" && schemaEdges.length > 0}
-                    · {schemaEdges.length} relations{/if}
-                {#if viewMode === "map" && mapDim === "3d" && tilesets.length > 0}
-                    · {tilesets.filter((t) => t.ingest_status === "ready")
-                        .length}
-                    3D model{tilesets.filter((t) => t.ingest_status === "ready")
-                        .length === 1
-                        ? ""
-                        : "s"}{/if}
-                {#if viewMode === "map" && coverages.filter((c) => c.role !== "tileset").length > 0}
-                    · {coverages.filter((c) => c.role !== "tileset").length}
-                    coverage{coverages.filter((c) => c.role !== "tileset")
-                        .length === 1
-                        ? ""
-                        : "s"}{/if}
-            </span>
-        {/snippet}
-        {#snippet actions()}
-            {#if viewMode === "schema"}
-                <button
-                    type="button"
-                    onclick={() => (schemaToolsOpen = !schemaToolsOpen)}
-                    class="rounded-md p-1 transition-colors {schemaToolsOpen
-                        ? 'bg-secondary text-foreground'
-                        : 'text-muted-foreground hover:text-foreground'}"
-                    title="Entity relations and foreign keys"
-                    aria-pressed={schemaToolsOpen}
-                >
-                    <PanelRightIcon class="size-4" />
-                </button>
-            {/if}
-            {#if gpkgUri}
-                <a
-                    href={gpkgUri}
-                    class="text-muted-foreground hover:text-foreground transition-colors"
-                    title="Download GeoPackage"
-                >
-                    <DownloadIcon class="size-4" />
-                </a>
-            {/if}
-            <div
-                class="flex items-center overflow-hidden rounded-md border border-border"
-            >
-                <button
-                    onclick={() => setViewMode("map")}
-                    class="px-2.5 py-1 text-xs {viewMode === 'map'
-                        ? 'bg-secondary text-foreground font-medium'
-                        : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                    title="Map view"
-                >
-                    <MapIcon class="size-3.5" />
-                </button>
-                <button
-                    onclick={() => setViewMode("table")}
-                    class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
-                    'table'
-                        ? 'bg-secondary text-foreground font-medium'
-                        : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                    title="Table view"
-                >
-                    <TableIcon class="size-3.5" />
-                </button>
-                <button
-                    onclick={() => setViewMode("schema")}
-                    class="px-2.5 py-1 text-xs border-l border-border {viewMode ===
-                    'schema'
-                        ? 'bg-secondary text-foreground font-medium'
-                        : 'text-muted-foreground hover:text-foreground'} transition-colors"
-                    title="Schema graph"
-                >
-                    <WaypointsIcon class="size-3.5" />
-                </button>
-            </div>
-        {/snippet}
-    </WorkspaceToolbar>
-
     <!-- Stable content shell: Cesium stays mounted (lamina-style). Table/schema
          overlay it — never {#if}-destroy the Viewer on tab or CZML load. -->
     <div class="relative min-h-0 flex-1">
@@ -710,181 +630,202 @@
                 : 'invisible pointer-events-none z-0'}"
         >
             {#if browser && mapEverShown}
-                <LayerScene
-                    projectSlug={$page.params.project ?? ""}
-                    {accessToken}
-                    {tilesets}
-                    {coverages}
-                    selectedHash={selectedTilesetHash}
-                    loading={mapLoading}
-                    layers={mapLayers}
-                    {rows}
-                    dim={mapDim}
-                    active={viewMode === "map"}
-                    fullscreen={mapFullscreen}
-                    onSelectTileset={selectTileset}
-                    onToggleFullscreen={toggleMapFullscreen}
-                    onDimChange={setMapDim}
-                />
+                {#if LayerSceneCmp}
+                    <LayerSceneCmp
+                        projectSlug={$page.params.project ?? ""}
+                        {accessToken}
+                        {tilesets}
+                        {coverages}
+                        selectedHash={selectedTilesetHash}
+                        loading={mapLoading}
+                        layers={mapLayers}
+                        {rows}
+                        dim={mapDim}
+                        active={viewMode === "map"}
+                        fullscreen={mapFullscreen}
+                        onSelectTileset={selectTileset}
+                        onToggleFullscreen={toggleMapFullscreen}
+                        onDimChange={setMapDim}
+                    />
+                {:else}
+                    <CesiumLoading />
+                {/if}
             {/if}
         </div>
 
-        {#if viewMode === "table"}
-            <div class="absolute inset-0 z-10 overflow-hidden bg-background p-5">
-                {#if tableNames.length > 0}
-                    <div class="h-full min-h-0">
+        {#if inTables}
+            <div class="absolute inset-0 z-10 flex bg-background">
+                <div class="min-h-0 flex-1 overflow-hidden p-5">
+                    {#if tableNames.length > 0}
                         <Tabs
-                            value={activeTab}
+                            value={dataTabValue}
                             onValueChange={handleTabChange}
-                            {tabs}
+                            tabs={dataTabs}
                             class="flex h-full min-h-0 flex-col"
                             listClass="p-1.5"
                             contentClass="mt-5 flex flex-1 min-h-0 flex-col overflow-hidden"
                             lazy
                         >
-                            {#snippet children(tabValue: string)}
-                                {@const tableRows = rows[tabValue] ?? []}
-                                {@const tableCols =
-                                    columnsByTable[tabValue] ?? []}
-                                {#if tableRows.length > 0}
-                                    <div
-                                        bind:this={tableContainer}
-                                        class="h-full min-h-0"
+                            {#snippet trailing()}
+                                {#if viewMode === "schema"}
+                                    <button
+                                        type="button"
+                                        onclick={() =>
+                                            (schemaToolsOpen = !schemaToolsOpen)}
+                                        class="rounded-md p-1.5 transition-colors {schemaToolsOpen
+                                            ? 'bg-secondary text-foreground'
+                                            : 'text-muted-foreground hover:text-foreground'}"
+                                        title="Entity relations and foreign keys"
+                                        aria-pressed={schemaToolsOpen}
                                     >
-                                        <DataTable
-                                            columns={tableCols}
-                                            data={tableRows}
-                                            {rowClassName}
-                                            pageIndex={currentPage}
-                                            onRowClick={(row, ev) => {
-                                                const id = String(
-                                                    row.source_id ??
-                                                        row.SOURCE_ID ??
-                                                        "",
-                                                );
-                                                if (!id) return;
-                                                if (ev.shiftKey) {
-                                                    layerSelection.addSelection(
-                                                        tabValue,
-                                                        id,
-                                                    );
-                                                    return;
-                                                }
-                                                if (ev.ctrlKey || ev.metaKey) {
-                                                    layerSelection.toggleSelection(
-                                                        tabValue,
-                                                        id,
-                                                    );
-                                                    return;
-                                                }
-                                                layerSelection.selectSingle(
-                                                    tabValue,
-                                                    id,
-                                                );
-                                            }}
-                                            onRowDblClick={(row) => {
-                                                const id = String(
-                                                    row.source_id ??
-                                                        row.SOURCE_ID ??
-                                                        "",
-                                                );
-                                                if (!id) return;
-                                                layerSelection.selectSingle(
-                                                    tabValue,
-                                                    id,
-                                                );
-                                                setViewMode("map");
-                                            }}
-                                        />
+                                        <PanelRightIcon class="size-4" />
+                                    </button>
+                                {/if}
+                            {/snippet}
+                            {#snippet children(tabValue: string)}
+                                {#if tabValue === SCHEMA_TAB}
+                                    <div class="h-full min-h-0">
+                                        {#if SchemaGraphCmp}
+                                            <SchemaGraphCmp
+                                                tables={schemaTables}
+                                                edges={schemaEdges}
+                                                loading={schemaLoading}
+                                            />
+                                        {/if}
                                     </div>
                                 {:else}
-                                    <div
-                                        class="flex h-full min-h-0 flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-                                    >
-                                        <TableIcon
-                                            class="size-10 text-muted-foreground/30 mb-3"
-                                        />
-                                        <p class="text-sm text-muted-foreground">
-                                            No rows in this table yet.
-                                        </p>
-                                    </div>
+                                    {@const tableRows = rows[tabValue] ?? []}
+                                    {@const tableCols =
+                                        columnsByTable[tabValue] ?? []}
+                                    {#if tableRows.length > 0}
+                                        <div
+                                            bind:this={tableContainer}
+                                            class="h-full min-h-0"
+                                        >
+                                        {#if DataTableCmp}
+                                            <DataTableCmp
+                                                columns={tableCols}
+                                                data={tableRows}
+                                                {rowClassName}
+                                                pageIndex={currentPage}
+                                                onRowClick={(
+                                                    row: Record<
+                                                        string,
+                                                        unknown
+                                                    >,
+                                                    ev: MouseEvent,
+                                                ) => {
+                                                    const id = String(
+                                                        row.source_id ??
+                                                            row.SOURCE_ID ??
+                                                            "",
+                                                    );
+                                                    if (!id) return;
+                                                    if (ev.shiftKey) {
+                                                        layerSelection.addSelection(
+                                                            tabValue,
+                                                            id,
+                                                        );
+                                                        return;
+                                                    }
+                                                    if (
+                                                        ev.ctrlKey ||
+                                                        ev.metaKey
+                                                    ) {
+                                                        layerSelection.toggleSelection(
+                                                            tabValue,
+                                                            id,
+                                                        );
+                                                        return;
+                                                    }
+                                                    layerSelection.selectSingle(
+                                                        tabValue,
+                                                        id,
+                                                    );
+                                                }}
+                                                onRowDblClick={(
+                                                    row: Record<
+                                                        string,
+                                                        unknown
+                                                    >,
+                                                ) => {
+                                                    const id = String(
+                                                        row.source_id ??
+                                                            row.SOURCE_ID ??
+                                                            "",
+                                                    );
+                                                    if (!id) return;
+                                                    layerSelection.selectSingle(
+                                                        tabValue,
+                                                        id,
+                                                    );
+                                                    setViewMode("map");
+                                                }}
+                                            />
+                                        {/if}
+                                        </div>
+                                    {:else}
+                                        <div
+                                            class="flex h-full min-h-0 flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
+                                        >
+                                            <TableIcon
+                                                class="size-10 text-muted-foreground/30 mb-3"
+                                            />
+                                            <p
+                                                class="text-sm text-muted-foreground"
+                                            >
+                                                No rows in this table yet.
+                                            </p>
+                                        </div>
+                                    {/if}
                                 {/if}
                             {/snippet}
                         </Tabs>
-                    </div>
-                {:else}
-                    <div
-                        class="flex h-full min-h-0 flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-                    >
-                        <LayersIcon
-                            class="size-10 text-muted-foreground/30 mb-3"
-                        />
-                        <p class="text-sm text-muted-foreground">
-                            No GeoPackage data yet. Run
-                            <code
-                                class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
-                                >tinyowl push</code
-                            >
-                            to upload.
-                        </p>
-                    </div>
-                {/if}
-            </div>
-        {:else if viewMode === "schema"}
-            <div class="absolute inset-0 z-10 flex bg-background">
-                {#if tableNames.length > 0}
-                    <div class="relative min-h-0 flex-1">
-                        <SchemaGraph
-                            tables={schemaTables}
-                            edges={schemaEdges}
-                            loading={schemaLoading}
-                        />
-                    </div>
-                    {#if schemaToolsOpen}
-                        <aside
-                            class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-6"
+                    {:else}
+                        <div
+                            class="flex h-full min-h-0 flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
                         >
-                            <EntityRelationsPanel
+                            <LayersIcon
+                                class="size-10 text-muted-foreground/30 mb-3"
+                            />
+                            <p class="text-sm text-muted-foreground">
+                                No GeoPackage data yet. Run
+                                <code
+                                    class="font-mono text-xs rounded px-1.5 py-0.5 bg-secondary"
+                                    >tinyowl push</code
+                                >
+                                to upload.
+                            </p>
+                        </div>
+                    {/if}
+                </div>
+                {#if viewMode === "schema" && schemaToolsOpen}
+                    <aside
+                        class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-6"
+                    >
+                        {#if EntityRelationsPanelCmp}
+                            <EntityRelationsPanelCmp
                                 slug={$page.params.project ?? ""}
                                 {accessToken}
                                 {canWrite}
                             />
-                            {#if canWrite && accessToken}
-                                <FkLinker
-                                    {accessToken}
-                                    slug={$page.params.project ?? ""}
-                                    tables={schemaTables}
-                                    edges={schemaEdges}
-                                    onSaved={() => {
-                                        schemaLoaded = false;
-                                        void loadSchema();
-                                    }}
-                                />
-                            {/if}
-                        </aside>
-                    {/if}
-                {:else}
-                    <div class="flex flex-1 items-center justify-center p-5">
-                    <div
-                        class="flex w-full max-w-md flex-col items-center justify-center rounded-lg border border-dashed border-border py-20"
-                    >
-                        <LayersIcon
-                            class="size-10 text-muted-foreground/30 mb-3"
-                        />
-                        <p class="text-sm text-muted-foreground mb-3">
-                            No tables yet.
-                        </p>
-                        {#if canWrite}
-                            <a
-                                href={`/${$page.params.project}/import`}
-                                class="text-sm text-primary hover:underline"
-                                >Import CSV or GeoJSON</a
-                            >
                         {/if}
-                    </div>
-                    </div>
+                        {#if canWrite && accessToken && FkLinkerCmp}
+                            <FkLinkerCmp
+                                {accessToken}
+                                slug={$page.params.project ?? ""}
+                                tables={schemaTables}
+                                edges={schemaEdges}
+                                onSaved={() => {
+                                    schemaLoaded = false;
+                                    void loadSchema();
+                                }}
+                            />
+                        {/if}
+                    </aside>
                 {/if}
             </div>
         {/if}
     </div>
 </div>
+

@@ -37,23 +37,20 @@
     import type { ProjectCoverage } from "./coverageTypes";
     import {
         loadableRasters,
-        coveragePreviewUrl,
-        coverageTilesUrlTemplate,
     } from "./coverageTypes";
     import {
-        loadCoverageImagery,
-        resolveCoverageRectangle,
-        rectangleFromMeta,
-    } from "./coverageImagery";
+        applyTilesetHeightOffset as applyTilesetHeightOffsetImpl,
+        destroyTileset as destroyTilesetPrim,
+        loadTilesetPrimitive,
+    } from "./layerSceneTilesets";
     import {
-        createCogImageryProvider,
-        shouldUseCogProvider,
-    } from "./cogImageryProvider";
+        destroyCoverageLayer as destroyCoverageLayerImpl,
+        syncCoverageImagery as syncCoverageImageryImpl,
+    } from "./layerSceneCoverage";
     import {
         cesiumPropValue,
         entityIdFromPacketId,
     } from "./czmlLoad";
-    import { customDataSourceFromCzml } from "./czmlEntities";
     import {
         computeMeasureValue,
         formatMeasureValue,
@@ -172,6 +169,15 @@
     let clickHandler: any;
     let measureHandler: any;
     let postRenderRemover: (() => void) | null = null;
+    let renderRequestRemovers: Array<() => void> = [];
+
+    function bumpRender() {
+        try {
+            viewer?.scene?.requestRender?.();
+        } catch {
+            /* ignore */
+        }
+    }
     const tilesetPrims = new Map<string, any>();
     const coverageLayers = new Map<string, any[]>();
     const coverageCogDestroy = new Map<string, () => void>();
@@ -213,12 +219,16 @@
     let lassoPoints = $state<Array<{ x: number; y: number }>>([]);
     let suppressNextClick = false;
     let dragHandler: any = null;
+    /** Primary key whose pick popup the user dismissed (do not reopen until selection changes). */
+    let pickDismissedKey = "";
 
     let ctxOpen = $state(false);
     let ctxX = $state(0);
     let ctxY = $state(0);
+    let ctxKind = $state<"entity" | "tileset">("entity");
     let ctxLayerName = $state("");
     let ctxEntityId = $state("");
+    let ctxTilesetHash = $state("");
     let ctxEntity: any = null;
 
     const models = $derived(
@@ -305,64 +315,14 @@
     }
 
     function destroyTileset(hash: string) {
-        const prim = tilesetPrims.get(hash);
-        if (!prim) return;
-        tilesetPrims.delete(hash);
-        try {
-            viewer?.scene?.primitives?.remove(prim);
-        } catch {
-            /* ignore */
-        }
-        if (prim && !prim.isDestroyed?.()) {
-            try {
-                prim.destroy();
-            } catch {
-                /* ignore */
-            }
-        }
+        destroyTilesetPrim(viewer, tilesetPrims, hash);
     }
 
-    /** Shift tileset along ellipsoid normal to match entity ellipsoidal heights. */
     function applyTilesetHeightOffset(
         prim: any,
         offsetM: number | null | undefined,
     ) {
-        if (!prim || !Cesium || offsetM == null || !Number.isFinite(offsetM)) {
-            return;
-        }
-        const apply = () => {
-            // Reset first so re-apply is idempotent (boundingSphere includes modelMatrix).
-            prim.modelMatrix = Cesium.Matrix4.clone(
-                Cesium.Matrix4.IDENTITY,
-                new Cesium.Matrix4(),
-            );
-            const center = prim.boundingSphere?.center;
-            if (!center) return false;
-            if (offsetM === 0) return true;
-            const normal = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(center);
-            const translation = Cesium.Cartesian3.multiplyByScalar(
-                normal,
-                offsetM,
-                new Cesium.Cartesian3(),
-            );
-            prim.modelMatrix = Cesium.Matrix4.fromTranslation(translation);
-            return true;
-        };
-        if (apply()) return;
-        void Promise.resolve(prim.readyPromise)
-            .then(() => {
-                if (!apply()) {
-                    const remove = prim.initialTilesLoaded?.addEventListener(
-                        () => {
-                            apply();
-                            remove?.();
-                        },
-                    );
-                }
-            })
-            .catch(() => {
-                /* ignore */
-            });
+        applyTilesetHeightOffsetImpl(Cesium, prim, offsetM);
     }
 
     function sphereFromBboxWgs84(
@@ -814,10 +774,13 @@
 
     function closeContextMenu() {
         const wasOpen = ctxOpen;
+        const wasEntity = ctxKind === "entity";
         ctxOpen = false;
         ctxEntity = null;
+        ctxKind = "entity";
+        ctxTilesetHash = "";
         // Restore selection styles after context preview highlight.
-        if (wasOpen && started) syncAllSelectionStyles();
+        if (wasOpen && wasEntity && started) syncAllSelectionStyles();
     }
 
     function hideEntity(entity: any, layerName: string, entityId: string) {
@@ -850,6 +813,7 @@
                 /* ignore */
             }
         }
+        bumpRender();
     }
 
     function showAllHiddenEntities() {
@@ -870,21 +834,60 @@
         layerName: string,
         entityId: string,
     ) {
-        const canvas = viewer?.scene?.canvas as HTMLCanvasElement | undefined;
-        const rect = canvas?.getBoundingClientRect();
+        const pos = contextMenuScreenPos(screenPos);
+        ctxKind = "entity";
+        ctxTilesetHash = "";
         ctxLayerName = layerName;
         ctxEntityId = entityId;
         ctxEntity = entity;
-        ctxX = Math.min(
-            (rect?.left ?? 0) + screenPos.x,
-            window.innerWidth - 220,
-        );
-        ctxY = Math.min(
-            (rect?.top ?? 0) + screenPos.y,
-            window.innerHeight - 160,
-        );
+        ctxX = pos.x;
+        ctxY = pos.y;
         ctxOpen = true;
         previewContextEntity(entity);
+    }
+
+    function contextMenuScreenPos(screenPos: { x: number; y: number }) {
+        const canvas = viewer?.scene?.canvas as HTMLCanvasElement | undefined;
+        const rect = canvas?.getBoundingClientRect();
+        return {
+            x: Math.min(
+                (rect?.left ?? 0) + screenPos.x,
+                window.innerWidth - 220,
+            ),
+            y: Math.min(
+                (rect?.top ?? 0) + screenPos.y,
+                window.innerHeight - 160,
+            ),
+        };
+    }
+
+    function resolvePickedTilesetHash(picked: any): string | null {
+        if (!picked) return null;
+        const hits: unknown[] = [];
+        if (picked.tileset) hits.push(picked.tileset);
+        if (picked.content?.tileset) hits.push(picked.content.tileset);
+        if (picked.primitive) hits.push(picked.primitive);
+        if (picked.primitive?.tileset) hits.push(picked.primitive.tileset);
+        for (const [hash, prim] of tilesetPrims) {
+            if (hits.includes(prim) || picked === prim) return hash;
+        }
+        return null;
+    }
+
+    function openTilesetContextMenu(
+        screenPos: { x: number; y: number },
+        hash: string,
+    ) {
+        const m = models.find((t) => t.hash === hash);
+        const pos = contextMenuScreenPos(screenPos);
+        ctxKind = "tileset";
+        ctxTilesetHash = hash;
+        ctxLayerName = m?.label || "3D model";
+        ctxEntityId = hash.length > 12 ? `${hash.slice(0, 12)}…` : hash;
+        ctxEntity = null;
+        ctxX = pos.x;
+        ctxY = pos.y;
+        ctxOpen = true;
     }
 
     function measureColor() {
@@ -1024,6 +1027,7 @@
                 },
             });
         }
+        bumpRender();
     }
 
     async function commitMeasure3d() {
@@ -1101,6 +1105,7 @@
         draftVertices = [];
         draftCartesians = [];
         measureStatus = `${label} saved · ${measureHint(measureMode, dim === "2d" ? "2d" : "3d")}`;
+        bumpRender();
     }
 
     async function removeMeasurement(id: string) {
@@ -1118,6 +1123,7 @@
             }
         }
         measureRecords = measureRecords.filter((r) => r.id !== id);
+        bumpRender();
     }
 
     function queueMeasurePick(screenPos: any) {
@@ -1434,7 +1440,9 @@
         pickAnchorCartesian = null;
     }
 
-    function closePickPager() {
+    function closePickPager(opts?: { suppressClick?: boolean }) {
+        pickDismissedKey = layerSelection.primaryKey ?? "";
+        if (opts?.suppressClick) suppressNextClick = true;
         pickOpen = false;
         pickCandidates = [];
         pickIndex = 0;
@@ -1599,13 +1607,17 @@
             styledSelectionKeys.add(key);
         }
 
+        bumpRender();
+
         if (layerSelection.size === 0) {
+            pickDismissedKey = "";
             hideEntityPopup();
             return;
         }
 
         // Single selection: show popup. Multi: no popup (primary still styled).
         if (layerSelection.size === 1 && primary) {
+            if (pickDismissedKey === primary) return;
             const entity = findEntityByKey(primary);
             if (entity) {
                 const { layer, id } = parseSelectionKey(primary);
@@ -1887,7 +1899,20 @@
         }
 
         // Morph drops / skews the camera — reframe after the scene settles.
-        if (opts.refocus) void refocusAfterMorph(is3d);
+        if (opts.refocus) {
+            if (pendingFlyModelHash) {
+                const hash = pendingFlyModelHash;
+                pendingFlyModelHash = "";
+                void (async () => {
+                    await new Promise<void>((r) =>
+                        requestAnimationFrame(() => r()),
+                    );
+                    await flyToModelSphere(hash);
+                })();
+            } else {
+                void refocusAfterMorph(is3d);
+            }
+        }
     }
 
     function applySceneMode(d: "2d" | "3d") {
@@ -1966,6 +1991,9 @@
             fullscreenButton: false,
             infoBox: false,
             creditContainer: creditSink,
+            requestRenderMode: true,
+            maximumRenderTimeChange: Infinity,
+            skyBox: false,
             // Default true → 1× CSS pixels (soft/aliased on HiDPI).
             useBrowserRecommendedResolution: false,
             msaaSamples: 4,
@@ -1986,6 +2014,18 @@
         }
         applyBasemapTheme();
         viewer.scene.globe.depthTestAgainstTerrain = false;
+        try {
+            renderRequestRemovers.push(
+                viewer.camera.changed.addEventListener(bumpRender),
+            );
+            renderRequestRemovers.push(
+                viewer.scene.globe.tileLoadProgressEvent.addEventListener(
+                    bumpRender,
+                ),
+            );
+        } catch {
+            /* ignore */
+        }
 
         // Terrain must be live before syncLayers / sampleTerrainMostDetailed.
         await attachWorldTerrain(token);
@@ -2017,6 +2057,7 @@
                 closePickPager();
                 return;
             }
+            pickDismissedKey = "";
             const top = candidates[0]!;
             if (shift) {
                 layerSelection.addSelection(top.layerName, top.entityId);
@@ -2050,6 +2091,11 @@
             if (entity && meta) {
                 // Context menu only — preview highlight OK; do not selectSingle / popup.
                 openEntityContextMenu(click.position, entity, meta.layerName, meta.entityId);
+                return;
+            }
+            const tilesetHash = resolvePickedTilesetHash(picked);
+            if (tilesetHash) {
+                openTilesetContextMenu(click.position, tilesetHash);
                 return;
             }
             closeContextMenu();
@@ -2093,33 +2139,20 @@
             // morph to 3D does not miss tilesets that arrived mid-2D.
             if (!want || !m.root_url) continue;
             try {
-                const resource = new Cesium.Resource({
-                    url: m.root_url,
-                    queryParameters: accessToken ? { token: accessToken } : {},
-                    headers: accessToken
-                        ? { Authorization: `Bearer ${accessToken}` }
-                        : {},
-                });
-                const prim = await Cesium.Cesium3DTileset.fromUrl(resource, {
-                    enableCollision: false,
-                    maximumScreenSpaceError: 4,
-                    skipLevelOfDetail: false,
-                    immediatelyLoadDesiredLevelOfDetail: false,
-                    loadSiblings: true,
-                    loadingDescendantLimit: 128,
-                });
+                const prim = await loadTilesetPrimitive(
+                    Cesium,
+                    viewer,
+                    m,
+                    accessToken,
+                    dim === "3d" && isModelVisible(m.hash),
+                );
+                if (!prim) continue;
                 if (gen !== modelLoadGen || !readyHashes.has(m.hash)) {
                     if (!prim.isDestroyed?.()) prim.destroy();
                     continue;
                 }
-                prim.show = dim === "3d" && isModelVisible(m.hash);
                 viewer.scene.primitives.add(prim);
                 tilesetPrims.set(m.hash, prim);
-                applyTilesetHeightOffset(prim, m.height_offset_m);
-                prim.initialTilesLoaded.addEventListener(() => {
-                    applyTilesetHeightOffset(prim, m.height_offset_m);
-                    viewer.scene.requestRender?.();
-                });
             } catch (e) {
                 if (gen === modelLoadGen) {
                     error =
@@ -2133,6 +2166,70 @@
         if (gen !== modelLoadGen) return;
 
         if (fly || !hasFramed) await frameScene();
+        bumpRender();
+    }
+
+    let pendingFlyModelHash = "";
+
+    async function flyToModelSphere(hash: string) {
+        if (!viewer || !Cesium) return;
+        let prim = tilesetPrims.get(hash);
+        if (!prim) {
+            await syncModels(false);
+            if (!viewer || viewer.isDestroyed?.()) return;
+            prim = tilesetPrims.get(hash);
+        }
+        if (!prim) return;
+        try {
+            await prim.readyPromise;
+        } catch {
+            /* continue */
+        }
+        if (!viewer || viewer.isDestroyed?.()) return;
+        const m = models.find((t) => t.hash === hash);
+        applyTilesetHeightOffset(prim, m?.height_offset_m);
+        if (prim.boundingSphere?.radius > 0) {
+            await flyCameraToSphere(
+                Cesium.BoundingSphere.clone(prim.boundingSphere),
+                1.0,
+            );
+            return;
+        }
+        try {
+            await viewer.flyTo(prim, { duration: 1.0 });
+        } catch {
+            /* ignore */
+        }
+    }
+
+    function flyToModel(hash: string) {
+        if (!isModelVisible(hash)) {
+            modelVis = { ...modelVis, [hash]: true };
+            const prim = tilesetPrims.get(hash);
+            if (prim) prim.show = dim === "3d";
+            else void syncModels(false);
+        }
+        onSelectTileset?.(hash);
+        if (dim !== "3d") {
+            pendingFlyModelHash = hash;
+            onDimChange?.("3d");
+            return;
+        }
+        void flyToModelSphere(hash);
+    }
+
+    function setAllModelsVisible(visible: boolean) {
+        const next: Record<string, boolean> = { ...modelVis };
+        for (const m of models) next[m.hash] = visible;
+        modelVis = next;
+        for (const [hash, prim] of tilesetPrims) {
+            try {
+                prim.show = visible && dim === "3d";
+            } catch {
+                /* ignore */
+            }
+        }
+        if (visible) void syncModels(false);
     }
 
     function toggleModel(hash: string) {
@@ -2142,6 +2239,7 @@
         if (prim) {
             prim.show = next && dim === "3d";
             if (next) onSelectTileset?.(hash);
+            bumpRender();
             return;
         }
         if (next) {
@@ -2150,176 +2248,35 @@
         }
     }
 
+    function coverageCtx(gen: number) {
+        return {
+            Cesium,
+            viewer,
+            rasters,
+            accessToken,
+            coverageLayers,
+            coverageCogDestroy,
+            isCoverageVisible,
+            stillCurrent: () => gen === coverageLoadGen,
+            setError: (msg: string) => {
+                coverageError = coverageError
+                    ? `${coverageError}; ${msg}`
+                    : msg;
+            },
+        };
+    }
+
     function destroyCoverageLayer(hash: string) {
-        const layers = coverageLayers.get(hash);
-        if (layers && viewer) {
-            for (const layer of layers) {
-                try {
-                    viewer.imageryLayers.remove(layer, true);
-                } catch {
-                    /* ignore */
-                }
-            }
-        }
-        coverageLayers.delete(hash);
-        const destroy = coverageCogDestroy.get(hash);
-        if (destroy) {
-            try {
-                destroy();
-            } catch {
-                /* ignore */
-            }
-            coverageCogDestroy.delete(hash);
-        }
+        destroyCoverageLayerImpl(coverageCtx(coverageLoadGen), hash);
     }
 
     async function syncCoverageImagery() {
         if (!viewer || !Cesium) return;
         const gen = ++coverageLoadGen;
         coverageError = "";
-        const want = new Set(rasters.map((c) => c.hash));
-
-        for (const hash of [...coverageLayers.keys()]) {
-            if (!want.has(hash)) destroyCoverageLayer(hash);
-        }
-
-        for (const cov of rasters) {
-            if (gen !== coverageLoadGen) return;
-            const existing = coverageLayers.get(cov.hash);
-            if (existing) {
-                const show = isCoverageVisible(cov.hash);
-                for (const layer of existing) layer.show = show;
-                continue;
-            }
-            if (!isCoverageVisible(cov.hash)) continue;
-            try {
-                const added: any[] = [];
-                let rect = rectangleFromMeta(cov);
-                if (!rect) {
-                    rect = await resolveCoverageRectangle(
-                        cov,
-                        accessToken || null,
-                    );
-                }
-
-                const previewUrl = coveragePreviewUrl(
-                    cov,
-                    accessToken || null,
-                );
-                const tilesTpl = coverageTilesUrlTemplate(
-                    cov,
-                    accessToken || null,
-                );
-
-                // Static XYZ archive (PMTiles/MBTiles proxy) — preferred when ready.
-                if (tilesTpl && rect) {
-                    const tileProvider = new Cesium.UrlTemplateImageryProvider({
-                        url: tilesTpl,
-                        rectangle: Cesium.Rectangle.fromDegrees(
-                            rect.west,
-                            rect.south,
-                            rect.east,
-                            rect.north,
-                        ),
-                        // Credit omitted — project coverage
-                    });
-                    if (gen !== coverageLoadGen) return;
-                    const tileLayer =
-                        viewer.imageryLayers.addImageryProvider(tileProvider);
-                    tileLayer.show = isCoverageVisible(cov.hash);
-                    added.push(tileLayer);
-                    coverageLayers.set(cov.hash, added);
-                    continue;
-                }
-
-                // Baked low-res overview: instant base (also used for artefact thumbs).
-                if (previewUrl && rect) {
-                    const previewProvider =
-                        await Cesium.SingleTileImageryProvider.fromUrl(
-                            previewUrl,
-                            {
-                                rectangle: Cesium.Rectangle.fromDegrees(
-                                    rect.west,
-                                    rect.south,
-                                    rect.east,
-                                    rect.north,
-                                ),
-                            },
-                        );
-                    if (gen !== coverageLoadGen) return;
-                    const previewLayer =
-                        viewer.imageryLayers.addImageryProvider(
-                            previewProvider,
-                        );
-                    previewLayer.show = isCoverageVisible(cov.hash);
-                    added.push(previewLayer);
-                }
-
-                if (shouldUseCogProvider(cov)) {
-                    if (!rect) {
-                        throw new Error(
-                            `Coverage ${cov.label || cov.hash.slice(0, 8)} has no geographic bbox`,
-                        );
-                    }
-                    // When preview exists, only request COG tiles after zooming in.
-                    const handle = await createCogImageryProvider(
-                        Cesium,
-                        cov,
-                        accessToken || null,
-                        rect,
-                        { minimumLevel: previewUrl ? 2 : 0 },
-                    );
-                    if (gen !== coverageLoadGen) {
-                        handle.destroy();
-                        return;
-                    }
-                    const cogLayer = viewer.imageryLayers.addImageryProvider(
-                        handle.provider,
-                    );
-                    cogLayer.show = isCoverageVisible(cov.hash);
-                    added.push(cogLayer);
-                    coverageCogDestroy.set(cov.hash, handle.destroy);
-                } else if (!previewUrl) {
-                    const loaded = await loadCoverageImagery(
-                        cov,
-                        accessToken || null,
-                    );
-                    if (gen !== coverageLoadGen) return;
-                    const provider =
-                        await Cesium.SingleTileImageryProvider.fromUrl(
-                            loaded.dataUrl,
-                            {
-                                rectangle: Cesium.Rectangle.fromDegrees(
-                                    loaded.rectangle.west,
-                                    loaded.rectangle.south,
-                                    loaded.rectangle.east,
-                                    loaded.rectangle.north,
-                                ),
-                            },
-                        );
-                    if (gen !== coverageLoadGen) return;
-                    const layer =
-                        viewer.imageryLayers.addImageryProvider(provider);
-                    layer.show = isCoverageVisible(cov.hash);
-                    added.push(layer);
-                }
-
-                if (added.length > 0) {
-                    coverageLayers.set(cov.hash, added);
-                }
-            } catch (e) {
-                if (gen === coverageLoadGen) {
-                    const msg =
-                        e instanceof Error
-                            ? e.message
-                            : "Failed to load coverage imagery";
-                    coverageError = coverageError
-                        ? `${coverageError}; ${msg}`
-                        : msg;
-                    console.warn("coverage imagery", cov.hash, e);
-                }
-            }
-        }
+        await syncCoverageImageryImpl(coverageCtx(gen));
+        if (gen !== coverageLoadGen) return;
+        bumpRender();
     }
 
     function toggleCoverage(hash: string) {
@@ -2328,6 +2285,7 @@
         const layers = coverageLayers.get(hash);
         if (layers) {
             for (const layer of layers) layer.show = next;
+            bumpRender();
             return;
         }
         if (next) void syncCoverageImagery();
@@ -2367,6 +2325,9 @@
             if (needsLoad && packetCount > 0) {
                 if (ds) destroyLayerSource(layer.name);
                 try {
+                    const { customDataSourceFromCzml } = await import(
+                        "./czmlEntities"
+                    );
                     ds = await customDataSourceFromCzml(
                         Cesium,
                         viewer,
@@ -2395,6 +2356,7 @@
         if (layerSelection.size > 0) {
             void flyToSelection(false);
         }
+        bumpRender();
     }
 
     function toggleLayer(idx: number) {
@@ -2402,8 +2364,10 @@
         if (!layer) return;
         layer.visible = !layer.visible;
         const ds = layerSources.get(layer.name);
-        if (ds) ds.show = layer.visible;
-        else if (layer.visible) void syncLayers();
+        if (ds) {
+            ds.show = layer.visible;
+            bumpRender();
+        } else if (layer.visible) void syncLayers();
     }
 
     onMount(() => {
@@ -2526,6 +2490,14 @@
         styledSelectionKeys = new Set();
         postRenderRemover?.();
         postRenderRemover = null;
+        for (const rm of renderRequestRemovers) {
+            try {
+                rm();
+            } catch {
+                /* ignore */
+            }
+        }
+        renderRequestRemovers = [];
         try {
             clickHandler?.destroy?.();
         } catch {
@@ -2934,12 +2906,20 @@
         open={ctxOpen}
         x={ctxX}
         y={ctxY}
+        kind={ctxKind}
         layerName={ctxLayerName}
         entityId={ctxEntityId}
+        targetVisible={ctxKind === "tileset"
+            ? isModelVisible(ctxTilesetHash)
+            : true}
         {selectionCount}
         targetInSelection={layerSelection.isSelected(ctxLayerName, ctxEntityId)}
         {isolating}
         onFlyTo={() => {
+            if (ctxKind === "tileset" && ctxTilesetHash) {
+                flyToModel(ctxTilesetHash);
+                return;
+            }
             if (ctxEntity && ctxLayerName && ctxEntityId) {
                 if (!layerSelection.isSelected(ctxLayerName, ctxEntityId)) {
                     layerSelection.selectSingle(ctxLayerName, ctxEntityId);
@@ -2951,8 +2931,17 @@
             }
         }}
         onHide={() => {
+            if (ctxKind === "tileset" && ctxTilesetHash) {
+                toggleModel(ctxTilesetHash);
+                return;
+            }
             if (ctxEntity) {
                 hideEntity(ctxEntity, ctxLayerName, ctxEntityId);
+            }
+        }}
+        onShow={() => {
+            if (ctxKind === "tileset" && ctxTilesetHash) {
+                toggleModel(ctxTilesetHash);
             }
         }}
         onHideAll={() => {
@@ -3020,6 +3009,7 @@
                 modelVisible={isModelVisible}
                 coverageVisible={isCoverageVisible}
                 onToggleModel={toggleModel}
+                onSetModelsVisible={setAllModelsVisible}
                 onToggleCoverage={toggleCoverage}
                 onToggleLayer={toggleLayer}
                 onApplyHidden={applyHiddenVisibility}
@@ -3031,6 +3021,7 @@
                     void flyToLayerExtent(name);
                 }}
                 onFlyToCoverage={flyToCoverage}
+                onFlyToModel={flyToModel}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
@@ -3074,22 +3065,6 @@
         </div>
     {/if}
 
-    {#if pickOpen}
-        <PickPager
-            open={pickOpen}
-            candidates={pickCandidates}
-            bind:index={pickIndex}
-            placement="floating"
-            x={pickPanelX}
-            y={pickPanelY}
-            flipBelow={pickFlipBelow}
-            onIndexChange={applyPickIndex}
-            onClose={() => {
-                closePickPager();
-            }}
-        />
-    {/if}
-
     {#if selectionToolLocal === "box" && dragRectVisible}
         <div
             class="pointer-events-none absolute z-40 border border-sky-400/90 bg-sky-300/10"
@@ -3115,9 +3090,25 @@
 
     <div
         bind:this={el}
-        class="cesium-scene absolute inset-0 bg-neutral-900"
+        class="cesium-scene absolute inset-0 z-0 bg-neutral-900"
     ></div>
     <div bind:this={creditSink} class="sr-only" aria-hidden="true"></div>
+
+    {#if pickOpen}
+        <PickPager
+            open={pickOpen}
+            candidates={pickCandidates}
+            bind:index={pickIndex}
+            placement="floating"
+            x={pickPanelX}
+            y={pickPanelY}
+            flipBelow={pickFlipBelow}
+            onIndexChange={applyPickIndex}
+            onClose={() => {
+                closePickPager({ suppressClick: true });
+            }}
+        />
+    {/if}
 
     {#if ready && Cesium && viewer && dim === "3d"}
         <EnuCornerWidget {Cesium} {viewer} show={true} />
