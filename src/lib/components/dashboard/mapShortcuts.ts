@@ -12,7 +12,8 @@ export type MapShortcutAction =
 	| { type: "exit-isolate" }
 	| { type: "select-tool"; mode: SelectionToolMode }
 	| { type: "measure-toggle" }
-	| { type: "measure-mode"; mode: MeasureMode };
+	| { type: "measure-mode"; mode: MeasureMode }
+	| { type: "draw-toggle" };
 
 function isTypingTarget(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
@@ -52,6 +53,8 @@ export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
 			return { type: "select-tool", mode: "lasso" };
 		case "m":
 			return { type: "measure-toggle" };
+		case "d":
+			return { type: "draw-toggle" };
 		case "p":
 			return { type: "measure-mode", mode: "point" };
 		case "l":

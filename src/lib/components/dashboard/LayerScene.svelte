@@ -82,8 +82,14 @@
         destroyDiffOverlay,
         syncDiffOverlay,
         type DiffFeature,
+        DIFF_OP_FILL,
     } from "$lib/geoDiff";
     import DiffLegend from "./DiffLegend.svelte";
+    import {
+        editBuffer,
+        PLACEHOLDER_TABLE,
+        polygonFromVertices,
+    } from "$lib/stores/editBuffer.svelte";
 
     type EntityMeta = {
         layerName: string;
@@ -123,6 +129,8 @@
          * Same DiffFeature model as ReviewMap — not a second changeset store.
          */
         diffFeatures?: DiffFeature[];
+        /** FK-joined keys to highlight as secondary (attribute tables → map). */
+        joinedKeys?: string[];
     };
 
     let {
@@ -143,6 +151,7 @@
         canEditViews = false,
         onPersistViews,
         diffFeatures = [],
+        joinedKeys = [],
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -172,7 +181,7 @@
     const isolating = $derived(layerSelection.isIsolating);
     const appliedHighlight = $derived(layerSelection.primaryKey ?? "");
     const selectionSig = $derived(
-        `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}`,
+        `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}|${joinedKeys.slice().sort().join(",")}`,
     );
 
     let measureEnabled = $state(false);
@@ -187,10 +196,27 @@
     const MEASURE_CLICK_DELAY_MS = 280;
     const MEASURE_COLOR = "#ca8a04";
 
+    let drawEnabled = $state(false);
+    let drawStatus = $state("");
+    let drawVertices: MeasureVertex[] = [];
+    let drawCartesians: any[] = [];
+    let drawVertexCount = $state(0);
+    let drawDataSource: any = null;
+    let drawClickTimer: ReturnType<typeof setTimeout> | null = null;
+    let drawHandler: any;
+    const DRAW_COLOR = DIFF_OP_FILL.insert;
+
     const canFinish = $derived(
         measureEnabled &&
             measureMode !== "point" &&
             draftCartesians.length >= minVertices(measureMode),
+    );
+    const drawCanFinish = $derived(drawEnabled && drawVertexCount >= 3);
+    const bufferEntries = $derived(
+        editBuffer.entries.map((e) => ({
+            entityId: e.entityId,
+            table: e.table,
+        })),
     );
 
     let Cesium: any;
@@ -566,7 +592,7 @@
     }
 
     function selectionFlyKey(): string {
-        return [...layerSelection.selected].sort().join("|");
+        return [...layerSelection.selected, ...joinedKeys].sort().join("|");
     }
 
     function allSelectableEntities(): SelectableEntity[] {
@@ -616,7 +642,7 @@
     }
 
     async function flyToSelection(force = true) {
-        const keys = [...layerSelection.selected].sort();
+        const keys = [...layerSelection.selected, ...joinedKeys].sort();
         if (keys.length === 0) return;
         const flyKey = keys.join("|");
         if (!force && flyKey && flyKey === lastFlownKey) return;
@@ -1274,6 +1300,184 @@
         }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
     }
 
+    function drawTargetTable(): string {
+        const sel = layerSelection.primaryLayer;
+        if (sel) return sel;
+        const visible = layers.find((l) => l.visible);
+        return visible?.name || PLACEHOLDER_TABLE;
+    }
+
+    function drawColor() {
+        return Cesium.Color.fromCssColorString(DRAW_COLOR);
+    }
+
+    async function ensureDrawDs() {
+        if (!viewer || !Cesium) return null;
+        if (drawDataSource) return drawDataSource;
+        drawDataSource = new Cesium.CustomDataSource("tinyowl-draw");
+        await viewer.dataSources.add(drawDataSource);
+        return drawDataSource;
+    }
+
+    function clearDraftDraw() {
+        drawVertices = [];
+        drawCartesians = [];
+        drawVertexCount = 0;
+        clearDraftDrawEntitiesOnly();
+    }
+
+    function clearDraftDrawEntitiesOnly() {
+        if (!drawDataSource) return;
+        const ids = [
+            "draw:line",
+            "draw:poly",
+            ...Array.from({ length: 64 }, (_, i) => `draw:pt:${i}`),
+        ];
+        for (const id of ids) {
+            try {
+                drawDataSource.entities.removeById(id);
+            } catch {
+                /* ignore */
+            }
+        }
+    }
+
+    async function redrawDraftDraw() {
+        const ds = await ensureDrawDs();
+        if (!ds || !Cesium) return;
+        clearDraftDrawEntitiesOnly();
+        const color = drawColor();
+        for (let i = 0; i < drawCartesians.length; i++) {
+            ds.entities.add({
+                id: `draw:pt:${i}`,
+                position: drawCartesians[i],
+                point: {
+                    pixelSize: 8,
+                    color,
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 1,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+            });
+        }
+        if (drawCartesians.length >= 2) {
+            ds.entities.add({
+                id: "draw:line",
+                polyline: {
+                    positions: drawCartesians,
+                    width: 3,
+                    material: new Cesium.PolylineDashMaterialProperty({
+                        color,
+                    }),
+                    clampToGround: false,
+                },
+            });
+        }
+        if (drawCartesians.length >= 3) {
+            ds.entities.add({
+                id: "draw:poly",
+                polygon: {
+                    hierarchy: drawCartesians,
+                    material: color.withAlpha(0.18),
+                    outline: true,
+                    outlineColor: color,
+                    perPositionHeight: true,
+                },
+            });
+        }
+        bumpRender();
+    }
+
+    function commitDrawPolygon() {
+        if (drawVertices.length < 3) return;
+        const geometry = polygonFromVertices(drawVertices);
+        editBuffer.push({
+            op: "insert",
+            table: drawTargetTable(),
+            entityId: editBuffer.nextEntityId(),
+            geometry,
+        });
+        clearDraftDraw();
+        drawStatus = `${editBuffer.size} in buffer · click to draw another`;
+        bumpRender();
+    }
+
+    function queueDrawPick(screenPos: any) {
+        if (drawClickTimer) clearTimeout(drawClickTimer);
+        drawClickTimer = setTimeout(() => {
+            drawClickTimer = null;
+            void onDrawPick(screenPos);
+        }, MEASURE_CLICK_DELAY_MS);
+    }
+
+    async function onDrawPick(screenPos: any) {
+        const cartesian = pickMeasureCartesian(screenPos);
+        if (!cartesian) {
+            drawStatus = "Could not pick a point — try the mesh or terrain";
+            return;
+        }
+        drawCartesians = [...drawCartesians, cartesian];
+        drawVertices = [...drawVertices, cartesianToVertex(cartesian)];
+        drawVertexCount = drawCartesians.length;
+        await redrawDraftDraw();
+        const n = drawCartesians.length;
+        drawStatus =
+            n < 3
+                ? `${n} point${n === 1 ? "" : "s"} · need ${3 - n} more`
+                : `${n} points · Finish, double-click, or Enter`;
+    }
+
+    async function clearDrawDraftAndDs() {
+        if (drawClickTimer) {
+            clearTimeout(drawClickTimer);
+            drawClickTimer = null;
+        }
+        clearDraftDraw();
+        if (drawDataSource && viewer) {
+            try {
+                viewer.dataSources.remove(drawDataSource, true);
+            } catch {
+                /* ignore */
+            }
+        }
+        drawDataSource = null;
+    }
+
+    function finishDrawDraft() {
+        if (drawClickTimer) {
+            clearTimeout(drawClickTimer);
+            drawClickTimer = null;
+        }
+        if (drawCartesians.length >= 3) {
+            commitDrawPolygon();
+        }
+    }
+
+    function teardownDrawHandler() {
+        try {
+            drawHandler?.destroy?.();
+        } catch {
+            /* ignore */
+        }
+        drawHandler = null;
+    }
+
+    function setupDrawHandler() {
+        if (!viewer || !Cesium) return;
+        teardownDrawHandler();
+        drawHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        drawHandler.setInputAction((click: { position: unknown }) => {
+            queueDrawPick(click.position);
+        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+        drawHandler.setInputAction(() => {
+            if (drawClickTimer) {
+                clearTimeout(drawClickTimer);
+                drawClickTimer = null;
+            }
+            finishDrawDraft();
+        }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+    }
+
     function arraysEqual(a: string[], b: string[]): boolean {
         return a.length === b.length && a.every((v, i) => v === b[i]);
     }
@@ -1645,6 +1849,15 @@
             const kind = key === primary ? "primary" : "secondary";
             for (const entity of entities) {
                 applyEntitySelectionStyle(entity, kind);
+            }
+            styledSelectionKeys.add(key);
+        }
+        for (const key of joinedKeys) {
+            if (styledSelectionKeys.has(key)) continue;
+            const entities = findEntitiesByKey(key);
+            if (entities.length === 0) continue;
+            for (const entity of entities) {
+                applyEntitySelectionStyle(entity, "secondary");
             }
             styledSelectionKeys.add(key);
         }
@@ -2091,7 +2304,7 @@
                 suppressNextClick = false;
                 return;
             }
-            if (measureEnabled) return;
+            if (measureEnabled || drawEnabled) return;
             closeContextMenu();
             const { shift, ctrl, meta: cmd } = lastPointerMods;
             const candidates = collectDrillCandidates(click.position);
@@ -2127,7 +2340,7 @@
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         clickHandler.setInputAction((click: { position: { x: number; y: number } }) => {
-            if (measureEnabled) return;
+            if (measureEnabled || drawEnabled) return;
             const picked = viewer.scene.pick(click.position);
             const entity = resolvePickedEntity(picked);
             const meta = entity ? entityMeta.get(entity) : undefined;
@@ -2645,6 +2858,7 @@
     });
 
     onDestroy(() => {
+        teardownDrawHandler();
         teardownMeasureHandler();
         window.removeEventListener("keydown", onSceneKey);
         if (inViewThrottle != null) {
@@ -2706,6 +2920,11 @@
         if (!action) return;
 
         if (action.type === "enter") {
+            if (drawEnabled) {
+                ev.preventDefault();
+                finishDrawDraft();
+                return;
+            }
             if (measureEnabled) {
                 ev.preventDefault();
                 finishDraft3d();
@@ -2713,6 +2932,12 @@
             return;
         }
         if (action.type === "escape") {
+            if (drawEnabled) {
+                clearDraftDraw();
+                drawStatus =
+                    "Click vertices · Finish, double-click, or Enter at 3+";
+                return;
+            }
             if (measureEnabled) {
                 clearDraftMeasure();
                 measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
@@ -2765,12 +2990,20 @@
         if (action.type === "measure-toggle") {
             ev.preventDefault();
             measureEnabled = !measureEnabled;
+            if (measureEnabled) drawEnabled = false;
+            return;
+        }
+        if (action.type === "draw-toggle") {
+            ev.preventDefault();
+            drawEnabled = !drawEnabled;
+            if (drawEnabled) measureEnabled = false;
             return;
         }
         if (action.type === "measure-mode") {
             ev.preventDefault();
             measureMode = action.mode;
             measureEnabled = true;
+            drawEnabled = false;
         }
     }
 
@@ -2779,7 +3012,7 @@
     });
 
     $effect(() => {
-        if (!ready || !viewer || !Cesium || measureEnabled) return;
+        if (!ready || !viewer || !Cesium || measureEnabled || drawEnabled) return;
         if (selectionToolLocal !== "box" && selectionToolLocal !== "lasso") {
             return;
         }
@@ -3023,7 +3256,33 @@
         teardownMeasureHandler();
         clearDraftMeasure();
         measureStatus = "";
-        if (viewer?.canvas) {
+        if (!drawEnabled && viewer?.canvas) {
+            viewer.canvas.style.cursor = "";
+        }
+    });
+
+    $effect(() => {
+        if (!ready || !viewer) return;
+        if (drawEnabled) {
+            drawStatus =
+                "Click vertices · Finish, double-click, or Enter at 3+";
+            if (drawClickTimer) {
+                clearTimeout(drawClickTimer);
+                drawClickTimer = null;
+            }
+            clearDraftDraw();
+            setupDrawHandler();
+            viewer.canvas.style.cursor = "crosshair";
+            return;
+        }
+        if (drawClickTimer) {
+            clearTimeout(drawClickTimer);
+            drawClickTimer = null;
+        }
+        teardownDrawHandler();
+        void clearDrawDraftAndDs();
+        drawStatus = "";
+        if (!measureEnabled && viewer?.canvas) {
             viewer.canvas.style.cursor = "";
         }
     });
@@ -3046,6 +3305,7 @@
             bind:enabled={measureEnabled}
             bind:mode={measureMode}
             bind:selectionTool={selectionToolLocal}
+            bind:drawEnabled
             status={measureStatus}
             records={measureRecords}
             {canFinish}
@@ -3053,6 +3313,9 @@
             {fullscreen}
             {selectionCount}
             {isolating}
+            {drawStatus}
+            {drawCanFinish}
+            {bufferEntries}
             onZoomIn={zoomIn3d}
             onZoomOut={zoomOut3d}
             onSetDim={onDimChange}
@@ -3083,6 +3346,9 @@
             onClear={() => void clearMeasurements()}
             onFinish={finishDraft3d}
             onRemove={(id) => void removeMeasurement(id)}
+            onDrawFinish={finishDrawDraft}
+            onBufferRemove={(id) => editBuffer.remove(id)}
+            onBufferClear={() => editBuffer.clear()}
         />
     </div>
 
@@ -3225,6 +3491,7 @@
                 }}
                 onFlyToCoverage={flyToCoverage}
                 onFlyToModel={flyToModel}
+                {joinedKeys}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}

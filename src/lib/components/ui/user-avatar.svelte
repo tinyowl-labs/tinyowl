@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { avatarPreview } from "$lib/stores/avatar-preview.svelte";
+
 	let {
 		userId,
 		name = "",
@@ -14,7 +16,8 @@
 	} = $props();
 
 	const src = $derived(
-		`/users/${encodeURIComponent(userId)}/avatar${bust ? `?v=${encodeURIComponent(bust)}` : ""}`,
+		avatarPreview.src(userId) ??
+			`/users/${encodeURIComponent(userId)}/avatar${bust ? `?v=${encodeURIComponent(bust)}` : ""}`,
 	);
 	const imgClass = $derived(
 		`${className} shrink-0 rounded-full object-cover bg-secondary`.trim(),

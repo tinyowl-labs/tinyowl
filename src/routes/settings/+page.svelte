@@ -10,6 +10,7 @@
     import { untrack } from "svelte";
     import Header from "$lib/components/ui/header.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
+    import AvatarEditor from "$lib/components/ui/avatar-editor.svelte";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
@@ -20,6 +21,9 @@
         FieldGroup,
     } from "$lib/components/ui/field/index.js";
     import { createClient } from "$lib/supabase/client";
+    import { randomAvatarStyle, type AvatarStyle } from "$lib/avatar-style";
+    import { generatedAvatarDataUrl } from "$lib/user-avatar";
+    import { avatarPreview } from "$lib/stores/avatar-preview.svelte";
     import {
         themePrefs,
         setPreference,
@@ -44,6 +48,10 @@
     const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const user = $derived(data?.user);
     const hasAvatar = $derived(Boolean(data?.hasAvatar));
+    let avatarStyle = $state<AvatarStyle>({});
+    let editorDraft = $state<AvatarStyle>({});
+    let editorOpen = $state(false);
+    let avatarSaving = $state(false);
     const qfieldAccounts = $derived(data?.qfieldAccounts ?? []);
     const qfieldLinks = $derived(
         (data?.qfieldLinks ?? []) as {
@@ -419,6 +427,13 @@
         lastName = user?.user_metadata?.last_name ?? "";
     });
 
+    let avatarHydrated = $state(false);
+    $effect(() => {
+        if (avatarHydrated) return;
+        avatarStyle = { ...(data?.avatarStyle ?? {}) };
+        avatarHydrated = true;
+    });
+
     const initials = $derived(
         firstName
             ? (firstName.charAt(0) + (lastName?.charAt(0) ?? "")).toUpperCase()
@@ -459,6 +474,57 @@
         }
         accountMsg = "Profile updated.";
         await invalidateAll();
+    }
+
+    async function meToken(): Promise<string | null> {
+        const supabase = createClient();
+        const { data: sessionData } = await supabase.auth.getSession();
+        return sessionData.session?.access_token ?? null;
+    }
+
+    async function saveAvatarStyle(next: AvatarStyle) {
+        if (!user?.id) return;
+        const previous = avatarPreview.src(user.id);
+        avatarStyle = next;
+        avatarPreview.set(user.id, generatedAvatarDataUrl(user.id, next));
+        editorOpen = false;
+        avatarSaving = true;
+        accountError = "";
+        accountMsg = "";
+        try {
+            const token = await meToken();
+            if (!token) throw new Error("Not signed in.");
+            if (hasAvatar) {
+                const del = await fetch("/api/v1/me/avatar", {
+                    method: "DELETE",
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!del.ok) throw new Error(await del.text());
+            }
+            const res = await fetch("/api/v1/me", {
+                method: "PATCH",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ avatar_style: next }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            accountMsg = "Avatar saved.";
+        } catch (err) {
+            if (previous) avatarPreview.set(user.id, previous);
+            else avatarPreview.clear(user.id);
+            accountError =
+                err instanceof Error ? err.message : "Could not save avatar.";
+            editorOpen = true;
+        } finally {
+            avatarSaving = false;
+        }
+    }
+
+    function openAvatarEditor() {
+        editorDraft = randomAvatarStyle();
+        editorOpen = true;
     }
 
     // CLI tokens
@@ -665,11 +731,28 @@
                                     </div>
                                 </div>
                                 <div class="mb-4 flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        class="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                                        onclick={openAvatarEditor}
+                                    >
+                                        Generate new avatar
+                                    </button>
                                     <form
                                         method="POST"
                                         action="?/uploadAvatar"
                                         enctype="multipart/form-data"
-                                        use:enhance
+                                        use:enhance={() => {
+                                            return async ({ result, update }) => {
+                                                await update();
+                                                if (
+                                                    result.type === "success" &&
+                                                    user?.id
+                                                ) {
+                                                    avatarPreview.clear(user.id);
+                                                }
+                                            };
+                                        }}
                                     >
                                         <label
                                             class="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -697,11 +780,21 @@
                                                 size="sm"
                                                 variant="ghost"
                                                 class="text-muted-foreground"
-                                                >Remove</Button
+                                                >Remove photo</Button
                                             >
                                         </form>
                                     {/if}
                                 </div>
+
+                                {#if user?.id}
+                                    <AvatarEditor
+                                        bind:open={editorOpen}
+                                        seed={user.id}
+                                        bind:style={editorDraft}
+                                        saving={avatarSaving}
+                                        onSave={saveAvatarStyle}
+                                    />
+                                {/if}
 
                                 <form onsubmit={saveAccount} class="space-y-4">
                                     <FieldGroup>

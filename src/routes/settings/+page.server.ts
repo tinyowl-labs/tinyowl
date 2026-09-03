@@ -13,6 +13,7 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
     return {
       user,
       hasAvatar: false,
+      avatarStyle: null,
       qfieldAccounts: [],
       qfieldLinks: [],
       ocLinks: [],
@@ -94,15 +95,22 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
   } catch (_) {}
 
   let hasAvatar = false;
+  let avatarStyle: Record<string, string> | null = null;
   try {
     const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/me`, { headers });
     if (res.ok) {
-      const me = (await res.json()) as { has_avatar?: boolean };
+      const me = (await res.json()) as {
+        has_avatar?: boolean;
+        avatar_style?: Record<string, string> | null;
+      };
       hasAvatar = Boolean(me.has_avatar);
+      if (me.avatar_style && typeof me.avatar_style === "object") {
+        avatarStyle = me.avatar_style;
+      }
     }
   } catch (_) {}
 
-  return { user, hasAvatar, qfieldAccounts, qfieldLinks, ocLinks, cliTokens };
+  return { user, hasAvatar, avatarStyle, qfieldAccounts, qfieldLinks, ocLinks, cliTokens };
 };
 
 export const actions: Actions = {

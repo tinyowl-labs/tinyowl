@@ -26,8 +26,15 @@
     import { onMount } from "svelte";
     import {
         layerSelection,
+        parseSelectionKey,
         toSelectionKey,
     } from "$lib/stores/layerSelection.svelte";
+    import {
+        joinHint,
+        relatedSelectionKeys,
+    } from "$lib/project/schemaJoin";
+    import { editBuffer } from "$lib/stores/editBuffer.svelte";
+    import { fromEditBuffer } from "$lib/geoDiff";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
 
     let { data } = $props();
@@ -57,6 +64,7 @@
     const dimParam = $derived((data?.dim as string) ?? "");
     const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
+    const diffFeatures = $derived(fromEditBuffer(editBuffer.entries));
 
     /** Resolve ?layer= to an actual table name (case-insensitive). */
     const resolvedLayer = $derived.by(() => {
@@ -217,20 +225,6 @@
             }
         }
     });
-
-    function rowClassName(row: Record<string, unknown>): string {
-        // Depend on selectionSig so row styles update when membership changes at same size.
-        void selectionSig;
-        if (selectionSize === 0) return "";
-        const id = String(row.source_id ?? row.SOURCE_ID ?? "");
-        if (!id) return "";
-        const key = toSelectionKey(activeTab, id);
-        if (!layerSelection.selected.has(key)) return "";
-        if (layerSelection.primaryKey === key) {
-            return "bg-accent ring-1 ring-inset ring-primary/20";
-        }
-        return "bg-accent/40";
-    }
 
     let schemaToolsOpen = $state(false);
 
@@ -412,6 +406,33 @@
     let schemaLoading = $state(false);
     let schemaLoaded = $state(false);
 
+    const joinedKeys = $derived(
+        relatedSelectionKeys([...layerSelection.selected], {
+            edges: schemaEdges,
+            rowsByTable: rows,
+        }),
+    );
+    const joinedSet = $derived(new Set(joinedKeys));
+    const tableJoinHint = $derived(joinHint(activeTab, schemaEdges, tables));
+
+    function rowClassName(row: Record<string, unknown>): string {
+        // Depend on selectionSig so row styles update when membership changes at same size.
+        void selectionSig;
+        void joinedKeys;
+        if (selectionSize === 0 && joinedKeys.length === 0) return "";
+        const id = String(row.source_id ?? row.SOURCE_ID ?? "");
+        if (!id) return "";
+        const key = toSelectionKey(activeTab, id);
+        if (layerSelection.selected.has(key)) {
+            if (layerSelection.primaryKey === key) {
+                return "bg-accent ring-1 ring-inset ring-primary/20";
+            }
+            return "bg-accent/40";
+        }
+        if (joinedSet.has(key)) return "bg-accent/40";
+        return "";
+    }
+
     function authHeaders(): HeadersInit {
         return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     }
@@ -560,16 +581,23 @@
         }
     }
 
-    /** Ensure selected layer is visible — no refetch. */
+    /** Ensure selected + joined layers are visible — no refetch. */
     $effect(() => {
-        const id = selectedId;
-        const layer = selectedLayer;
-        if (!id || !layer || mapLayers.length === 0) return;
-        const idx = mapLayers.findIndex((l) => l.name === layer);
-        if (idx >= 0 && !mapLayers[idx]!.visible) {
-            mapLayers[idx]!.visible = true;
-            mapLayers = [...mapLayers];
+        void selectionSig;
+        void joinedKeys;
+        if (mapLayers.length === 0) return;
+        let changed = false;
+        const keys = [...layerSelection.selected, ...joinedKeys];
+        for (const key of keys) {
+            const { layer } = parseSelectionKey(key);
+            if (!layer) continue;
+            const idx = mapLayers.findIndex((l) => l.name === layer);
+            if (idx >= 0 && !mapLayers[idx]!.visible) {
+                mapLayers[idx]!.visible = true;
+                changed = true;
+            }
         }
+        if (changed) mapLayers = [...mapLayers];
     });
 
     async function loadSchema() {
@@ -658,11 +686,11 @@
         const namesKey = tableNamesKey;
         // Do NOT depend on mapDim — refetching CZML on 2D/3D toggle remounts
         // datasources and looks like a full reload.
+        if (namesKey) {
+            void loadSchema();
+        }
         if (mode === "map" && namesKey) {
             void loadAllCzml();
-        }
-        if (mode === "schema" && namesKey) {
-            void loadSchema();
         }
     });
 
@@ -737,6 +765,8 @@
                         onDimChange={setMapDim}
                         canEditViews={canWrite}
                         onPersistViews={persistLayerViews}
+                        {diffFeatures}
+                        {joinedKeys}
                     />
                 {:else}
                     <CesiumLoading />
@@ -788,10 +818,24 @@
                                     {@const tableRows = rows[tabValue] ?? []}
                                     {@const tableCols =
                                         columnsByTable[tabValue] ?? []}
+                                    <div
+                                        class="flex h-full min-h-0 flex-col"
+                                    >
+                                    {#if tableJoinHint}
+                                        <p
+                                            class="shrink-0 pb-2 text-[11px] text-muted-foreground"
+                                        >
+                                            {tableJoinHint}
+                                            {#if joinedKeys.length > 0}
+                                                · {joinedKeys.length} related
+                                                highlighted
+                                            {/if}
+                                        </p>
+                                    {/if}
                                     {#if tableRows.length > 0}
                                         <div
                                             bind:this={tableContainer}
-                                            class="h-full min-h-0"
+                                            class="h-full min-h-0 flex-1"
                                         >
                                         {#if DataTableCmp}
                                             <DataTableCmp
@@ -869,6 +913,7 @@
                                             </p>
                                         </div>
                                     {/if}
+                                    </div>
                                 {/if}
                             {/snippet}
                         </Tabs>

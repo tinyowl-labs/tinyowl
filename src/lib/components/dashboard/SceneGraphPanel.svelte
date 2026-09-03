@@ -53,6 +53,8 @@
         inViewEntityKeys?: string[];
         inViewModelHashes?: string[];
         filterToView?: boolean;
+        /** FK-joined keys (not in layerSelection) — secondary highlight. */
+        joinedKeys?: string[];
     };
 
     let {
@@ -78,6 +80,7 @@
         inViewEntityKeys = [],
         inViewModelHashes = [],
         filterToView = $bindable(false),
+        joinedKeys = [],
     }: Props = $props();
 
     let query = $state("");
@@ -102,8 +105,9 @@
     } | null>(null);
     let tilesetMenuEl = $state<HTMLDivElement>();
 
+    const joinedSet = $derived(new Set(joinedKeys));
     const selectionSig = $derived(
-        `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}`,
+        `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}|${[...joinedKeys].sort().join(",")}`,
     );
     const hiddenSig = $derived(
         `${[...layerSelection.hidden].sort().join(",")}|${layerSelection.isIsolating}`,
@@ -722,10 +726,14 @@
                 {#if isLayerExpanded(layer.name)}
                     <div class="mb-1 space-y-0.5 {childIndent}">
                         {#each ents as ent}
-                            {@const selected = layerSelection.isSelected(
-                                ent.layerName,
-                                ent.entityId,
-                            )}
+                            {@const selected =
+                                layerSelection.isSelected(
+                                    ent.layerName,
+                                    ent.entityId,
+                                ) ||
+                                joinedSet.has(
+                                    toSelectionKey(ent.layerName, ent.entityId),
+                                )}
                             {@const primary = layerSelection.isPrimary(
                                 ent.layerName,
                                 ent.entityId,
