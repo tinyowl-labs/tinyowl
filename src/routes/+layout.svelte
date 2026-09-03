@@ -31,6 +31,7 @@
         const from = navigation.from?.url.pathname ?? "";
         const to = navigation.to?.url.pathname ?? "";
         const homeSearch =
+            (from === "/" && to === "/") ||
             (from === "/" && to.startsWith("/search")) ||
             (from.startsWith("/search") && to === "/");
         if (!homeSearch) return;

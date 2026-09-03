@@ -10,7 +10,6 @@
 		searchOverlay,
 	} from "$lib/stores/searchOverlay.svelte";
 
-	let isMac = $state(false);
 	let composer = $state<{ focusField?: () => void } | null>(null);
 
 	const routeSlug = $derived(
@@ -34,10 +33,6 @@
 	);
 
 	onMount(() => {
-		isMac = /Mac|iPhone|iPad|iPod/i.test(
-			navigator.platform || navigator.userAgent,
-		);
-
 		const onKey = (e: KeyboardEvent) => {
 			if (!isSearchModK(e)) return;
 			if (window.location.pathname.startsWith("/auth")) return;
@@ -107,17 +102,6 @@
 					<XIcon class="size-4" />
 				</Dialog.Close>
 			</div>
-			<p class="px-2 pb-1 pt-1.5 text-[10px] text-muted-foreground">
-				<kbd
-					class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans"
-					>{isMac ? "⌘" : "Ctrl"}</kbd
-				>
-				<kbd
-					class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans"
-					>K</kbd
-				>
-				toggles · Esc closes
-			</p>
 		</Dialog.Content>
 	</Dialog.Portal>
 </Dialog.Root>

@@ -3,8 +3,10 @@
     import { formatYear } from "$lib/search/params";
 
     type DatedProject = {
-        date_start?: number | null;
-        date_end?: number | null;
+        date_start?: number | string | null;
+        date_end?: number | string | null;
+        date_start_label?: string | null;
+        date_end_label?: string | null;
     };
 
     type Props = {
@@ -24,19 +26,42 @@
     /** Fallback when no dated results (or empty search). */
     const FALLBACK_MIN = -12000;
     const FALLBACK_MAX = 2100;
-    const MIN_SPAN = 100;
+    const MIN_SPAN = 20;
     const BIN_COUNT = 48;
 
     type Bin = { start: number; end: number; count: number };
 
+    function yearFromLabel(raw: string | null | undefined): number | null {
+        if (!raw) return null;
+        const bce = raw.match(/(\d{1,5})\s*(?:bce|bc)\b/i);
+        if (bce) return -Number(bce[1]);
+        const ce = raw.match(/(\d{1,5})\s*(?:ce|ad)\b/i);
+        if (ce) return Number(ce[1]);
+        const y = raw.match(/\b(1\d{3}|20\d{2}|-?\d{3,4})\b/);
+        if (!y) return null;
+        const n = Number(y[1]);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    function spanFromProject(p: DatedProject): { start: number; end: number } | null {
+        const sRaw = p.date_start ?? p.date_end;
+        const eRaw = p.date_end ?? p.date_start;
+        const s = sRaw == null || sRaw === "" ? null : Number(sRaw);
+        const e = eRaw == null || eRaw === "" ? null : Number(eRaw);
+        if (s != null && e != null && !Number.isNaN(s) && !Number.isNaN(e)) {
+            return { start: Math.min(s, e), end: Math.max(s, e) };
+        }
+        const ls = yearFromLabel(p.date_start_label);
+        const le = yearFromLabel(p.date_end_label);
+        const a = ls ?? le;
+        const b = le ?? ls;
+        if (a == null || b == null) return null;
+        return { start: Math.min(a, b), end: Math.max(a, b) };
+    }
+
     const dated = $derived(
         projects
-            .map((p) => {
-                const s = p.date_start ?? p.date_end;
-                const e = p.date_end ?? p.date_start;
-                if (s == null || e == null) return null;
-                return { start: Math.min(s, e), end: Math.max(s, e) };
-            })
+            .map(spanFromProject)
             .filter((x): x is { start: number; end: number } => x != null),
     );
 
@@ -155,15 +180,8 @@
 </script>
 
 <div class="space-y-2">
-    <div class="flex items-center justify-between gap-2">
-        <p class="text-xs text-muted-foreground">
-            {#if dated.length === 0}
-                Drag to set a year range
-            {:else}
-                {dated.length} dated in results
-            {/if}
-        </p>
-        {#if hasFilter}
+    {#if hasFilter}
+        <div class="flex justify-end">
             <button
                 type="button"
                 onclick={clear}
@@ -171,8 +189,8 @@
             >
                 Clear
             </button>
-        {/if}
-    </div>
+        </div>
+    {/if}
 
     <div
         class="relative h-16 rounded-md border border-border bg-muted/30 overflow-hidden"
@@ -185,7 +203,7 @@
                     class="flex-1 min-w-0 rounded-t-[1px] transition-colors {inRange
                         ? 'bg-foreground/70'
                         : 'bg-foreground/15'}"
-                    style="height: {bin.count === 0 ? 2 : Math.max(4, h)}%"
+                    style="height: {bin.count === 0 ? 8 : Math.max(18, h)}%"
                     title="{formatYear(Math.round(bin.start))}–{formatYear(
                         Math.round(bin.end),
                     )}: {bin.count}"

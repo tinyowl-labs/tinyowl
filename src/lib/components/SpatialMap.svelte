@@ -339,11 +339,13 @@
         polygonBySlug.clear();
 
         const showArea = displayMode === "area";
+        const outlineSlug = selectedSlug;
 
         for (const r of results) {
             const pt = resultPoint(r);
             let drewPolygon = false;
-            if (showArea && r.bbox) {
+            const wantPoly = (showArea || r.slug === outlineSlug) && Boolean(r.bbox);
+            if (wantPoly && r.bbox) {
                 try {
                     const geom = JSON.parse(r.bbox);
                     if (geom?.type && geom?.coordinates) {
@@ -656,6 +658,7 @@
     $effect(() => {
         results;
         displayMode;
+        selectedSlug;
         themePrefs.accentHue;
         themePrefs.bgBase;
         if (map && Lref) {

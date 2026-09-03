@@ -1,21 +1,10 @@
 import type { PageServerLoad } from "./$types";
-import { TINYOWL_CORE_URL } from "$env/static/private";
-import type { DiscoveryProject } from "$lib/search/discovery";
+import { loadHomeDiscovery } from "$lib/search/loadDiscovery.server";
 
-export type Centroid = DiscoveryProject;
+export type { SearchProject } from "$lib/search/discoveryLoad";
+/** @deprecated Use SearchProject — kept for ProjectMap imports. */
+export type Centroid = import("$lib/search/discovery").DiscoveryProject;
 
-export const load: PageServerLoad = async ({ locals, fetch }) => {
-  const accessToken = await locals.getAccessToken();
-  const headers: Record<string, string> = {};
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-
-  let centroids: Centroid[] = [];
-  try {
-    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/centroids`, {
-      headers,
-    });
-    if (res.ok) centroids = await res.json();
-  } catch (_) {}
-
-  return { centroids, accessToken };
+export const load: PageServerLoad = async (event) => {
+  return loadHomeDiscovery(event);
 };

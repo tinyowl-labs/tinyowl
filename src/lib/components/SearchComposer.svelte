@@ -111,6 +111,8 @@
          * only to unbound local state).
          */
         palette?: boolean;
+        /** Always reserve a chip row under the bar so filters don't jump the layout. */
+        reserveChipTray?: boolean;
         class?: string;
     };
 
@@ -137,6 +139,7 @@
         placeLabel = null,
         listboxId = "search-mention-list",
         palette = false,
+        reserveChipTray = false,
         class: klass = "",
     }: Props = $props();
 
@@ -1655,7 +1658,7 @@
         onpaste={onPaste}
     >
         <div
-            class="search-vt-bar relative flex w-full min-h-11 flex-wrap items-center gap-1 rounded-xl border border-border bg-background py-1.5 pl-10 pr-12 shadow-sm focus-within:border-primary dark:bg-muted dark:shadow-none {dragOver
+            class="search-vt-bar relative flex w-full min-h-11 items-center rounded-xl border border-border bg-background py-1.5 pl-10 pr-12 shadow-sm focus-within:border-primary dark:bg-muted dark:shadow-none {dragOver
                 ? 'ring-2 ring-primary/40'
                 : ''} {klass}"
             onclick={() => inputEl?.focus()}
@@ -1663,106 +1666,6 @@
         <SearchIcon
             class="pointer-events-none absolute left-3.5 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground"
         />
-        {#if hasImageChip}
-            <button
-                type="button"
-                tabindex="-1"
-                class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                onclick={removeMedia}
-                title="Remove image search"
-            >
-                {#if seedThumbUrl}
-                    <img
-                        src={seedThumbUrl}
-                        alt=""
-                        class="size-4 rounded object-cover"
-                    />
-                {:else}
-                    <ImageIcon class="size-3" />
-                {/if}
-                <span class="text-primary/60">image</span>
-                <XIcon class="size-3 opacity-70" />
-            </button>
-        {/if}
-        {#if bbox}
-            <button
-                type="button"
-                tabindex="-1"
-                class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                onclick={removeSpatial}
-                title="Remove map area filter"
-            >
-                {#if placeChip}
-                    <GlobeIcon class="size-3 opacity-70" />
-                    <span class="truncate">{placeChip.title}</span>
-                {:else}
-                    <MapIcon class="size-3 opacity-70" />
-                    <span class="text-primary/60">area</span>
-                    <span class="truncate tabular-nums"
-                        >{formatLatLng(bbox.south, bbox.west)}
-                        → {formatLatLng(bbox.north, bbox.east)}</span
-                    >
-                {/if}
-                <XIcon class="size-3 opacity-70" />
-            </button>
-        {:else if lat != null && lng != null}
-            <button
-                type="button"
-                tabindex="-1"
-                class="inline-flex max-w-[14rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                onclick={removeSpatial}
-                title="Remove radius filter"
-            >
-                {#if placeChip}
-                    <GlobeIcon class="size-3 opacity-70" />
-                    <span class="truncate">{placeChip.title}</span>
-                {:else}
-                    <CrosshairIcon class="size-3 opacity-70" />
-                    <span class="text-primary/60">radius</span>
-                {/if}
-                <span class="tabular-nums"
-                    >{formatRadius(radius ?? DEFAULT_SEARCH_RADIUS)}</span
-                >
-                <XIcon class="size-3 opacity-70" />
-            </button>
-        {/if}
-        {#each activeTags as tag (tag.toLowerCase())}
-            <button
-                type="button"
-                tabindex="-1"
-                class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                onclick={() => removeTag(tag)}
-                title="Remove tag filter"
-            >
-                <span class="text-primary/60">tag:</span>{tag}
-                <XIcon class="size-3 opacity-70" />
-            </button>
-        {/each}
-        {#each activeVocabs as v (v.toLowerCase())}
-            <button
-                type="button"
-                tabindex="-1"
-                class="inline-flex items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-foreground hover:bg-secondary/80"
-                onclick={() => removeVocab(v)}
-                title="Remove mapped-term filter"
-            >
-                <span class="text-muted-foreground">vocab:</span>{v}
-                <XIcon class="size-3 opacity-70" />
-            </button>
-        {/each}
-        {#each activeProjects as slug (slug.toLowerCase())}
-            <button
-                type="button"
-                tabindex="-1"
-                class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                onclick={() => removeProject(slug)}
-                title="Remove project filter"
-            >
-                <span class="text-primary/60">project:</span>
-                <span class="truncate">{projectChipLabel(slug)}</span>
-                <XIcon class="size-3 opacity-70" />
-            </button>
-        {/each}
         <div class="relative min-w-[8rem] flex-1">
         {#if cycling && !paused}
             <span
@@ -1852,6 +1755,130 @@
             {/if}
         </button>
         </div>
+        {#if hasChips || palette || reserveChipTray}
+            <div
+                class="search-chip-tray mt-1.5 flex min-h-7 flex-wrap items-center gap-1 {palette
+                    ? 'border-t border-border px-1 pt-1.5'
+                    : ''}"
+                onclick={(e) => e.stopPropagation()}
+            >
+                {#if hasImageChip}
+                    <button
+                        type="button"
+                        tabindex="-1"
+                        class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
+                        onclick={removeMedia}
+                        title="Remove image search"
+                    >
+                        {#if seedThumbUrl}
+                            <img
+                                src={seedThumbUrl}
+                                alt=""
+                                class="size-4 rounded object-cover"
+                            />
+                        {:else}
+                            <ImageIcon class="size-3" />
+                        {/if}
+                        <span class="text-primary/60">image</span>
+                        <XIcon class="size-3 opacity-70" />
+                    </button>
+                {/if}
+                {#if bbox}
+                    <button
+                        type="button"
+                        tabindex="-1"
+                        class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
+                        onclick={removeSpatial}
+                        title="Remove map area filter"
+                    >
+                        {#if placeChip}
+                            <GlobeIcon class="size-3 opacity-70" />
+                            <span class="truncate">{placeChip.title}</span>
+                        {:else}
+                            <MapIcon class="size-3 opacity-70" />
+                            <span class="text-primary/60">area</span>
+                            <span class="truncate tabular-nums"
+                                >{formatLatLng(bbox.south, bbox.west)}
+                                → {formatLatLng(bbox.north, bbox.east)}</span
+                            >
+                        {/if}
+                        <XIcon class="size-3 opacity-70" />
+                    </button>
+                {:else if lat != null && lng != null}
+                    <button
+                        type="button"
+                        tabindex="-1"
+                        class="inline-flex max-w-[14rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
+                        onclick={removeSpatial}
+                        title="Remove radius filter"
+                    >
+                        {#if placeChip}
+                            <GlobeIcon class="size-3 opacity-70" />
+                            <span class="truncate">{placeChip.title}</span>
+                        {:else}
+                            <CrosshairIcon class="size-3 opacity-70" />
+                            <span class="text-primary/60">radius</span>
+                        {/if}
+                        <span class="tabular-nums"
+                            >{formatRadius(radius ?? DEFAULT_SEARCH_RADIUS)}</span
+                        >
+                        <XIcon class="size-3 opacity-70" />
+                    </button>
+                {/if}
+                {#each activeTags as tag (tag.toLowerCase())}
+                    <button
+                        type="button"
+                        tabindex="-1"
+                        class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
+                        onclick={() => removeTag(tag)}
+                        title="Remove tag filter"
+                    >
+                        <span class="text-primary/60">tag:</span>{tag}
+                        <XIcon class="size-3 opacity-70" />
+                    </button>
+                {/each}
+                {#each activeVocabs as v (v.toLowerCase())}
+                    <button
+                        type="button"
+                        tabindex="-1"
+                        class="inline-flex items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-foreground hover:bg-secondary/80"
+                        onclick={() => removeVocab(v)}
+                        title="Remove mapped-term filter"
+                    >
+                        <span class="text-muted-foreground">vocab:</span>{v}
+                        <XIcon class="size-3 opacity-70" />
+                    </button>
+                {/each}
+                {#each activeProjects as slug (slug.toLowerCase())}
+                    <button
+                        type="button"
+                        tabindex="-1"
+                        class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
+                        onclick={() => removeProject(slug)}
+                        title="Remove project filter"
+                    >
+                        <span class="text-primary/60">project:</span>
+                        <span class="truncate">{projectChipLabel(slug)}</span>
+                        <XIcon class="size-3 opacity-70" />
+                    </button>
+                {/each}
+                {#if palette}
+                    <span
+                        class="ml-auto shrink-0 px-1 text-[10px] text-muted-foreground"
+                    >
+                        <kbd
+                            class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans"
+                            >{isMac ? "⌘" : "Ctrl"}</kbd
+                        >
+                        <kbd
+                            class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans"
+                            >K</kbd
+                        >
+                        toggles · Esc closes
+                    </span>
+                {/if}
+            </div>
+        {/if}
 
         {#if dropdownOpen}
             <div

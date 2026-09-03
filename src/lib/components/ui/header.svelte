@@ -139,11 +139,11 @@
             onclick={() => searchOverlay.show()}
             class="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
-            aria-label="Open search"
+            aria-label={searchOverlay.hasPageHost ? "Focus search" : "Open search"}
             title="Search"
         >
             <SearchIcon class="size-4" />
-            {#if isMounted}
+            {#if isMounted && !searchOverlay.hasPageHost}
                 <span class="hidden items-center gap-0.5 sm:inline-flex" aria-hidden="true">
                     <kbd
                         class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans text-[10px] leading-none"

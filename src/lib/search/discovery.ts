@@ -91,9 +91,13 @@ export function projectInTemporalRange(
 	to: number | null,
 ): boolean {
 	if (from == null && to == null) return true;
-	const start = p.date_start ?? p.date_end;
-	const end = p.date_end ?? p.date_start;
-	if (start == null || end == null) return false;
+	const startRaw = p.date_start ?? p.date_end;
+	const endRaw = p.date_end ?? p.date_start;
+	const start = startRaw == null ? null : Number(startRaw);
+	const end = endRaw == null ? null : Number(endRaw);
+	if (start == null || end == null || Number.isNaN(start) || Number.isNaN(end)) {
+		return false;
+	}
 	const a = Math.min(start, end);
 	const b = Math.max(start, end);
 	const lo = from ?? -1e9;
