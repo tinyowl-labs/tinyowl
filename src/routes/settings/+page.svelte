@@ -11,6 +11,7 @@
     import Header from "$lib/components/ui/header.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import AvatarEditor from "$lib/components/ui/avatar-editor.svelte";
+    import AvatarCropDialog from "$lib/components/ui/avatar-crop-dialog.svelte";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
@@ -23,6 +24,7 @@
     import { createClient } from "$lib/supabase/client";
     import { randomAvatarStyle, type AvatarStyle } from "$lib/avatar-style";
     import { generatedAvatarDataUrl } from "$lib/user-avatar";
+    import { isAllowedAvatarType } from "$lib/avatar-crop";
     import { avatarPreview } from "$lib/stores/avatar-preview.svelte";
     import {
         themePrefs,
@@ -52,6 +54,10 @@
     let editorDraft = $state<AvatarStyle>({});
     let editorOpen = $state(false);
     let avatarSaving = $state(false);
+    let avatarBust = $state("");
+    let cropOpen = $state(false);
+    let cropUrl = $state("");
+    let cropInput = $state<HTMLInputElement | null>(null);
     const qfieldAccounts = $derived(data?.qfieldAccounts ?? []);
     const qfieldLinks = $derived(
         (data?.qfieldLinks ?? []) as {
@@ -527,6 +533,58 @@
         editorOpen = true;
     }
 
+    function pickAvatarFile() {
+        cropInput?.click();
+    }
+
+    function onAvatarFile(event: Event) {
+        const input = event.currentTarget as HTMLInputElement;
+        const file = input.files?.[0];
+        input.value = "";
+        if (!file) return;
+        if (!isAllowedAvatarType(file.type)) {
+            accountError = "Choose a JPG, PNG, WEBP, or GIF image.";
+            return;
+        }
+        if (cropUrl.startsWith("blob:")) URL.revokeObjectURL(cropUrl);
+        cropUrl = URL.createObjectURL(file);
+        cropOpen = true;
+        accountError = "";
+    }
+
+    async function saveCroppedAvatar(file: File) {
+        if (!user?.id) return;
+        const token = await meToken();
+        if (!token) throw new Error("Not signed in.");
+        avatarSaving = true;
+        accountError = "";
+        try {
+            const res = await fetch("/api/v1/me/avatar", {
+                method: "PUT",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": file.type || "image/webp",
+                },
+                body: file,
+            });
+            if (!res.ok) throw new Error(await res.text());
+            avatarPreview.clear(user.id);
+            avatarBust = String(Date.now());
+            await invalidateAll();
+        } finally {
+            avatarSaving = false;
+            if (cropUrl.startsWith("blob:")) URL.revokeObjectURL(cropUrl);
+            cropUrl = "";
+        }
+    }
+
+    $effect(() => {
+        if (cropOpen || !cropUrl.startsWith("blob:")) return;
+        const url = cropUrl;
+        cropUrl = "";
+        URL.revokeObjectURL(url);
+    });
+
     // CLI tokens
     let showCreateToken = $state(false);
     let tokenLabel = $state("");
@@ -693,7 +751,7 @@
                                                 : (user?.email ?? "")}
                                             class="size-16"
                                             bust={hasAvatar
-                                                ? "1"
+                                                ? avatarBust || "1"
                                                 : form?.accountAction ===
                                                     "avatar-removed"
                                                   ? "0"
@@ -738,37 +796,20 @@
                                     >
                                         Generate new avatar
                                     </button>
-                                    <form
-                                        method="POST"
-                                        action="?/uploadAvatar"
-                                        enctype="multipart/form-data"
-                                        use:enhance={() => {
-                                            return async ({ result, update }) => {
-                                                await update();
-                                                if (
-                                                    result.type === "success" &&
-                                                    user?.id
-                                                ) {
-                                                    avatarPreview.clear(user.id);
-                                                }
-                                            };
-                                        }}
+                                    <button
+                                        type="button"
+                                        class="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                                        onclick={pickAvatarFile}
                                     >
-                                        <label
-                                            class="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                                        >
-                                            Upload avatar
-                                            <input
-                                                type="file"
-                                                name="avatar"
-                                                accept="image/jpeg,image/png,image/gif,image/webp"
-                                                class="sr-only"
-                                                onchange={(e) => {
-                                                    e.currentTarget.form?.requestSubmit();
-                                                }}
-                                            />
-                                        </label>
-                                    </form>
+                                        Upload avatar
+                                    </button>
+                                    <input
+                                        bind:this={cropInput}
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/gif,image/webp"
+                                        class="sr-only"
+                                        onchange={onAvatarFile}
+                                    />
                                     {#if hasAvatar}
                                         <form
                                             method="POST"
@@ -793,6 +834,12 @@
                                         bind:style={editorDraft}
                                         saving={avatarSaving}
                                         onSave={saveAvatarStyle}
+                                    />
+                                    <AvatarCropDialog
+                                        bind:open={cropOpen}
+                                        imageUrl={cropUrl}
+                                        saving={avatarSaving}
+                                        onSave={saveCroppedAvatar}
                                     />
                                 {/if}
 

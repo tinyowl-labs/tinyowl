@@ -12,8 +12,10 @@ export { entityIdFromChanges, parseDiffOp } from "./identity";
 export { fromListChanges } from "./fromListChanges";
 export { fromEditBuffer } from "./fromEditBuffer";
 export {
-    GEO_DIFF_DS_NAME,
-    destroyDiffOverlay,
-    overlayEntityInfo,
-    syncDiffOverlay,
+	GEO_DIFF_DS_NAME,
+	destroyDiffOverlay,
+	overlayEntityInfo,
+	syncDiffOverlay,
 } from "./cesiumOverlay";
+export { submitEditBuffer } from "./submitEditBuffer";
+export type { EditBufferSubmitResult } from "./submitEditBuffer";

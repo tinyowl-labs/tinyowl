@@ -3,6 +3,7 @@
     import { page } from "$app/stores";
     import { env as publicEnv } from "$env/dynamic/public";
     import { onDestroy, onMount } from "svelte";
+    import CheckIcon from "@lucide/svelte/icons/check";
     import BoxIcon from "@lucide/svelte/icons/box";
     import EyeIcon from "@lucide/svelte/icons/eye";
     import EyeOffIcon from "@lucide/svelte/icons/eye-off";
@@ -70,7 +71,10 @@
     } from "./layerSceneCoverage";
     import {
         cesiumPropValue,
+        collectPacketLonLats,
         entityIdFromPacketId,
+        preferRealLonLats,
+        type PacketLonLat,
     } from "./czmlLoad";
     import {
         computeMeasureValue,
@@ -91,6 +95,7 @@
     import {
         destroyDiffOverlay,
         overlayEntityInfo,
+        submitEditBuffer,
         syncDiffOverlay,
         type DiffFeature,
         type GeoJsonGeometry,
@@ -141,6 +146,7 @@
         clampLonLatToScene,
         commentClampNeedsRetry,
         clearCommentHeightCache,
+        firstHeightFromGeometry,
     } from "./layerSceneComments";
 
     type EntityMeta = {
@@ -190,8 +196,16 @@
         canWrite?: boolean;
         /** Table name → column names (create form). */
         tables?: Record<string, string[]>;
-        /** Value search from `/layers?q=` — seeds the scene-graph filter. */
+        /** Value search from `/layers?q=` — map isolate only, not the scene tree. */
         searchQ?: string;
+        onClearSearchQ?: () => void;
+        /** Gazetteer camera target from `/layers?bbox=` or `?lat=&lng=&radius=`. */
+        placeBBox?: { west: number; south: number; east: number; north: number } | null;
+        placeLat?: number | null;
+        placeLng?: number | null;
+        placeRadius?: number | null;
+        /** Fly to this layer's extent when there is no isolate / highlight. */
+        focusLayer?: string;
     };
 
     let {
@@ -216,6 +230,12 @@
         canWrite = false,
         tables = {},
         searchQ = "",
+        onClearSearchQ,
+        placeBBox = null,
+        placeLat = null,
+        placeLng = null,
+        placeRadius = null,
+        focusLayer = "",
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -261,6 +281,10 @@
 
     let editEnabled = $state(false);
     let bufferOverlayVisible = $state(true);
+    let commitMessage = $state("");
+    let commitBusy = $state(false);
+    let commitError = $state("");
+    let commitDoneId = $state("");
     let drawMode = $state<DrawGeomMode>("Polygon");
     let drawUseHeight = $state(true);
     let snapMode = $state<SnapMode>("mesh");
@@ -406,9 +430,9 @@
     let started = false;
     /** Frame the project/tileset extent once on boot. Reactive — gates loading overlay. */
     let hasFramed = $state(false);
-    /** True once we framed to entity layers (allows upgrade from tileset/empty home). */
-    let framedEntityHome = false;
+    let homeFlyStarted = false;
     let lastFlownKey = "";
+    let lastInteropFlyKey = "";
     let filterToView = $state(false);
     let styleLayerIdx = $state<number | null>(null);
     let inViewEntityKeys = $state<string[]>([]);
@@ -566,6 +590,35 @@
         return sphere;
     }
 
+    /** Home from packet lon/lat — not Cesium getBoundingSphere (often 0,0). */
+    function sphereFromLonLats(pts: PacketLonLat[]): any | null {
+        if (!Cesium || pts.length === 0) return null;
+        const cartesians = pts.map((p) =>
+            Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0),
+        );
+        const sphere = Cesium.BoundingSphere.fromPoints(cartesians);
+        if (!sphere?.center || !(sphere.radius >= 0)) return null;
+        sphere.radius = Math.max(sphere.radius * 1.5, 30);
+        return sphere;
+    }
+
+    function sphereFromPackets(
+        packets: Record<string, unknown>[] | undefined,
+    ): any | null {
+        return sphereFromLonLats(
+            preferRealLonLats(collectPacketLonLats(packets)),
+        );
+    }
+
+    function sphereFromVisibleLayerPackets(): any | null {
+        const pts: PacketLonLat[] = [];
+        for (const layer of layers) {
+            if (!layer.visible) continue;
+            pts.push(...collectPacketLonLats(layer.packets));
+        }
+        return sphereFromLonLats(preferRealLonLats(pts));
+    }
+
     function frameHeightM(prim: any | undefined): number {
         const c = prim?.boundingSphere?.center;
         if (c && Cesium) {
@@ -575,17 +628,78 @@
         return 100;
     }
 
+    function poseForSphere(
+        sphere: any,
+    ): { destination: any; orientation: any } | null {
+        if (!viewer || !Cesium || !sphere?.center) return null;
+        const mag = Cesium.Cartesian3.magnitude(sphere.center);
+        if (!Number.isFinite(mag) || mag < 1_000_000) return null;
+        try {
+            const c = Cesium.Cartographic.fromCartesian(sphere.center);
+            const lon = Cesium.Math.toDegrees(c.longitude);
+            const lat = Cesium.Math.toDegrees(c.latitude);
+            if (Math.abs(lon) < 1e-4 && Math.abs(lat) < 1e-4) return null;
+        } catch {
+            return null;
+        }
+        const is3d = viewer.scene.mode === Cesium.SceneMode.SCENE3D;
+        const pitch = is3d
+            ? Cesium.Math.toRadians(-45)
+            : Cesium.Math.toRadians(-90);
+        const range = Math.max(
+            sphere.radius * (is3d ? 2.5 : 2.2),
+            is3d ? 40 : 800,
+        );
+        const a = Math.abs(pitch);
+        const local = new Cesium.Cartesian3(
+            0,
+            -range * Math.cos(a),
+            range * Math.sin(a),
+        );
+        const enu = Cesium.Transforms.eastNorthUpToFixedFrame(sphere.center);
+        const destination = Cesium.Matrix4.multiplyByPoint(
+            enu,
+            local,
+            new Cesium.Cartesian3(),
+        );
+        return {
+            destination,
+            orientation: { heading: 0, pitch, roll: 0 },
+        };
+    }
+
+    /** World-frame fly/setView — never lookAt / flyToBoundingSphere (those snap to 0,0). */
     async function flyCameraToSphere(sphere: any, duration = 1.0) {
         if (!viewer || !Cesium || !sphere) return;
-        const is3d = viewer.scene.mode === Cesium.SceneMode.SCENE3D;
-        await viewer.camera.flyToBoundingSphere(sphere, {
-            duration,
-            offset: new Cesium.HeadingPitchRange(
-                0,
-                is3d ? Cesium.Math.toRadians(-45) : Cesium.Math.toRadians(-90),
-                Math.max(sphere.radius * (is3d ? 2.5 : 2.2), is3d ? 40 : 800),
-            ),
+        const pose = poseForSphere(sphere);
+        if (!pose) return;
+        try {
+            viewer.camera.cancelFlight();
+        } catch {
+            /* ignore */
+        }
+        try {
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        } catch {
+            /* ignore */
+        }
+        if (duration <= 0) {
+            viewer.camera.setView(pose);
+            bumpRender();
+            return;
+        }
+        const restoreRR = viewer.scene.requestRenderMode;
+        viewer.scene.requestRenderMode = false;
+        await new Promise<void>((resolve) => {
+            viewer.camera.flyTo({
+                ...pose,
+                duration,
+                complete: () => resolve(),
+                cancel: () => resolve(),
+            });
         });
+        viewer.scene.requestRenderMode = restoreRR;
+        bumpRender();
     }
 
     /** After 2D↔3D morph, reset camera frame and reframe to project data. */
@@ -608,13 +722,6 @@
         await flyHome(is3d ? 0.85 : 0.5);
     }
 
-    async function flyToSphere(sphere: any, duration = 1.2) {
-        await flyCameraToSphere(sphere, duration);
-        hasFramed = true;
-        homeSphere = Cesium.BoundingSphere.clone(sphere);
-        captureHomeView();
-    }
-
     function captureHomeView() {
         if (!viewer || !Cesium) return;
         try {
@@ -634,38 +741,14 @@
     /** Entity-layer extent for Home. Tilesets are backdrop only — not part of home. */
     function computeHomeSphere(): any | null {
         if (!viewer || !Cesium) return null;
-        const spheres: any[] = [];
-        try {
-            for (const ds of entityDataSources()) {
-                if (!ds?.show) continue;
-                for (const entity of ds.entities.values) {
-                    try {
-                        if (entity.show === false) continue;
-                    } catch {
-                        /* ignore */
-                    }
-                    const s = entityBoundingSphere(entity);
-                    if (s?.center && s.radius >= 0) {
-                        spheres.push(
-                            new Cesium.BoundingSphere(
-                                s.center,
-                                Math.max(s.radius, 2),
-                            ),
-                        );
-                    }
-                }
-            }
-        } catch {
-            /* visualizer may not be ready */
-        }
-        if (spheres.length > 0) {
-            return spheres.length === 1
-                ? spheres[0]
-                : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
-        }
+        const fromPackets = sphereFromVisibleLayerPackets();
+        if (fromPackets) return fromPackets;
+        // Visualizer spheres are not used — clamp-to-ground reports 0,0.
         // Tileset-only projects: fall back to mesh / bbox.
         const hasEntityLayers = layers.some(
-            (l) => (l.entityIds?.length ?? 0) > 0,
+            (l) =>
+                (l.packets?.length ?? 0) > 0 ||
+                (l.entityIds?.length ?? 0) > 0,
         );
         if (hasEntityLayers) return null;
         for (const [hash, prim] of tilesetPrims) {
@@ -707,16 +790,17 @@
 
     async function flyToLayerExtent(layerName: string) {
         if (!viewer || !Cesium) return;
+        const layer = layers.find((l) => l.name === layerName);
+        const fromPackets = sphereFromPackets(layer?.packets);
+        if (fromPackets) {
+            await flyCameraToSphere(fromPackets, 1.0);
+            return;
+        }
         const ds = layerSources.get(layerName);
         if (!ds) return;
         const spheres: any[] = [];
         for (const entity of ds.entities.values) {
-            const s = entityBoundingSphere(entity);
-            if (s?.center && s.radius >= 0) {
-                spheres.push(
-                    new Cesium.BoundingSphere(s.center, Math.max(s.radius, 2)),
-                );
-            }
+            pushExtentSphere(spheres, entity);
         }
         if (spheres.length === 0) return;
         const combined =
@@ -724,6 +808,52 @@
                 ? spheres[0]
                 : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
         await flyCameraToSphere(combined, 1.0);
+    }
+
+    function searchInteropFlyKey(): string {
+        if (searchQ.trim()) return "";
+        if (placeBBox) {
+            return `bbox:${placeBBox.west},${placeBBox.south},${placeBBox.east},${placeBBox.north}`;
+        }
+        if (placeLat != null && placeLng != null) {
+            return `pt:${placeLat},${placeLng},${placeRadius ?? 0}`;
+        }
+        if (focusLayer) return `layer:${focusLayer}`;
+        return "";
+    }
+
+    async function flyToSearchPlace(duration = 1.0) {
+        if (!viewer || !Cesium) return;
+        if (placeBBox) {
+            const sphere = sphereFromBboxWgs84(
+                [
+                    placeBBox.west,
+                    placeBBox.south,
+                    placeBBox.east,
+                    placeBBox.north,
+                ],
+                0,
+            );
+            if (sphere) await flyCameraToSphere(sphere, duration);
+            return;
+        }
+        if (placeLat == null || placeLng == null) return;
+        const center = Cesium.Cartesian3.fromDegrees(placeLng, placeLat);
+        const radiusM = Math.max(placeRadius ?? 5000, 80);
+        await flyCameraToSphere(
+            new Cesium.BoundingSphere(center, radiusM),
+            duration,
+        );
+    }
+
+    async function flySearchInterop(force = false) {
+        if (searchQ.trim()) return;
+        const key = searchInteropFlyKey();
+        // Layer extent is scene-graph / user only — never an automatic follow-up fly.
+        if (!key || key.startsWith("layer:")) return;
+        if (!force && key === lastInteropFlyKey) return;
+        lastInteropFlyKey = key;
+        await flyToSearchPlace();
     }
 
     function flyTopDown() {
@@ -829,15 +959,7 @@
         const spheres: any[] = [];
         for (const key of keys) {
             for (const entity of findEntitiesByKey(key)) {
-                const s = entityBoundingSphere(entity);
-                if (s?.center && s.radius >= 0) {
-                    spheres.push(
-                        new Cesium.BoundingSphere(
-                            s.center,
-                            Math.max(s.radius, 2),
-                        ),
-                    );
-                }
+                pushExtentSphere(spheres, entity);
             }
         }
         if (spheres.length === 0) return;
@@ -849,133 +971,24 @@
         await flyCameraToSphere(combined, 1.0);
     }
 
-    /**
-     * Initial camera: prefer entity-layer home. Do not lock hasFramed while CZML
-     * is still loading — otherwise syncLayers cannot reframe to the data.
-     */
-    async function frameScene(attempt = 0) {
-        if (!viewer || !Cesium) return;
-        // Parent still fetching CZML — keep the prepare overlay and retry later.
-        if (loading) return;
-
-        const entitySpheres: any[] = [];
-        try {
-            for (const ds of entityDataSources()) {
-                if (!ds?.show) continue;
-                for (const entity of ds.entities.values) {
-                    if (entity.show === false) continue;
-                    const s = entityBoundingSphere(entity);
-                    if (s?.center && s.radius >= 0) {
-                        entitySpheres.push(
-                            new Cesium.BoundingSphere(
-                                s.center,
-                                Math.max(s.radius, 2),
-                            ),
-                        );
-                    }
-                }
-            }
-        } catch {
-            /* visualizer may not be ready */
-        }
-
-        if (entitySpheres.length > 0) {
-            // Upgrade tileset/empty home once entities are ready.
-            if (hasFramed && framedEntityHome) return;
-            const combined =
-                entitySpheres.length === 1
-                    ? entitySpheres[0]
-                    : Cesium.BoundingSphere.fromBoundingSpheres(entitySpheres);
-            await flyToSphere(combined, 1.0);
-            framedEntityHome = true;
+    /** Once after load: same flyHome() as the toolbar button. */
+    function flyHomeOnce() {
+        if (homeFlyStarted || !viewer || !Cesium || loading) return;
+        if (computeHomeSphere()) {
+            homeFlyStarted = true;
+            lastFlownKey = selectionFlyKey();
+            void flyHome(1.0).then(() => {
+                hasFramed = true;
+            });
             return;
         }
-
-        if (hasFramed) return;
-
-        const expectEntities = layers.some(
-            (l) =>
-                l.visible &&
-                ((l.packets?.length ?? 0) > 0 ||
-                    (l.entityIds?.length ?? 0) > 0),
-        );
-        // Wait for entity visualizers — never fall through to tileset while layers load.
-        if (expectEntities) {
-            if (attempt < 40) {
-                await new Promise<void>((r) =>
-                    requestAnimationFrame(() => r()),
-                );
-                await frameScene(attempt + 1);
-                return;
-            }
-            // Layers exist but spheres never became ready — don't zoom to mesh.
+        const expect =
+            layers.some((l) => (l.packets?.length ?? 0) > 0) ||
+            models.length > 0;
+        if (!expect) {
+            homeFlyStarted = true;
             hasFramed = true;
-            return;
         }
-
-        const m = selected ?? models[0] ?? null;
-        const prim = m ? tilesetPrims.get(m.hash) : undefined;
-        if (prim) {
-            try {
-                await prim.readyPromise;
-            } catch {
-                /* continue */
-            }
-            applyTilesetHeightOffset(prim, m?.height_offset_m);
-        }
-
-        // Non-georeferenced models: orbit the mesh locally; do not treat as site truth.
-        if (m && isLocalTileset(m) && prim?.boundingSphere?.radius > 0) {
-            await flyToSphere(
-                Cesium.BoundingSphere.clone(prim.boundingSphere),
-                1.0,
-            );
-            return;
-        }
-
-        // No entity layers: tileset-only home.
-        const bbox = m?.bbox_wgs84;
-        if (Array.isArray(bbox)) {
-            const sphere = sphereFromBboxWgs84(bbox, frameHeightM(prim));
-            if (sphere) {
-                await flyToSphere(sphere, 1.0);
-                return;
-            }
-        }
-
-        if (prim?.boundingSphere?.radius > 0) {
-            await flyToSphere(
-                Cesium.BoundingSphere.clone(prim.boundingSphere),
-                1.0,
-            );
-            return;
-        }
-
-        if (prim) {
-            await viewer.flyTo(prim, { duration: 1.0 });
-            hasFramed = true;
-            try {
-                if (prim.boundingSphere?.radius > 0) {
-                    homeSphere = Cesium.BoundingSphere.clone(
-                        prim.boundingSphere,
-                    );
-                }
-            } catch {
-                /* ignore */
-            }
-            captureHomeView();
-            return;
-        }
-
-        if (attempt < 24) {
-            await new Promise<void>((r) =>
-                requestAnimationFrame(() => r()),
-            );
-            await frameScene(attempt + 1);
-            return;
-        }
-        // Nothing to frame (empty project) — release the loading overlay.
-        hasFramed = true;
     }
 
     function destroyLayerSource(name: string) {
@@ -1007,6 +1020,17 @@
         lastFlownKey = "";
         clearCommentSelection();
         if (started) syncAllSelectionStyles();
+    }
+
+    /** Exit isolate; if this isolate came from `/layers?q=`, drop the query and selection. */
+    function exitIsolateUi() {
+        const fromSearch = Boolean(searchQ.trim());
+        layerSelection.exitIsolate();
+        if (fromSearch) {
+            clearSelection();
+            onClearSearchQ?.();
+        }
+        applyHiddenVisibility();
     }
 
     function clearCommentSelection() {
@@ -1143,6 +1167,7 @@
             const v = cartesianToVertex(cart);
             ctxLon = v.lon;
             ctxLat = v.lat;
+            ctxHeight = v.height ?? 0;
         }
     }
 
@@ -1905,6 +1930,33 @@
         return true;
     }
 
+    async function commitEditBuffer() {
+        const message = commitMessage.trim();
+        if (!message || editBuffer.size === 0 || commitBusy || !canWrite) return;
+        if (vertexSession) {
+            if (!commitVertexEdit()) cancelVertexEdit();
+        }
+        commitBusy = true;
+        commitError = "";
+        commitDoneId = "";
+        try {
+            const res = await submitEditBuffer(
+                projectSlug,
+                accessToken,
+                message,
+                editBuffer.entries,
+            );
+            editBuffer.clear();
+            commitMessage = "";
+            commitDoneId = res.changeset_id;
+        } catch (e) {
+            commitError = e instanceof Error ? e.message : "Commit failed";
+        } finally {
+            commitBusy = false;
+            bumpRender();
+        }
+    }
+
     function undoDrawOrMeasure() {
         if (createFormOpen) {
             pendingGeometry = null;
@@ -2581,6 +2633,45 @@
             return Cesium.BoundingSphere.clone(scratchSphere);
         } catch {
             return null;
+        }
+    }
+
+    /**
+     * Skip unready visualizer spheres: ECEF origin, or lon/lat 0,0
+     * (ground primitives often report DONE at the Gulf of Guinea).
+     */
+    function isUsableExtentSphere(s: any): boolean {
+        if (!s?.center || !(s.radius >= 0) || !Cesium) return false;
+        const mag = Cesium.Cartesian3.magnitude(s.center);
+        if (!Number.isFinite(mag) || mag < 1_000_000) return false;
+        try {
+            const c = Cesium.Cartographic.fromCartesian(s.center);
+            const lon = Cesium.Math.toDegrees(c.longitude);
+            const lat = Cesium.Math.toDegrees(c.latitude);
+            if (Math.abs(lon) < 1e-4 && Math.abs(lat) < 1e-4) return false;
+        } catch {
+            return false;
+        }
+        return true;
+    }
+
+    function pushExtentSphere(spheres: any[], entity: any) {
+        try {
+            if (entity?.show === false) return;
+        } catch {
+            /* ignore */
+        }
+        const s = entityBoundingSphere(entity);
+        if (!isUsableExtentSphere(s)) return;
+        spheres.push(
+            new Cesium.BoundingSphere(s.center, Math.max(s.radius, 2)),
+        );
+    }
+
+    function collectExtentSpheres(ds: any, spheres: any[]) {
+        if (!ds) return;
+        for (const entity of ds.entities.values) {
+            pushExtentSphere(spheres, entity);
         }
     }
 
@@ -3548,7 +3639,7 @@
 
         if (gen !== modelLoadGen) return;
 
-        if (fly || !hasFramed) await frameScene();
+        flyHomeOnce();
         bumpRender();
     }
 
@@ -3733,11 +3824,8 @@
 
         if (gen !== layerLoadGen) return;
 
-        if (!hasFramed) await frameScene();
         applyLayerViews();
-        if (layerSelection.size > 0) {
-            void flyToSelection(false);
-        }
+        flyHomeOnce();
         bumpRender();
     }
 
@@ -4077,10 +4165,11 @@
         };
     });
 
-    // CZML fetch finished — frame now if we skipped while loading=true.
     $effect(() => {
-        if (!ready || !started || loading) return;
-        if (!hasFramed || !framedEntityHome) void frameScene();
+        if (!ready || !started || loading || homeFlyStarted) return;
+        layerContentKey;
+        modelKey;
+        flyHomeOnce();
     });
 
     $effect(() => {
@@ -4106,7 +4195,7 @@
         selectionSig;
         appliedHighlight;
         editEnabled;
-        if (!ready || !started) return;
+        if (!ready || !started || !hasFramed) return;
         syncAllSelectionStyles();
         const flyKey = selectionFlyKey();
         if (flyKey && flyKey !== lastFlownKey) {
@@ -4114,6 +4203,18 @@
         } else if (!flyKey) {
             lastFlownKey = "";
         }
+    });
+
+    $effect(() => {
+        searchQ;
+        placeBBox;
+        placeLat;
+        placeLng;
+        placeRadius;
+        if (!ready || !started || !hasFramed) return;
+        if (searchQ.trim()) return;
+        if (layerSelection.size > 0) return;
+        void flySearchInterop(false);
     });
 
     $effect(() => {
@@ -4335,7 +4436,13 @@
             lat: ctxLat,
             layerName,
             featureId,
-            geometry: { type: "Point", coordinates: [ctxLon, ctxLat] },
+            geometry: {
+                type: "Point",
+                coordinates:
+                    Number.isFinite(ctxHeight) && Math.abs(ctxHeight) > 1e-3
+                        ? [ctxLon, ctxLat, ctxHeight]
+                        : [ctxLon, ctxLat],
+            },
         };
     }
 
@@ -4384,7 +4491,7 @@
             commentDrawMode,
             commentSketchVerts,
             [],
-            false,
+            true,
         );
         const first = commentSketchVerts[0];
         if (!geom || !first) return;
@@ -4413,7 +4520,14 @@
         const exclude = commentDataSource?.entities?.values
             ? [...commentDataSource.entities.values]
             : [];
-        return clampLonLatToScene(Cesium, viewer, lon, lat, undefined, exclude);
+        return clampLonLatToScene(
+            Cesium,
+            viewer,
+            lon,
+            lat,
+            firstHeightFromGeometry(c.geometry),
+            exclude,
+        );
     }
 
     function paintCommentBalloons() {
@@ -4679,8 +4793,7 @@
                 return;
             }
             if (layerSelection.isIsolating) {
-                layerSelection.exitIsolate();
-                applyHiddenVisibility();
+                exitIsolateUi();
                 return;
             }
             clearSelection();
@@ -4704,8 +4817,7 @@
         }
         if (action.type === "exit-isolate") {
             ev.preventDefault();
-            layerSelection.exitIsolate();
-            applyHiddenVisibility();
+            exitIsolateUi();
             return;
         }
         if (action.type === "select-tool") {
@@ -5095,8 +5207,7 @@
                 applyHiddenVisibility();
             }}
             onExitIsolate={() => {
-                layerSelection.exitIsolate();
-                applyHiddenVisibility();
+                exitIsolateUi();
             }}
             onClear={() => void clearMeasurements()}
             onFinish={finishDraft3d}
@@ -5235,8 +5346,7 @@
             applyHiddenVisibility();
         }}
         onExitIsolate={() => {
-            layerSelection.exitIsolate();
-            applyHiddenVisibility();
+            exitIsolateUi();
         }}
         onClear={() => clearSelection()}
         onComment={presenceMember && canWrite && ctxKind === "entity"
@@ -5245,20 +5355,7 @@
         onClose={closeContextMenu}
     />
 
-    {#if isolating}
-        <button
-            type="button"
-            class="absolute {editEnabled
-                ? 'bottom-24'
-                : 'bottom-10'} left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
-            onclick={() => {
-                layerSelection.exitIsolate();
-                applyHiddenVisibility();
-            }}
-        >
-            Isolating · Exit
-        </button>
-    {:else if hiddenCount > 0}
+    {#if hiddenCount > 0 && !isolating}
         <button
             type="button"
             class="absolute {editEnabled
@@ -5330,7 +5427,6 @@
                     {inViewEntityKeys}
                     {inViewModelHashes}
                     {canWrite}
-                    initialQuery={searchQ}
                     class="min-h-0 flex-1"
                 />
                 {#if canWrite && createFormOpen}
@@ -5342,9 +5438,9 @@
                         onCancel={cancelCreate}
                     />
                 {/if}
-                {#if canWrite && bufferEntries.length > 0}
+                {#if canWrite && (bufferEntries.length > 0 || commitDoneId)}
                     <div
-                        class="flex min-h-0 max-h-32 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
+                        class="flex min-h-0 max-h-52 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
                     >
                         <div
                             class="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1.5"
@@ -5423,6 +5519,52 @@
                                 </li>
                             {/each}
                         </ul>
+                        {#if bufferEntries.length > 0}
+                            <form
+                                class="flex shrink-0 flex-col gap-1 border-t border-border p-1.5"
+                                onsubmit={(e) => {
+                                    e.preventDefault();
+                                    void commitEditBuffer();
+                                }}
+                            >
+                                <input
+                                    class="w-full rounded-md border border-border bg-background px-1.5 py-1 text-xs text-foreground placeholder:text-muted-foreground"
+                                    placeholder="Commit message (required)"
+                                    bind:value={commitMessage}
+                                    disabled={commitBusy}
+                                    maxlength={500}
+                                />
+                                <div class="flex items-center justify-between gap-1">
+                                    <button
+                                        type="submit"
+                                        class="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-foreground hover:bg-primary/20 disabled:opacity-50"
+                                        disabled={commitBusy ||
+                                            !commitMessage.trim()}
+                                        title="Submit as pending changeset (does not write canonical)"
+                                    >
+                                        <CheckIcon class="size-3" />
+                                        {commitBusy ? "Sending…" : "Commit"}
+                                    </button>
+                                </div>
+                                {#if commitError}
+                                    <p class="text-[10px] text-destructive">
+                                        {commitError}
+                                    </p>
+                                {/if}
+                            </form>
+                        {/if}
+                        {#if commitDoneId}
+                            <p
+                                class="shrink-0 border-t border-border px-1.5 py-1 text-[10px] text-muted-foreground"
+                            >
+                                Pending
+                                <a
+                                    class="font-medium text-foreground underline-offset-2 hover:underline"
+                                    href="/{projectSlug}/review/{commitDoneId}"
+                                    >review</a
+                                >
+                            </p>
+                        {/if}
                     </div>
                 {/if}
             </div>

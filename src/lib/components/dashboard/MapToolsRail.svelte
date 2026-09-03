@@ -358,7 +358,9 @@
                     <div
                         class="mb-0.5 px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground"
                     >
-                        {selectionCount} selected
+                        {isolating
+                            ? `${selectionCount} isolated`
+                            : `${selectionCount} selected`}
                     </div>
                     <button
                         type="button"
@@ -413,26 +415,47 @@
                         class={menuItem}
                         onclick={() => onExitIsolate()}
                     >
-                        <FocusIcon
+                        <XIcon
                             class="size-3.5 shrink-0 text-muted-foreground"
                         />
-                        Exit isolate
+                        Clear isolate
                     </button>
                 </div>
             {/if}
         </div>
-    {:else if selectionCount > 1}
-        <button
-            type="button"
-            class="rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
-            title="Show selection"
-            onclick={() => {
-                closePanels();
-                selectionOpen = true;
-            }}
+    {:else if isolating || selectionCount > 1}
+        <div
+            class="flex overflow-hidden rounded-md border shadow-sm backdrop-blur-sm {isolating
+                ? 'border-primary/30 bg-primary/10'
+                : 'border-border bg-background/95'}"
         >
-            {selectionCount} selected
-        </button>
+            <button
+                type="button"
+                class="px-2 py-1 text-[11px] {isolating
+                    ? 'text-primary hover:text-primary'
+                    : 'text-muted-foreground hover:text-foreground'}"
+                title={isolating ? "Show isolate options" : "Show selection"}
+                onclick={() => {
+                    closePanels();
+                    selectionOpen = true;
+                }}
+            >
+                {isolating
+                    ? `${selectionCount} isolated`
+                    : `${selectionCount} selected`}
+            </button>
+            {#if isolating && onExitIsolate}
+                <button
+                    type="button"
+                    class="border-l border-primary/20 px-1.5 text-primary/70 hover:bg-primary/15 hover:text-primary"
+                    title="Clear isolate and search"
+                    aria-label="Clear isolate and search"
+                    onclick={() => onExitIsolate()}
+                >
+                    <XIcon class="size-3" />
+                </button>
+            {/if}
+        </div>
     {/if}
 
     <!-- Camera panel -->

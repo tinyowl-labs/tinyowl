@@ -79,7 +79,7 @@
 		>
 			<Dialog.Title class="sr-only">Search</Dialog.Title>
 			<Dialog.Description class="sr-only">
-				Search projects and places. Escape closes. Tab completes a suggestion
+				Search projects, places, and — when inside a project — layers and artefacts. Escape closes. Tab completes a suggestion
 				when the search field is focused.
 			</Dialog.Description>
 			<div class="flex items-start gap-1">

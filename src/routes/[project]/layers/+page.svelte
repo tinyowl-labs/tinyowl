@@ -36,6 +36,10 @@
     import { editBuffer } from "$lib/stores/editBuffer.svelte";
     import { fromEditBuffer } from "$lib/geoDiff";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
+    import {
+        DEFAULT_SEARCH_RADIUS,
+        parseBBox,
+    } from "$lib/search/params";
 
     let { data } = $props();
 
@@ -191,6 +195,10 @@
                 ? opts.q
                 : $page.url.searchParams.get("q");
         if (q) params.set("q", q);
+        for (const key of ["bbox", "lat", "lng", "radius", "place"] as const) {
+            const v = $page.url.searchParams.get(key);
+            if (v) params.set(key, v);
+        }
         const qs = params.toString();
         return qs ? `?${qs}` : "";
     }
@@ -234,6 +242,21 @@
     );
 
     const searchQ = $derived(String((data as { searchQ?: string })?.searchQ ?? ""));
+    const placeBBox = $derived(parseBBox($page.url.searchParams.get("bbox")));
+    const placeLat = $derived.by(() => {
+        const n = Number($page.url.searchParams.get("lat"));
+        return Number.isFinite(n) ? n : null;
+    });
+    const placeLng = $derived.by(() => {
+        const n = Number($page.url.searchParams.get("lng"));
+        return Number.isFinite(n) ? n : null;
+    });
+    const placeRadius = $derived.by(() => {
+        const raw = $page.url.searchParams.get("radius");
+        if (raw == null || raw === "") return DEFAULT_SEARCH_RADIUS;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : DEFAULT_SEARCH_RADIUS;
+    });
     const searchHits = $derived(
         ((data as { searchHits?: Array<{
             entity_type: string;
@@ -835,6 +858,15 @@
                         {joinedKeys}
                         searchQ={searchQ}
                         onClearSearchQ={clearSearchQ}
+                        placeBBox={placeBBox}
+                        placeLat={placeLat}
+                        placeLng={placeLng}
+                        placeRadius={placeRadius}
+                        focusLayer={
+                            viewMode === "map" && !searchQ && !highlightId
+                                ? resolvedLayer
+                                : ""
+                        }
                     />
                 {:else}
                     <CesiumLoading />

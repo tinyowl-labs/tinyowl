@@ -96,6 +96,8 @@
     let sentinel = $state<HTMLDivElement>();
     let typeFilter = $state<TypeFilter>("all");
     let selectedHash = $state<string | null>(null);
+    /** Seeded once from `?media=` so dismissing the picker does not re-open. */
+    let seededMedia = $state("");
     let viewerOpen = $state(false);
     let hashCopied = $state(false);
     let similarItems = $state<
@@ -379,6 +381,18 @@
             ? (items.find((it) => it.hash === selectedHash) ?? null)
             : null,
     );
+
+    const mediaParam = $derived(
+        ($page.url.searchParams.get("media") ?? "").trim(),
+    );
+
+    $effect(() => {
+        const hash = mediaParam;
+        if (!hash || hash === seededMedia) return;
+        if (!items.some((it) => it.hash === hash)) return;
+        selectedHash = hash;
+        seededMedia = hash;
+    });
 
     const imageItems = $derived(
         filtered.filter((it) => it.media_type.startsWith("image/")),

@@ -11,8 +11,6 @@
     import LayersIcon from "@lucide/svelte/icons/layers";
     import MousePointerSquareDashedIcon from "@lucide/svelte/icons/mouse-pointer-square-dashed";
     import PaletteIcon from "@lucide/svelte/icons/palette";
-    import SearchIcon from "@lucide/svelte/icons/search";
-    import XIcon from "@lucide/svelte/icons/x";
     import {
         layerSelection,
         toSelectionKey,
@@ -59,9 +57,6 @@
         joinedKeys?: string[];
         /** Writers see layer-select + Tab hint for Cesium edit mode. */
         canWrite?: boolean;
-        /** Active `/layers?q=` map isolate — shown as a dismissible chip, not a tree filter. */
-        mapSearchQ?: string;
-        onClearMapSearch?: () => void;
         class?: string;
     };
 
@@ -90,12 +85,9 @@
         filterToView = $bindable(false),
         joinedKeys = [],
         canWrite = false,
-        mapSearchQ = "",
-        onClearMapSearch,
         class: klass = "",
     }: Props = $props();
 
-    let query = $state("");
     let modelsOpen = $state(false);
     let coveragesOpen = $state(true);
     let layerOpen = $state<Record<string, boolean>>({});
@@ -190,12 +182,6 @@
         layerOpen = next;
     }
 
-    function matchesQuery(text: string): boolean {
-        const q = query.trim().toLowerCase();
-        if (!q) return true;
-        return text.toLowerCase().includes(q);
-    }
-
     function byDisplayName(a: string, b: string): number {
         return a.localeCompare(b, undefined, {
             sensitivity: "base",
@@ -215,15 +201,6 @@
 
     function filterEntities(layer: LayerData, ents: EntityRow[]): EntityRow[] {
         return ents.filter((e) => {
-            if (
-                !(
-                    matchesQuery(e.label) ||
-                    matchesQuery(e.entityId) ||
-                    matchesQuery(layer.name)
-                )
-            ) {
-                return false;
-            }
             const view = activeView(layer.views, layer.activeViewId ?? "");
             if (view?.filter?.field) {
                 const row = rowByEntityId(rows[layer.name], e.entityId);
@@ -337,7 +314,6 @@
     const filteredModels = $derived(
         models
             .filter((m) => {
-                if (!matchesQuery(m.label || m.hash)) return false;
                 if (filterToView && inViewModelHashes.length > 0) {
                     return inViewModelSet.has(m.hash);
                 }
@@ -358,7 +334,6 @@
 
     const filteredCoverages = $derived(
         coverages
-            .filter((c) => matchesQuery(c.label || c.entity_id || c.hash))
             .slice()
             .sort((a, b) =>
                 byDisplayName(
@@ -422,7 +397,7 @@
     class="flex min-h-0 w-60 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm {klass}"
 >
     <div class="border-b border-border px-2 py-1.5">
-        <div class="mb-1.5 flex items-center justify-between gap-2 px-0.5">
+        <div class="flex items-center justify-between gap-2 px-0.5">
             <span
                 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
                 >Scene</span
@@ -457,48 +432,6 @@
                     In view
                 </button>
             </div>
-        </div>
-        <div class="space-y-1">
-        <label
-            class="flex items-center gap-1.5 rounded-md border border-border bg-background px-1.5 py-1"
-        >
-            <SearchIcon class="size-3 shrink-0 text-muted-foreground" />
-            <input
-                class="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-                type="search"
-                placeholder="Search…"
-                bind:value={query}
-            />
-            {#if query.trim()}
-                <button
-                    type="button"
-                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                    title="Clear search"
-                    aria-label="Clear search"
-                    onclick={() => (query = "")}
-                >
-                    <XIcon class="size-3" />
-                </button>
-            {/if}
-        </label>
-        {#if mapSearchQ.trim()}
-            <div
-                class="flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-1 text-[11px] text-primary"
-            >
-                <span class="min-w-0 truncate"
-                    >Map: {mapSearchQ.trim()}</span
-                >
-                <button
-                    type="button"
-                    class="shrink-0 rounded p-0.5 hover:bg-primary/15"
-                    title="Clear map search"
-                    aria-label="Clear map search"
-                    onclick={() => onClearMapSearch?.()}
-                >
-                    <XIcon class="size-3" />
-                </button>
-            </div>
-        {/if}
         </div>
     </div>
 
@@ -730,7 +663,7 @@
                 layer.views,
                 layer.activeViewId ?? "",
             )}
-            {#if ents.length > 0 || (!filterToView && !query.trim()) || matchesQuery(layer.name)}
+            {#if ents.length > 0 || !filterToView}
                 <div
                     class="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {editBuffer.targetLayer ===
                     layer.name

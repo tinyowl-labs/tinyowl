@@ -1,4 +1,4 @@
-/** Session CRUD edit buffer — local only; no pending/canonical write. */
+/** Session CRUD edit buffer. Commit goes pending+message — no canonical write. */
 
 import type { EditBufferEntry, GeoJsonGeometry } from "$lib/geoDiff";
 

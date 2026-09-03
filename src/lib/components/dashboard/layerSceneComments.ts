@@ -77,9 +77,8 @@ export function getOrCreateCommentDs(Cesium: CesiumLike, viewer: any, existing: 
 
 /**
  * Place a lon/lat on the live scene (3D tiles + globe), not the ellipsoid.
- * Stored comment geom is 2D; authors pick the mesh, collaborators must resample.
- * Heights are cached after the first successful sample so camera moves do not
- * re-clamp (LOD / pick changes would otherwise make lines flicker).
+ * Prefer stored vertex Z (same as CZML entities with cartographicDegrees height).
+ * 2D leftovers resample once tiles are ready — never cache ellipsoid height.
  */
 const MESH_LIFT_M = 0.35;
 const heightCache = new Map<string, number>();
@@ -96,6 +95,49 @@ export function clearCommentHeightCache() {
 
 export function commentClampNeedsRetry(): boolean {
 	return clampIncomplete;
+}
+
+function firstCoordOfGeom(geom: GeoJsonGeometry | null | undefined): number[] | null {
+	if (!geom || !("coordinates" in geom)) return null;
+	let c: unknown = (geom as { coordinates?: unknown }).coordinates;
+	while (Array.isArray(c) && c.length > 0 && Array.isArray(c[0])) c = c[0];
+	if (Array.isArray(c) && typeof c[0] === "number" && typeof c[1] === "number") {
+		return c as number[];
+	}
+	return null;
+}
+
+export function firstHeightFromGeometry(
+	geom: GeoJsonGeometry | null | undefined,
+): number | undefined {
+	const c = firstCoordOfGeom(geom);
+	if (!c || c.length < 3) return undefined;
+	const z = c[2];
+	if (!Number.isFinite(z) || Math.abs(z as number) <= 1e-3) return undefined;
+	return z as number;
+}
+
+function coordsHaveZ(coords: number[][] | undefined): boolean {
+	if (!coords) return false;
+	return coords.some((c) => c.length >= 3 && Number.isFinite(c[2]) && Math.abs(c[2]!) > 1e-3);
+}
+
+function sceneTilesets(viewer: any): any[] {
+	const prims = viewer?.scene?.primitives;
+	if (!prims?.length) return [];
+	const out: any[] = [];
+	const n = Number(prims.length) || 0;
+	for (let i = 0; i < n; i++) {
+		const p = prims.get?.(i);
+		if (p && typeof p.tilesLoaded === "boolean") out.push(p);
+	}
+	return out;
+}
+
+function commentTilesReady(viewer: any): boolean {
+	const tiles = sceneTilesets(viewer);
+	if (tiles.length === 0) return true;
+	return tiles.every((t) => t.tilesLoaded);
 }
 
 export function clampLonLatToScene(
@@ -118,22 +160,29 @@ export function clampLonLatToScene(
 		clampIncomplete = true;
 		return Cesium.Cartesian3.fromDegrees(lon, lat, 0);
 	}
+	const tilesReady = commentTilesReady(viewer);
+	if (!tilesReady) {
+		clampIncomplete = true;
+		return Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+	}
 	let sampled: number | undefined;
 	try {
-		const carto = Cesium.Cartographic.fromDegrees(lon, lat);
-		const h = viewer.scene.sampleHeight?.(carto, exclude);
-		if (Number.isFinite(h)) sampled = h as number;
+		const high = Cesium.Cartesian3.fromDegrees(lon, lat, 8000);
+		const clamped = viewer.scene.clampToHeight?.(high, exclude);
+		if (clamped && (typeof Cesium.defined !== "function" || Cesium.defined(clamped))) {
+			const c = Cesium.Cartographic.fromCartesian?.(clamped);
+			if (c && Number.isFinite(c.height) && Math.abs(c.height) > 1e-3) {
+				sampled = c.height;
+			}
+		}
 	} catch {
 		/* ignore */
 	}
 	if (sampled == null) {
 		try {
-			const high = Cesium.Cartesian3.fromDegrees(lon, lat, 8000);
-			const clamped = viewer.scene.clampToHeight?.(high, exclude);
-			if (clamped && (typeof Cesium.defined !== "function" || Cesium.defined(clamped))) {
-				const c = Cesium.Cartographic.fromCartesian?.(clamped);
-				if (c && Number.isFinite(c.height)) sampled = c.height;
-			}
+			const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+			const h = viewer.scene.sampleHeight?.(carto, exclude);
+			if (Number.isFinite(h) && Math.abs(h as number) > 1e-3) sampled = h as number;
 		} catch {
 			/* ignore */
 		}
@@ -279,7 +328,19 @@ function addShape(
 	const type = geom?.type ?? "Point";
 	const pinId = baseId;
 	keep.add(pinId);
-	upsertPin(Cesium, viewer, ds, exclude, pinId, lon, lat, fill, selected, badge);
+	upsertPin(
+		Cesium,
+		viewer,
+		ds,
+		exclude,
+		pinId,
+		lon,
+		lat,
+		firstHeightFromGeometry(geom),
+		fill,
+		selected,
+		badge,
+	);
 
 	if (type === "MultiPoint") {
 		const pts = (geom?.coordinates as number[][]) ?? [];
@@ -305,13 +366,17 @@ function addShape(
 			if (!Array.isArray(line) || line.length < 2) return;
 			const id = `${baseId}:line:${i}`;
 			keep.add(id);
+			const hasZ = coordsHaveZ(line);
 			upsertLine(
 				Cesium,
 				ds,
 				id,
-				lonLatToCartesians(Cesium, viewer, exclude, line),
+				hasZ
+					? lonLatToCartesians(Cesium, viewer, exclude, line)
+					: lonLatOnEllipsoid(Cesium, line),
 				color,
 				dashed,
+				!hasZ,
 			);
 		});
 	}
@@ -325,12 +390,16 @@ function addShape(
 			if (!Array.isArray(ring) || ring.length < 3) return;
 			const id = `${baseId}:poly:${i}`;
 			keep.add(id);
+			const hasZ = coordsHaveZ(ring);
 			upsertPoly(
 				Cesium,
 				ds,
 				id,
-				lonLatToCartesians(Cesium, viewer, exclude, ring),
+				hasZ
+					? lonLatToCartesians(Cesium, viewer, exclude, ring)
+					: lonLatOnEllipsoid(Cesium, ring),
 				color,
+				!hasZ,
 			);
 		});
 	}
@@ -347,6 +416,10 @@ function lonLatToCartesians(
 	);
 }
 
+function lonLatOnEllipsoid(Cesium: CesiumLike, coords: number[][]) {
+	return coords.map((c) => Cesium.Cartesian3.fromDegrees(c[0]!, c[1]!, 0));
+}
+
 function upsertPin(
 	Cesium: CesiumLike,
 	viewer: any,
@@ -355,13 +428,14 @@ function upsertPin(
 	id: string,
 	lon: number,
 	lat: number,
+	height: number | undefined,
 	fill: string,
 	selected: boolean,
 	badge: string,
 ) {
 	let entity = ds.entities.getById(id);
 	const image = pinSvg(fill, selected, badge);
-	const position = clampLonLatToScene(Cesium, viewer, lon, lat, undefined, exclude);
+	const position = clampLonLatToScene(Cesium, viewer, lon, lat, height, exclude);
 	const billboard = {
 		image,
 		width: selected ? 32 : 26,
@@ -417,6 +491,7 @@ function upsertLine(
 	positions: unknown[],
 	color: unknown,
 	dashed: boolean,
+	drape = false,
 ) {
 	const material =
 		dashed && Cesium.PolylineDashMaterialProperty
@@ -426,10 +501,10 @@ function upsertLine(
 		positions: positions.slice(),
 		width: 3,
 		material,
-		clampToGround: false,
+		clampToGround: drape,
 		depthFailMaterial: material,
-		disableDepthTestDistance: Number.POSITIVE_INFINITY,
-		arcType: Cesium.ArcType?.NONE,
+		disableDepthTestDistance: drape ? undefined : Number.POSITIVE_INFINITY,
+		arcType: drape ? undefined : Cesium.ArcType?.NONE,
 	};
 	let entity = ds.entities.getById(id);
 	if (!entity) {
@@ -439,10 +514,12 @@ function upsertLine(
 	if (entity.polyline) {
 		entity.polyline.positions = positions.slice();
 		entity.polyline.material = material;
-		entity.polyline.clampToGround = false;
+		entity.polyline.clampToGround = drape;
 		entity.polyline.depthFailMaterial = material;
-		entity.polyline.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-		if (Cesium.ArcType) entity.polyline.arcType = Cesium.ArcType.NONE;
+		entity.polyline.disableDepthTestDistance = drape
+			? undefined
+			: Number.POSITIVE_INFINITY;
+		if (!drape && Cesium.ArcType) entity.polyline.arcType = Cesium.ArcType.NONE;
 	}
 }
 
@@ -452,19 +529,28 @@ function upsertPoly(
 	id: string,
 	positions: unknown[],
 	color: any,
+	drape = false,
 ) {
 	let entity = ds.entities.getById(id);
 	const material = color?.withAlpha?.(0.28) ?? color;
 	const hierarchy = new Cesium.PolygonHierarchy(positions.slice());
-	const polygon = {
-		hierarchy,
-		material,
-		outline: true,
-		outlineColor: color,
-		perPositionHeight: true,
-		heightReference: Cesium.HeightReference?.NONE,
-		disableDepthTestDistance: Number.POSITIVE_INFINITY,
-	};
+	const polygon = drape
+		? {
+				hierarchy,
+				material,
+				outline: true,
+				outlineColor: color,
+				classificationType: Cesium.ClassificationType?.BOTH,
+			}
+		: {
+				hierarchy,
+				material,
+				outline: true,
+				outlineColor: color,
+				perPositionHeight: true,
+				heightReference: Cesium.HeightReference?.NONE,
+				disableDepthTestDistance: Number.POSITIVE_INFINITY,
+			};
 	if (!entity) {
 		ds.entities.add({ id, polygon });
 		return;
@@ -473,11 +559,18 @@ function upsertPoly(
 		entity.polygon.hierarchy = hierarchy;
 		entity.polygon.material = material;
 		entity.polygon.outlineColor = color;
-		entity.polygon.height = undefined;
-		entity.polygon.perPositionHeight = true;
-		entity.polygon.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-		if (Cesium.HeightReference) {
-			entity.polygon.heightReference = Cesium.HeightReference.NONE;
+		if (drape) {
+			entity.polygon.perPositionHeight = false;
+			entity.polygon.height = undefined;
+			entity.polygon.classificationType = Cesium.ClassificationType?.BOTH;
+		} else {
+			entity.polygon.height = undefined;
+			entity.polygon.perPositionHeight = true;
+			entity.polygon.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+			entity.polygon.classificationType = undefined;
+			if (Cesium.HeightReference) {
+				entity.polygon.heightReference = Cesium.HeightReference.NONE;
+			}
 		}
 	}
 }

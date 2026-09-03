@@ -3,6 +3,7 @@
     import XIcon from "@lucide/svelte/icons/x";
     import TagIcon from "@lucide/svelte/icons/tag";
     import BookMarkedIcon from "@lucide/svelte/icons/book-marked";
+    import LayersIcon from "@lucide/svelte/icons/layers";
     import ImageIcon from "@lucide/svelte/icons/image";
     import LoaderIcon from "@lucide/svelte/icons/loader";
     import GlobeIcon from "@lucide/svelte/icons/globe";
@@ -12,7 +13,7 @@
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
-    import { projectLayersSearchHref } from "$lib/project/entityLink";
+    import { projectLayersSearchHref, projectLayerHref, projectArtefactHref, projectLayersPlaceHref, entityLayersHref } from "$lib/project/entityLink";
     import {
         searchHref,
         formatBBox,
@@ -29,6 +30,13 @@
         type ProjectHit,
     } from "$lib/search/projects";
     import {
+        searchProjectScope,
+        searchProjectEntities,
+        type ArtefactHit,
+        type EntityHit,
+        type LayerHit,
+    } from "$lib/search/projectScope";
+    import {
         clearImageQuery,
         loadImageQuery,
         postSimilarByImage,
@@ -36,11 +44,11 @@
         saveImageQuery,
     } from "$lib/search/imageQuery";
 
-    type MentionMode = "kinds" | "tag" | "vocab" | "place" | "project";
+    type MentionMode = "kinds" | "tag" | "vocab" | "place" | "project" | "entity";
 
     type KindItem = {
         kind: "kind";
-        id: "tag" | "vocab" | "place" | "project";
+        id: "tag" | "vocab" | "place" | "project" | "entity";
         label: string;
         hint: string;
     };
@@ -52,7 +60,17 @@
     };
     type PlaceItem = { kind: "place"; place: PlaceHit };
     type ProjectItem = { kind: "project"; project: ProjectHit };
-    type MenuItem = KindItem | ValueItem | PlaceItem | ProjectItem;
+    type LayerItem = { kind: "layer"; layer: LayerHit };
+    type ArtefactItem = { kind: "artefact"; artefact: ArtefactHit };
+    type EntityItem = { kind: "entity"; entity: EntityHit };
+    type MenuItem =
+        | KindItem
+        | ValueItem
+        | PlaceItem
+        | ProjectItem
+        | LayerItem
+        | ArtefactItem
+        | EntityItem;
 
     type Props = {
         value?: string;
@@ -129,6 +147,12 @@
         },
         {
             kind: "kind",
+            id: "entity",
+            label: "Entity",
+            hint: "Find a record by id",
+        },
+        {
+            kind: "kind",
             id: "project",
             label: "Project",
             hint: "Search in a project",
@@ -174,6 +198,9 @@
     let termSuggestions = $state<string[]>([]);
     let placeHits = $state<PlaceHit[]>([]);
     let projectHits = $state<ProjectHit[]>([]);
+    let layerHits = $state<LayerHit[]>([]);
+    let artefactHits = $state<ArtefactHit[]>([]);
+    let entityHits = $state<EntityHit[]>([]);
     let loading = $state(false);
     let loadingPlaces = $state(false);
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -229,6 +256,14 @@
     const hasSpatialChip = $derived(
         bbox != null || (lat != null && lng != null),
     );
+    const scopedSlug = $derived(
+        activeProjects.length === 1 ? activeProjects[0]! : null,
+    );
+    const kindMenu = $derived(
+        scopedSlug
+            ? KINDS
+            : KINDS.filter((k) => k.id !== "entity"),
+    );
     const atSearch = $derived($page.url.pathname === "/search");
     const cycling = $derived(examples.length > 0);
     const placesMenuOpen = $derived(
@@ -236,6 +271,8 @@
             value.trim().length >= 2 &&
             (placeHits.length > 0 ||
                 projectHits.length > 0 ||
+                layerHits.length > 0 ||
+                artefactHits.length > 0 ||
                 loadingPlaces),
     );
     const dropdownOpen = $derived(mentionOpen || placesMenuOpen);
@@ -271,8 +308,35 @@
             .map((p) => ({ kind: "project" as const, project: p }));
     }
 
+    function layerItems(): LayerItem[] {
+        return layerHits.map((l) => ({ kind: "layer" as const, layer: l }));
+    }
+
+    function artefactItems(): ArtefactItem[] {
+        return artefactHits.map((a) => ({
+            kind: "artefact" as const,
+            artefact: a,
+        }));
+    }
+
+    function entityItems(): EntityItem[] {
+        return entityHits.map((e) => ({
+            kind: "entity" as const,
+            entity: e,
+        }));
+    }
+
     /** Name matches, then places, then geo-suggested projects. */
     function mixedOmniboxItems(): MenuItem[] {
+        if (scopedSlug) {
+            return [
+                ...layerItems(),
+                ...artefactItems(),
+                ...placeItems(),
+                ...projectItems("name"),
+                ...projectItems("geo"),
+            ];
+        }
         return [
             ...projectItems("name"),
             ...placeItems(),
@@ -285,12 +349,12 @@
         if (mentionMode === "kinds") {
             const q = mentionQuery.trim().toLowerCase();
             const kinds = q
-                ? KINDS.filter(
+                ? kindMenu.filter(
                       (k) =>
                           k.id.startsWith(q) ||
                           k.label.toLowerCase().startsWith(q),
                   )
-                : KINDS;
+                : kindMenu;
             // Direct hits once the user types past kind names
             const tagHits =
                 q.length >= 2
@@ -315,9 +379,11 @@
                       )
                     : [];
             const projects = projectItems();
+            const entities = scopedSlug ? entityItems() : [];
             // Bare `@slug` (no kind prefix) — project hits first so Enter chips the project
             if (q.length >= 2 && kinds.length === 0) {
                 return [
+                    ...entities,
                     ...projects,
                     ...tagHits,
                     ...termHits,
@@ -326,6 +392,7 @@
             }
             return [
                 ...kinds,
+                ...entities,
                 ...projects,
                 ...tagHits,
                 ...termHits,
@@ -342,6 +409,7 @@
         }
         if (mentionMode === "place") return placeItems();
         if (mentionMode === "project") return projectItems();
+        if (mentionMode === "entity") return entityItems();
         return termSuggestions.map((t) => ({
             kind: "value" as const,
             id: `vocab:${t}`,
@@ -366,10 +434,16 @@
                 }
                 return `${prefix}@${item.project.slug}`;
             }
+            if (item.kind === "layer") return `${prefix}${item.layer.label}`;
+            if (item.kind === "artefact") return `${prefix}${item.artefact.label}`;
+            if (item.kind === "entity") return `${prefix}@entity:${item.entity.id}`;
             return null;
         }
         if (item.kind === "place") return item.place.label;
         if (item.kind === "project") return item.project.title;
+        if (item.kind === "layer") return item.layer.label;
+        if (item.kind === "artefact") return item.artefact.label;
+        if (item.kind === "entity") return item.entity.id;
         return null;
     }
 
@@ -541,7 +615,45 @@
         const nextProjects = next.projects ?? activeProjects;
         const nextQ = next.q ?? value;
         if (nextProjects.length === 1) {
-            void goto(projectLayersSearchHref(nextProjects[0]!, nextQ));
+            const slug = nextProjects[0]!;
+            const placeBBox = nextBBox;
+            const placeLat = nextLat;
+            const placeLng = nextLng;
+            if (placeBBox || (placeLat != null && placeLng != null)) {
+                const geom =
+                    placeBBox != null
+                        ? {
+                              type: "bbox" as const,
+                              west: placeBBox.west,
+                              south: placeBBox.south,
+                              east: placeBBox.east,
+                              north: placeBBox.north,
+                          }
+                        : {
+                              type: "point" as const,
+                              lat: placeLat!,
+                              lng: placeLng!,
+                              radius:
+                                  next.radius !== undefined
+                                      ? (next.radius ?? DEFAULT_SEARCH_RADIUS)
+                                      : (radius ?? DEFAULT_SEARCH_RADIUS),
+                          };
+                void goto(
+                    projectLayersPlaceHref(slug, {
+                        id: "apply",
+                        source: "photon",
+                        kind: "place",
+                        label:
+                            next.placeName !== undefined
+                                ? (next.placeName ?? "")
+                                : (placeChip?.title ?? ""),
+                        detail: "",
+                        geom,
+                    }),
+                );
+                return;
+            }
+            void goto(projectLayersSearchHref(slug, nextQ));
             return;
         }
         goto(
@@ -687,6 +799,9 @@
         tagSuggestions = [];
         termSuggestions = [];
         projectHits = [];
+        layerHits = [];
+        artefactHits = [];
+        entityHits = [];
     }
 
     function trySelectFromMenu(): boolean {
@@ -745,7 +860,7 @@
         if (!typed) return null;
         if (/^project:/i.test(typed)) typed = typed.slice("project:".length);
         else if (
-            /^(tag|vocab|place):/i.test(typed) ||
+            /^(tag|vocab|place|entity):/i.test(typed) ||
             isKindToken(typed)
         ) {
             return null;
@@ -820,6 +935,8 @@
         placesReq += 1;
         placeHits = [];
         projectHits = [];
+        layerHits = [];
+        artefactHits = [];
         navigate({ q: harvested.q, projects: nextProjects });
     }
 
@@ -864,6 +981,12 @@
             projects.some((s) => s.toLowerCase() === slug.toLowerCase())
         ) {
             omittedProjects = mergeSlugs(omittedProjects, [slug]);
+        }
+        if (next.length !== 1) {
+            layerHits = [];
+            artefactHits = [];
+        } else if (value.trim().length >= 2 && !mentionOpen) {
+            schedulePlacesFetch(value);
         }
         if (!palette) {
             navigate({ projects: next });
@@ -915,6 +1038,8 @@
         placesReq += 1;
         placeHits = [];
         projectHits = [];
+        layerHits = [];
+        artefactHits = [];
         value = "";
         const geom = place.geom;
         if (geom.type === "bbox") {
@@ -939,6 +1064,10 @@
             };
         }
         appliedPlaceLabel = place.label;
+        if (scopedSlug) {
+            void goto(projectLayersPlaceHref(scopedSlug, place));
+            return;
+        }
         if (atSearch || palette) {
             navigate({
                 q: "",
@@ -979,7 +1108,7 @@
         }
     }
 
-    function enterKind(id: "tag" | "vocab" | "place" | "project") {
+    function enterKind(id: "tag" | "vocab" | "place" | "project" | "entity") {
         mentionMode = id;
         mentionQuery = "";
         highlight = 0;
@@ -1004,6 +1133,27 @@
         if (item.kind === "project") {
             if (mentionOpen) applyProjectFilter(item.project);
             else applyProject(item.project);
+            return;
+        }
+        if (item.kind === "layer") {
+            if (!scopedSlug) return;
+            void goto(projectLayerHref(scopedSlug, item.layer.name));
+            return;
+        }
+        if (item.kind === "artefact") {
+            if (!scopedSlug) return;
+            void goto(projectArtefactHref(scopedSlug, item.artefact.hash));
+            return;
+        }
+        if (item.kind === "entity") {
+            if (!scopedSlug) return;
+            void goto(
+                entityLayersHref(scopedSlug, {
+                    layer: item.entity.layer,
+                    highlight: item.entity.id,
+                    view: "map",
+                }),
+            );
             return;
         }
         if (item.mode === "tag") applyTag(item.label);
@@ -1054,6 +1204,12 @@
             scheduleFetch();
             return;
         }
+        if (lower.startsWith("entity:")) {
+            mentionMode = "entity";
+            mentionQuery = token.slice(7);
+            scheduleFetch();
+            return;
+        }
 
         // Bare @query — kinds menu, with tag/term/place/project suggestions once 2+ chars
         mentionMode = "kinds";
@@ -1063,6 +1219,7 @@
             tagSuggestions = [];
             termSuggestions = [];
             projectHits = [];
+            entityHits = [];
         }
     }
 
@@ -1085,6 +1242,12 @@
                 mentionMode !== "kinds"
             ) {
                 projectHits = [];
+            }
+            if (
+                mentionMode !== "entity" &&
+                mentionMode !== "kinds"
+            ) {
+                entityHits = [];
             }
         }
     }
@@ -1204,6 +1367,8 @@
             placesReq += 1;
             placeHits = [];
             projectHits = [];
+            layerHits = [];
+            artefactHits = [];
             loadingPlaces = false;
             return;
         }
@@ -1214,16 +1379,28 @@
         const req = ++placesReq;
         loadingPlaces = true;
         try {
-            const { places, projects } = await searchOmnibox(prefix, {
-                accessToken,
-            });
+            const slug = scopedSlug;
+            const [omnibox, scoped] = await Promise.all([
+                searchOmnibox(prefix, { accessToken }),
+                slug
+                    ? searchProjectScope(slug, prefix, { accessToken })
+                    : Promise.resolve({ layers: [], artefacts: [] }),
+            ]);
             if (req !== placesReq) return;
-            placeHits = places;
-            projectHits = projects;
+            placeHits = omnibox.places;
+            projectHits = slug
+                ? omnibox.projects.filter(
+                      (p) => p.slug.toLowerCase() !== slug.toLowerCase(),
+                  )
+                : omnibox.projects;
+            layerHits = scoped.layers;
+            artefactHits = scoped.artefacts;
         } catch {
             if (req !== placesReq) return;
             placeHits = [];
             projectHits = [];
+            layerHits = [];
+            artefactHits = [];
         } finally {
             if (req === placesReq) loadingPlaces = false;
         }
@@ -1242,12 +1419,16 @@
             mentionMode === "place" || mentionMode === "kinds";
         const wantProjects =
             mentionMode === "project" || mentionMode === "kinds";
+        const wantEntities =
+            Boolean(scopedSlug) &&
+            (mentionMode === "entity" || mentionMode === "kinds");
 
         if (!prefix) {
             tagSuggestions = [];
             termSuggestions = [];
             if (mentionMode === "place") placeHits = [];
             if (mentionMode === "project") projectHits = [];
+            if (mentionMode === "entity") entityHits = [];
             return;
         }
 
@@ -1304,12 +1485,27 @@
             } else if (mentionMode === "project") {
                 projectHits = [];
             }
+            if (wantEntities && (mentionMode === "entity" || prefix.length >= 2)) {
+                jobs.push(
+                    (async () => {
+                        const hits = await searchProjectEntities(
+                            scopedSlug!,
+                            prefix,
+                            { accessToken },
+                        );
+                        entityHits = hits;
+                    })(),
+                );
+            } else if (mentionMode === "entity") {
+                entityHits = [];
+            }
             await Promise.all(jobs);
         } catch {
             if (wantTags) tagSuggestions = [];
             if (wantTerms) termSuggestions = [];
             if (wantPlaces) placeHits = [];
             if (wantProjects) projectHits = [];
+            if (wantEntities) entityHits = [];
         } finally {
             loading = false;
         }
@@ -1560,6 +1756,10 @@
                         Place
                     {:else if mentionMode === "project" && mentionOpen}
                         Project
+                    {:else if mentionMode === "entity" && mentionOpen}
+                        Entity
+                    {:else if scopedSlug}
+                        Layers, artefacts & places
                     {:else}
                         Projects & places
                     {/if}
@@ -1587,6 +1787,10 @@
                                 {mentionQuery
                                     ? "No matching projects"
                                     : "Keep typing a project…"}
+                            {:else if mentionMode === "entity"}
+                                {mentionQuery
+                                    ? "No matching ids"
+                                    : "Keep typing an entity id…"}
                             {:else}
                                 Type to filter, or choose Place / Project / Tag / Vocab
                             {/if}
@@ -1596,7 +1800,13 @@
                             ? `place:${item.place.id}`
                             : item.kind === "project"
                               ? `project:${item.project.slug}`
-                              : `${item.kind}:${item.id}`)}
+                              : item.kind === "layer"
+                                ? `layer:${item.layer.name}`
+                                : item.kind === "artefact"
+                                  ? `artefact:${item.artefact.hash}`
+                                  : item.kind === "entity"
+                                    ? `entity:${item.entity.layer}:${item.entity.id}`
+                                    : `${item.kind}:${item.id}`)}
                             <button
                                 type="button"
                                 role="option"
@@ -1620,6 +1830,10 @@
                                         />
                                     {:else if item.id === "project"}
                                         <FolderKanbanIcon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
+                                    {:else if item.id === "entity"}
+                                        <CrosshairIcon
                                             class="size-3.5 shrink-0 text-muted-foreground"
                                         />
                                     {:else}
@@ -1666,6 +1880,45 @@
                                         <span
                                             class="mt-0.5 block truncate text-[11px] text-muted-foreground"
                                             >{item.project.detail}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "layer"}
+                                    <LayersIcon
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.layer.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{item.layer.detail}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "artefact"}
+                                    <ImageIcon
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.artefact.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{item.artefact.detail}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "entity"}
+                                    <CrosshairIcon
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.entity.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{item.entity.detail}</span
                                         >
                                     </span>
                                 {:else}
