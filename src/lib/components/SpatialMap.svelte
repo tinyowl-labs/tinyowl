@@ -243,10 +243,16 @@
             return;
         }
         if (centerLat != null && centerLng != null) {
-            const bounds = L.circle(
-                [centerLat, centerLng],
-                { radius },
-            ).getBounds();
+            // Don't use L.circle().getBounds() — an unattached Circle has no
+            // `_map` and throws layerPointToLatLng in Leaflet 1.x.
+            const r = radius > 0 ? radius : DEFAULT_SEARCH_RADIUS;
+            const dLat = (r / 6371000) * (180 / Math.PI);
+            const cos = Math.cos((centerLat * Math.PI) / 180);
+            const dLng = cos > 1e-6 ? dLat / cos : 180;
+            const bounds: [[number, number], [number, number]] = [
+                [centerLat - dLat, centerLng - dLng],
+                [centerLat + dLat, centerLng + dLng],
+            ];
             if (animate) {
                 map.flyToBounds(bounds, {
                     padding: [28, 28],

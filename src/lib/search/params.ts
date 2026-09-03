@@ -19,6 +19,8 @@ export type SearchParams = {
   tags: string[];
   /** Projects using these column_annotations.vocabulary values (`?vocab=`) */
   vocabularies: string[];
+  /** Restrict discovery to these project slugs (`?project=` repeated) */
+  projects: string[];
   /** Result kinds — scaffold; always project until mixed search ships */
   types: string[];
   /**
@@ -112,6 +114,7 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     dateTo: dateTo != null && !Number.isNaN(dateTo) ? dateTo : null,
     tags: parseListParam(sp, "tag"),
     vocabularies: parseListParam(sp, "vocab"),
+    projects: parseListParam(sp, "project"),
     types: parseListParam(sp, "type"),
     semantic,
     mediaHash,
@@ -130,6 +133,7 @@ export function buildSearchParams(input: {
   dateTo?: number | string | null;
   tags?: string[] | null;
   vocabularies?: string[] | null;
+  projects?: string[] | null;
   types?: string[] | null;
   semantic?: boolean | null;
   mediaHash?: string | null;
@@ -149,6 +153,8 @@ export function buildSearchParams(input: {
   // Prefer explicit map-view bbox over point+radius when both present.
   if (input.bbox) {
     params.set("bbox", formatBBox(input.bbox));
+    const place = (input.placeName ?? "").trim();
+    if (place) params.set("place", place);
   } else if (
     input.lat != null &&
     input.lng != null &&
@@ -197,6 +203,15 @@ export function buildSearchParams(input: {
     seenVocab.add(k);
     params.append("vocab", s);
   }
+  const seenProject = new Set<string>();
+  for (const p of input.projects ?? []) {
+    const s = p.trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seenProject.has(k)) continue;
+    seenProject.add(k);
+    params.append("project", s);
+  }
   const seenType = new Set<string>();
   for (const t of input.types ?? []) {
     const s = t.trim();
@@ -227,6 +242,7 @@ export function hasActiveSearch(p: SearchParams): boolean {
     p.dateTo != null ||
     p.tags.length > 0 ||
     p.vocabularies.length > 0 ||
+    p.projects.length > 0 ||
     p.types.length > 0
   );
 }

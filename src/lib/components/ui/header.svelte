@@ -16,9 +16,11 @@
     import LogOutIcon from "@lucide/svelte/icons/log-out";
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
+    import SearchIcon from "@lucide/svelte/icons/search";
     import { cn } from "$lib/utils.js";
     import EchidnaLogo from "$lib/components/ui/echidna-logo.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
+    import { searchOverlay } from "$lib/stores/searchOverlay.svelte";
 
     let {
         subtitle = "",
@@ -50,7 +52,13 @@
     );
 
     let isMounted = $state(false);
-    onMount(() => (isMounted = true));
+    let isMac = $state(false);
+    onMount(() => {
+        isMounted = true;
+        isMac = /Mac|iPhone|iPad|iPod/i.test(
+            navigator.platform || navigator.userAgent,
+        );
+    });
 
     function toggleTheme() {
         setPreference("bgBase", dark ? "paper" : "dark");
@@ -126,6 +134,28 @@
     </div>
 
     <nav class="flex shrink-0 items-center gap-1">
+        <button
+            type="button"
+            onclick={() => searchOverlay.show()}
+            class="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
+            aria-label="Open search"
+            title="Search"
+        >
+            <SearchIcon class="size-4" />
+            {#if isMounted}
+                <span class="hidden items-center gap-0.5 sm:inline-flex" aria-hidden="true">
+                    <kbd
+                        class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans text-[10px] leading-none"
+                        >{isMac ? "⌘" : "Ctrl"}</kbd
+                    >
+                    <kbd
+                        class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans text-[10px] leading-none"
+                        >K</kbd
+                    >
+                </span>
+            {/if}
+        </button>
         <button
             type="button"
             onclick={toggleTheme}

@@ -23,7 +23,7 @@
         SchemaEdge,
     } from "$lib/components/dashboard/SchemaGraph.svelte";
     import { browser } from "$app/environment";
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import {
         layerSelection,
         parseSelectionKey,
@@ -166,6 +166,7 @@
         dim?: MapDim;
         layer?: string;
         highlight?: string;
+        q?: string | null;
     }): string {
         const params = new URLSearchParams();
         if (opts.mode === "map" && opts.dim === "3d") {
@@ -185,8 +186,13 @@
         } else if (opts.mode !== "map" && opts.layer) {
             params.set("layer", opts.layer);
         }
-        const q = params.toString();
-        return q ? `?${q}` : "";
+        const q =
+            opts.q !== undefined
+                ? opts.q
+                : $page.url.searchParams.get("q");
+        if (q) params.set("q", q);
+        const qs = params.toString();
+        return qs ? `?${qs}` : "";
     }
 
     function handleTabChange(value: string) {
@@ -214,8 +220,20 @@
         `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}`,
     );
 
+    const searchQ = $derived(String((data as { searchQ?: string })?.searchQ ?? ""));
+    const searchHits = $derived(
+        ((data as { searchHits?: Array<{
+            entity_type: string;
+            entity_id: string;
+        }> })?.searchHits ?? []) as Array<{
+            entity_type: string;
+            entity_id: string;
+        }>,
+    );
+
     $effect(() => {
         const id = highlightId;
+        if (searchQ && searchHits.length > 0) return;
         if (id && id !== lastUrlHighlight) {
             lastUrlHighlight = id;
             const layer = resolvedLayer || layerParam || activeTab;
@@ -224,6 +242,33 @@
                 activeTab = layer;
             }
         }
+    });
+
+    $effect(() => {
+        const q = searchQ;
+        const hits = searchHits;
+        const sig = q
+            ? `${q}\0${hits.map((h) => `${h.entity_type}:${h.entity_id}`).join(",")}`
+            : "";
+        untrack(() => {
+            if (!q) {
+                layerSelection.exitIsolate();
+                return;
+            }
+            if (hits.length === 0) return;
+            const keys = [
+                ...new Set(
+                    hits.map((h) =>
+                        toSelectionKey(h.entity_type, h.entity_id),
+                    ),
+                ),
+            ];
+            layerSelection.setSelection(keys);
+            layerSelection.isolateSelected();
+            const layer = hits[0]?.entity_type;
+            if (layer && activeTab !== layer) activeTab = layer;
+        });
+        void sig;
     });
 
     let schemaToolsOpen = $state(false);
@@ -341,6 +386,10 @@
         }
     });
 
+    onDestroy(() => {
+        layerSelection.exitIsolate();
+    });
+
     $effect(() => {
         if (dimParam === "2d" || dimParam === "3d") {
             mapDim = dimParam;
@@ -366,7 +415,9 @@
     /** Keep table tab on the primary selected layer. */
     $effect(() => {
         const layer = layerSelection.primaryLayer;
-        if (layer && tableNames.includes(layer)) activeTab = layer;
+        if (layer && tableNames.includes(layer) && activeTab !== layer) {
+            activeTab = layer;
+        }
     });
 
     async function toggleMapFullscreen() {
@@ -769,6 +820,7 @@
                         onPersistViews={persistLayerViews}
                         {diffFeatures}
                         {joinedKeys}
+                        searchQ={searchQ}
                     />
                 {:else}
                     <CesiumLoading />

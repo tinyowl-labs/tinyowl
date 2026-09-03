@@ -7,7 +7,14 @@ import type {
 	MarkerClusterGroup,
 	MarkerClusterGroupOptions,
 } from "leaflet";
-import { OSM_MAX_ZOOM, OSM_TILE_SUBDOMAINS, OSM_TILE_URL } from "./osmTiles";
+import {
+	OSM_MAX_ZOOM,
+	OSM_MIN_ZOOM,
+	OSM_TILE_SIZE,
+	OSM_TILE_SUBDOMAINS,
+	OSM_TILE_URL,
+	OSM_WORLD_BOUNDS,
+} from "./osmTiles";
 
 export type LeafletNS = typeof import("leaflet");
 
@@ -82,12 +89,32 @@ export function createClusterGroup(
 	return L.markerClusterGroup(groupOpts);
 }
 
+/** Raise min zoom so the world always covers the pane (no grey gutters). */
+function minZoomToCover(width: number, height: number): number {
+	const span = Math.max(width, height, 1);
+	const needed = Math.log2(span / OSM_TILE_SIZE);
+	if (!Number.isFinite(needed)) return OSM_MIN_ZOOM;
+	return Math.min(
+		OSM_MAX_ZOOM,
+		Math.max(OSM_MIN_ZOOM, Math.ceil(needed - 1e-6)),
+	);
+}
+
+function constrainLeafletView(map: LeafletMap, el: HTMLElement) {
+	const z = minZoomToCover(el.clientWidth, el.clientHeight);
+	if (map.getMinZoom() !== z) map.setMinZoom(z);
+	if (map.getZoom() < z) map.setZoom(z);
+	const bounds = map.options.maxBounds;
+	if (bounds) map.panInsideBounds(bounds, { animate: false });
+}
+
 export function createLeafletMap(
 	L: LeafletNS,
 	el: HTMLElement,
 	opts: LeafletMapOpts = {},
 ): LeafletMap {
 	const interactive = opts.interactive !== false;
+	const zoom = minZoomToCover(el.clientWidth, el.clientHeight);
 	const mapOpts: MapOptions = {
 		attributionControl: false,
 		zoomControl: opts.zoomControl ?? false,
@@ -97,13 +124,27 @@ export function createLeafletMap(
 		boxZoom: interactive,
 		keyboard: interactive,
 		touchZoom: interactive,
+		center: [20, 0],
+		zoom,
+		minZoom: OSM_MIN_ZOOM,
+		maxZoom: OSM_MAX_ZOOM,
+		maxBounds: OSM_WORLD_BOUNDS,
+		maxBoundsViscosity: 1,
+		worldCopyJump: false,
 	};
 	const map = L.map(el, mapOpts);
-	map.setView([20, 0], 2);
 	L.tileLayer(OSM_TILE_URL, {
 		subdomains: OSM_TILE_SUBDOMAINS,
+		minZoom: OSM_MIN_ZOOM,
 		maxZoom: OSM_MAX_ZOOM,
+		bounds: OSM_WORLD_BOUNDS,
+		noWrap: true,
 	}).addTo(map);
+
+	map.on("drag zoomend", () => {
+		const bounds = map.options.maxBounds;
+		if (bounds) map.panInsideBounds(bounds, { animate: false });
+	});
 
 	if (!interactive) {
 		map.getContainer().style.pointerEvents = "none";
@@ -111,7 +152,8 @@ export function createLeafletMap(
 
 	queueMicrotask(() => {
 		try {
-			map.invalidateSize();
+			map.invalidateSize({ animate: false });
+			constrainLeafletView(map, el);
 		} catch {
 			/* ignore */
 		}
@@ -144,7 +186,8 @@ export function observeLeafletResize(
 ): () => void {
 	const ro = new ResizeObserver(() => {
 		try {
-			map.invalidateSize();
+			map.invalidateSize({ animate: false });
+			constrainLeafletView(map, el);
 		} catch {
 			/* ignore */
 		}

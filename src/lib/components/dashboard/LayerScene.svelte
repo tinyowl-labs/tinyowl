@@ -4,6 +4,9 @@
     import { env as publicEnv } from "$env/dynamic/public";
     import { onDestroy, onMount } from "svelte";
     import BoxIcon from "@lucide/svelte/icons/box";
+    import EyeIcon from "@lucide/svelte/icons/eye";
+    import EyeOffIcon from "@lucide/svelte/icons/eye-off";
+    import XIcon from "@lucide/svelte/icons/x";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
     import CesiumAttribution from "$lib/components/CesiumAttribution.svelte";
     import EnuCornerWidget from "./EnuCornerWidget.svelte";
@@ -91,19 +94,24 @@
         type DiffFeature,
         type GeoJsonGeometry,
         DIFF_OP_FILL,
+        asGeometry,
+        geometriesEqual,
     } from "$lib/geoDiff";
-    import DiffLegend from "./DiffLegend.svelte";
     import {
         editBuffer,
         attrFieldsForTable,
         geometryFromDraft,
+        draftFromGeometry,
         isMultipartMode,
         minVerticesForMode,
         type DrawGeomMode,
         type LonLatVertex,
+        type SnapMode,
     } from "$lib/stores/editBuffer.svelte";
     import PresenceDock from "./PresenceDock.svelte";
     import PresenceCursors from "./PresenceCursors.svelte";
+    import CommentPanel from "./CommentPanel.svelte";
+    import CommentBalloons from "./CommentBalloons.svelte";
     import {
         connectMapPresence,
         type MapPresenceHandle,
@@ -114,6 +122,23 @@
         type PresenceLayer,
         type PresenceRosterCursor,
     } from "./layerScenePresence";
+    import {
+        createComment,
+        deleteComment,
+        fetchComments,
+        patchComment,
+        subscribeComments,
+        type CommentDraft,
+        type CommentFilter,
+        type CommentsRealtimeHandle,
+        type MapComment,
+    } from "$lib/map-comments";
+    import {
+        getOrCreateCommentDs,
+        pickCommentId,
+        syncCommentPins,
+        clampLonLatToScene,
+    } from "./layerSceneComments";
 
     type EntityMeta = {
         layerName: string;
@@ -162,6 +187,8 @@
         canWrite?: boolean;
         /** Table name → column names (create form). */
         tables?: Record<string, string[]>;
+        /** Value search from `/layers?q=` — seeds the scene-graph filter. */
+        searchQ?: string;
     };
 
     let {
@@ -185,6 +212,7 @@
         joinedKeys = [],
         canWrite = false,
         tables = {},
+        searchQ = "",
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -229,9 +257,21 @@
     const MEASURE_COLOR = "#ca8a04";
 
     let editEnabled = $state(false);
+    let bufferOverlayVisible = $state(true);
     let drawMode = $state<DrawGeomMode>("Polygon");
-    let drawUseHeight = $state(false);
-    let drawStatus = $state("");
+    let drawUseHeight = $state(true);
+    let snapMode = $state<SnapMode>("terrain");
+    let vertexSession = $state<{
+        table: string;
+        entityId: string;
+        bufferOp: "insert" | "update";
+        oldGeometry: GeoJsonGeometry | null;
+    } | null>(null);
+    let vertexUndoStack: LonLatVertex[][] = [];
+    let vertexDragIndex: number | null = null;
+    let midDragAfter: number | null = null;
+    let vertexDragMoved = false;
+    let vertexSuppressClick = false;
     let drawVertices: LonLatVertex[] = [];
     let drawCartesians: any[] = [];
     let drawParts: LonLatVertex[][] = [];
@@ -240,6 +280,9 @@
     let drawPartCount = $state(0);
     let drawDataSource: any = null;
     let drawDsAdd: Promise<unknown> | null = null;
+    let drawHandleDataSource: any = null;
+    let drawHandleDsAdd: Promise<unknown> | null = null;
+    let drawDsEpoch = 0;
     let drawHandler: any;
     let createFormOpen = $state(false);
     let pendingGeometry = $state<GeoJsonGeometry | null>(null);
@@ -249,9 +292,20 @@
             draftCartesians.length >= minVertices(measureMode),
     );
     const DRAW_COLOR = DIFF_OP_FILL.insert;
+    const DRAFT_MID_CROSS = `data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 11 11">
+			<path fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="square" d="M5.5 1v9M1 5.5h9"/>
+		</svg>`,
+    )}`;
 
     const editLayer = $derived(editBuffer.targetLayer);
-    const canEdit = $derived(Boolean(canWrite && editLayer && active));
+    const canEdit = $derived(
+        Boolean(
+            canWrite &&
+                active &&
+                (editLayer || layerSelection.primaryKey),
+        ),
+    );
     const createFields = $derived(
         attrFieldsForTable(tables[editLayer ?? ""] ?? []),
     );
@@ -290,6 +344,43 @@
     );
     const presenceUserId = $derived(
         ($page.data?.user as { id?: string } | undefined)?.id ?? "",
+    );
+    const commentRole = $derived(
+        (($page.data as { role?: string } | undefined)?.role ?? "viewer") as string,
+    );
+    const commentIsAdmin = $derived(
+        commentRole === "owner" || commentRole === "admin",
+    );
+
+    let comments = $state<MapComment[]>([]);
+    let commentsEnabled = $state(false);
+    let commentAdding = $state(false);
+    let commentFilter = $state<CommentFilter>("open");
+    let selectedCommentId = $state<string | null>(null);
+    let pendingComment = $state<CommentDraft | null>(null);
+    let commentsBusy = $state(false);
+    let commentsError = $state("");
+    let commentDataSource: any = null;
+    let commentsLoadGen = 0;
+    let ctxLon = 0;
+    let ctxLat = 0;
+    let commentDrawMode = $state<DrawGeomMode>("Point");
+    let commentSketchVerts: LonLatVertex[] = [];
+    let commentSketchCount = $state(0);
+    let commentBalloonX = $state(16);
+    let commentBalloonY = $state(16);
+    let commentBalloonOnScreen = $state(false);
+    /** World-space balloon anchor — pickPosition / entity sphere, not lon/lat at h=0. */
+    let commentBalloonAnchor: any | null = null;
+    let commentBalloonAnchorId: string | null = null;
+    let lastCommentClampMs = 0;
+    let commentsRealtime: CommentsRealtimeHandle | null = null;
+    const commentSketchNeed = $derived(minVerticesForMode(commentDrawMode));
+    const commentCanFinishSketch = $derived(
+        commentAdding &&
+            canWrite &&
+            commentDrawMode !== "Point" &&
+            commentSketchCount >= commentSketchNeed,
     );
 
     function bumpRender() {
@@ -893,7 +984,16 @@
         layerSelection.clearSelection();
         clearSelectionUi();
         lastFlownKey = "";
+        clearCommentSelection();
         if (started) syncAllSelectionStyles();
+    }
+
+    function clearCommentSelection() {
+        if (selectedCommentId == null) return;
+        selectedCommentId = null;
+        commentBalloonAnchor = null;
+        commentBalloonAnchorId = null;
+        bumpRender();
     }
 
     function closeContextMenu() {
@@ -975,6 +1075,12 @@
         ctxY = pos.y;
         ctxOpen = true;
         previewContextEntity(entity);
+        const cart = pickMeasureCartesian(screenPos);
+        if (cart) {
+            const v = cartesianToVertex(cart);
+            ctxLon = v.lon;
+            ctxLat = v.lat;
+        }
     }
 
     function contextMenuScreenPos(screenPos: { x: number; y: number }) {
@@ -1072,6 +1178,64 @@
         return null;
     }
 
+    function pickEllipsoidCartesian(position: any): any | null {
+        if (!viewer || !Cesium) return null;
+        try {
+            const hit = viewer.camera.pickEllipsoid(
+                position,
+                viewer.scene.globe.ellipsoid,
+            );
+            if (Cesium.defined(hit)) return hit;
+        } catch {
+            /* ignore */
+        }
+        return null;
+    }
+
+    function pickGlobeCartesian(position: any): any | null {
+        if (!viewer || !Cesium) return null;
+        try {
+            const ray = viewer.camera.getPickRay(position);
+            if (ray) {
+                const globeHit = viewer.scene.globe.pick(ray, viewer.scene);
+                if (Cesium.defined(globeHit)) return globeHit;
+            }
+        } catch {
+            /* ignore */
+        }
+        return null;
+    }
+
+    function pickMeshCartesian(position: any): any | null {
+        if (!viewer || !Cesium) return null;
+        try {
+            if (viewer.scene.pickPositionSupported) {
+                const hit = viewer.scene.pickPosition(position);
+                if (Cesium.defined(hit)) return hit;
+            }
+        } catch {
+            /* ignore */
+        }
+        return null;
+    }
+
+    function pickSnapCartesian(position: any): any | null {
+        if (snapMode === "ellipsoid") {
+            return pickEllipsoidCartesian(position) ?? pickGlobeCartesian(position);
+        }
+        if (snapMode === "terrain") {
+            return (
+                pickGlobeCartesian(position) ??
+                pickEllipsoidCartesian(position)
+            );
+        }
+        return (
+            pickMeshCartesian(position) ??
+            pickGlobeCartesian(position) ??
+            pickEllipsoidCartesian(position)
+        );
+    }
+
     function pathLength3d(cartesians: any[]): number {
         let sum = 0;
         for (let i = 1; i < cartesians.length; i++) {
@@ -1125,7 +1289,7 @@
             ds.entities.add({
                 id: "draft:line",
                 polyline: {
-                    positions: draftCartesians,
+                    positions: draftCartesians.slice(),
                     width: 3,
                     material: new Cesium.PolylineDashMaterialProperty({
                         color,
@@ -1138,7 +1302,9 @@
             ds.entities.add({
                 id: "draft:poly",
                 polygon: {
-                    hierarchy: draftCartesians,
+                    hierarchy: new Cesium.PolygonHierarchy(
+                        draftCartesians.slice(),
+                    ),
                     material: color.withAlpha(0.18),
                     outline: true,
                     outlineColor: color,
@@ -1204,7 +1370,7 @@
             ds.entities.add({
                 id: `${id}:poly`,
                 polygon: {
-                    hierarchy: positions,
+                    hierarchy: new Cesium.PolygonHierarchy(positions.slice()),
                     material: color.withAlpha(0.22),
                     outline: true,
                     outlineColor: color,
@@ -1215,7 +1381,7 @@
             ds.entities.add({
                 id: `${id}:line`,
                 polyline: {
-                    positions,
+                    positions: positions.slice(),
                     width: 3,
                     material: color,
                     clampToGround: false,
@@ -1363,28 +1529,72 @@
         getOrCreateMeasureDs();
     }
 
-    function drawHint(): string {
-        const z = drawUseHeight ? " · 3D height" : " · draped";
-        if (drawMode === "Point") return `Click to place a point${z}`;
-        if (drawMode === "MultiPoint")
-            return `Click points · Finish when done${z}`;
-        if (isMultipartMode(drawMode)) {
-            return `Click vertices · Enter adds a part · Finish commits ${drawMode}${z}`;
-        }
-        return `Click vertices · Finish, double-click, or Enter at ${drawNeed}+${z}`;
-    }
-
     function drawColor() {
         return Cesium.Color.fromCssColorString(DRAW_COLOR);
     }
 
+    function attachDrawNamedDs(ds: any, gen: number, stillMine: () => boolean) {
+        const already = Boolean(viewer.dataSources.contains?.(ds));
+        const attached = already
+            ? Promise.resolve(ds)
+            : Promise.resolve(viewer.dataSources.add(ds));
+        return attached.then(
+            (added) => {
+                if (gen !== drawDsEpoch || !stillMine()) {
+                    try {
+                        if (viewer.dataSources.contains?.(ds)) {
+                            viewer.dataSources.remove(ds, true);
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                    return added;
+                }
+                bumpRender();
+                return added;
+            },
+            () => ds,
+        );
+    }
+
     function getOrCreateDrawDs() {
         if (!viewer || !Cesium) return null;
-        if (drawDataSource) return drawDataSource;
-        drawDataSource = new Cesium.CustomDataSource("tinyowl-draw");
-        drawDsAdd = viewer.dataSources.add(drawDataSource);
-        void drawDsAdd.then(() => bumpRender());
+        if (!drawDataSource) {
+            const gen = ++drawDsEpoch;
+            const ds = new Cesium.CustomDataSource("tinyowl-draw");
+            drawDataSource = ds;
+            drawDsAdd = attachDrawNamedDs(
+                ds,
+                gen,
+                () => drawDataSource === ds,
+            );
+        }
+        if (!drawHandleDataSource) {
+            const gen = drawDsEpoch || ++drawDsEpoch;
+            const ds = new Cesium.CustomDataSource("tinyowl-draw-handles");
+            drawHandleDataSource = ds;
+            drawHandleDsAdd = attachDrawNamedDs(
+                ds,
+                gen,
+                () => drawHandleDataSource === ds,
+            );
+        }
         return drawDataSource;
+    }
+
+    function getOrCreateHandleDs() {
+        getOrCreateDrawDs();
+        return drawHandleDataSource;
+    }
+
+    function raiseDrawHandles() {
+        try {
+            if (drawHandleDataSource) {
+                viewer?.dataSources?.raiseToTop?.(drawHandleDataSource);
+            }
+        } catch {
+            /* ignore */
+        }
     }
 
     function clearDraftDraw() {
@@ -1398,12 +1608,18 @@
     }
 
     function clearDraftDrawEntitiesOnly() {
-        if (!drawDataSource) return;
-        try {
-            drawDataSource.entities.removeAll();
-        } catch {
-            /* ignore */
+        for (const ds of [drawDataSource, drawHandleDataSource]) {
+            if (!ds) continue;
+            try {
+                ds.entities.removeAll();
+            } catch {
+                /* ignore */
+            }
         }
+    }
+
+    function handleEyeOffset() {
+        return new Cesium.Cartesian3(0, 0, 12);
     }
 
     function addDraftPoints(ds: any, color: any, cartesians: any[], prefix: string) {
@@ -1418,6 +1634,41 @@
                     outlineWidth: 1,
                     heightReference: Cesium.HeightReference.NONE,
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    eyeOffset: handleEyeOffset(),
+                },
+            });
+        }
+    }
+
+    function addDraftMids(
+        ds: any,
+        cartesians: any[],
+        prefix: string,
+        closed: boolean,
+    ) {
+        if (!Cesium || cartesians.length < 2) return;
+        const n = cartesians.length;
+        const segs = closed && n >= 3 ? n : n - 1;
+        for (let i = 0; i < segs; i++) {
+            const a = cartesians[i];
+            const b = cartesians[(i + 1) % n];
+            if (!a || !b) continue;
+            const pos = Cesium.Cartesian3.midpoint(
+                a,
+                b,
+                new Cesium.Cartesian3(),
+            );
+            ds.entities.add({
+                id: `${prefix}:mid:${i}`,
+                position: pos,
+                billboard: {
+                    image: DRAFT_MID_CROSS,
+                    width: 11,
+                    height: 11,
+                    verticalOrigin: Cesium.VerticalOrigin?.CENTER,
+                    heightReference: Cesium.HeightReference.NONE,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    eyeOffset: handleEyeOffset(),
                 },
             });
         }
@@ -1428,7 +1679,7 @@
         ds.entities.add({
             id,
             polyline: {
-                positions: cartesians,
+                positions: cartesians.slice(),
                 width: 3,
                 material: new Cesium.PolylineDashMaterialProperty({ color }),
                 clampToGround: false,
@@ -1437,11 +1688,11 @@
     }
 
     function addDraftPoly(ds: any, color: any, cartesians: any[], id: string) {
-        if (cartesians.length < 3) return;
+        if (cartesians.length < 3 || !Cesium) return;
         ds.entities.add({
             id,
             polygon: {
-                hierarchy: cartesians,
+                hierarchy: new Cesium.PolygonHierarchy(cartesians.slice()),
                 material: color.withAlpha(0.18),
                 outline: true,
                 outlineColor: color,
@@ -1467,13 +1718,16 @@
         if (drawUseHeight === on) return;
         drawUseHeight = on;
         rebuildDrawCartesians();
-        void paintDraftDraw();
-        drawStatus = drawHint();
+        paintDraftDraw();
+        if (createFormOpen) {
+            pendingGeometry = snapshotPendingGeometry();
+        }
     }
 
     function paintDraftDraw() {
         const ds = getOrCreateDrawDs();
-        if (!ds || !Cesium) return;
+        const handles = getOrCreateHandleDs();
+        if (!ds || !handles || !Cesium) return;
         clearDraftDrawEntitiesOnly();
         const color = drawColor();
         const lineLike =
@@ -1484,33 +1738,44 @@
         const polyLike = drawMode === "Polygon" || drawMode === "MultiPolygon";
         for (let p = 0; p < drawPartCartesians.length; p++) {
             const part = drawPartCartesians[p]!;
-            addDraftPoints(ds, color, part, `draw:part${p}`);
             if (lineLike) addDraftLine(ds, color, part, `draw:part${p}:line`);
             if (polyLike) addDraftPoly(ds, color, part, `draw:part${p}:poly`);
+            addDraftPoints(handles, color, part, `draw:part${p}`);
         }
-        addDraftPoints(ds, color, drawCartesians, "draw");
         if (lineLike) addDraftLine(ds, color, drawCartesians, "draw:line");
         if (polyLike) addDraftPoly(ds, color, drawCartesians, "draw:poly");
+        addDraftPoints(handles, color, drawCartesians, "draw");
+        if (lineLike) {
+            addDraftMids(handles, drawCartesians, "draw", polyLike);
+        }
+        raiseDrawHandles();
         bumpRender();
     }
 
-    function openCreateForm() {
-        const geom = geometryFromDraft(
+    function snapshotPendingGeometry(): GeoJsonGeometry | null {
+        if (!editLayer) return null;
+        return geometryFromDraft(
             drawMode,
             drawVertices,
             drawParts,
             drawUseHeight,
         );
-        if (!geom || !editLayer) return;
+    }
+
+    function openCreateForm() {
+        if (createFormOpen) return;
+        const geom = snapshotPendingGeometry();
+        if (!geom) return;
         pendingGeometry = geom;
         createFormOpen = true;
-        clearDraftDraw();
         bumpRender();
     }
 
     function confirmCreate(attrs: Record<string, string>) {
-        if (!pendingGeometry || !editLayer) {
+        const geom = pendingGeometry ?? snapshotPendingGeometry();
+        if (!geom || !editLayer) {
             pendingGeometry = null;
+            createFormOpen = false;
             return;
         }
         const sourceId = attrs.source_id?.trim();
@@ -1518,17 +1783,20 @@
             op: "insert",
             table: editLayer,
             entityId: sourceId || editBuffer.nextEntityId(),
-            geometry: pendingGeometry,
+            geometry: geom,
             attributes: attrs,
         });
         pendingGeometry = null;
-        drawStatus = `${editBuffer.size} in buffer · ${drawHint()}`;
+        createFormOpen = false;
+        clearDraftDraw();
         bumpRender();
     }
 
     function cancelCreate() {
         pendingGeometry = null;
-        drawStatus = drawHint();
+        createFormOpen = false;
+        clearDraftDraw();
+        bumpRender();
     }
 
     function addDrawPart() {
@@ -1544,7 +1812,6 @@
         drawCartesians = [];
         drawVertexCount = 0;
         paintDraftDraw();
-        drawStatus = `${drawPartCount} part${drawPartCount === 1 ? "" : "s"} · click to start the next`;
     }
 
     function popLastDrawVertex(repaint = true) {
@@ -1555,50 +1822,475 @@
         if (repaint) paintDraftDraw();
     }
 
-    function onDrawPick(screenPos: any) {
-        if (createFormOpen) return;
-        const cartesian = pickMeasureCartesian(screenPos);
-        if (!cartesian) {
-            drawStatus = "Could not pick a point — try the mesh or terrain";
+    function restoreLastDrawPart(): boolean {
+        if (drawParts.length === 0) return false;
+        const last = drawParts[drawParts.length - 1]!;
+        drawParts = drawParts.slice(0, -1);
+        drawPartCartesians = drawPartCartesians.slice(0, -1);
+        drawPartCount = drawParts.length;
+        drawVertices = last;
+        drawCartesians = vertsToCartesians(last);
+        drawVertexCount = last.length;
+        paintDraftDraw();
+        return true;
+    }
+
+    function undoLastBuffer(): boolean {
+        if (editBuffer.size === 0) return false;
+        editBuffer.pop();
+        bumpRender();
+        return true;
+    }
+
+    function undoDrawOrMeasure() {
+        if (createFormOpen) {
+            pendingGeometry = null;
+            createFormOpen = false;
+            paintDraftDraw();
             return;
         }
+        if (vertexSession) {
+            if (vertexUndoStack.length > 0) {
+                const prev = vertexUndoStack.pop()!;
+                drawVertices = prev;
+                drawCartesians = vertsToCartesians(prev);
+                drawVertexCount = prev.length;
+                paintDraftDraw();
+                return;
+            }
+            cancelVertexEdit();
+            return;
+        }
+        if (editEnabled) {
+            if (drawVertices.length > 0) {
+                popLastDrawVertex();
+                return;
+            }
+            if (restoreLastDrawPart()) return;
+            undoLastBuffer();
+            return;
+        }
+        if (measureEnabled) {
+            if (draftCartesians.length > 0) {
+                popLastMeasureVertex();
+                return;
+            }
+            if (measureRecords.length > 0) {
+                void removeMeasurement(
+                    measureRecords[measureRecords.length - 1]!.id,
+                );
+                return;
+            }
+        }
+        undoLastBuffer();
+    }
+
+    function dropClosingVertex(verts: LonLatVertex[]): LonLatVertex[] {
+        if (verts.length < 2) return verts;
+        const a = verts[0]!;
+        const b = verts[verts.length - 1]!;
+        if (
+            Math.abs(a.lon - b.lon) < 1e-12 &&
+            Math.abs(a.lat - b.lat) < 1e-12
+        ) {
+            return verts.slice(0, -1);
+        }
+        return verts;
+    }
+
+    function cartesiansToVertices(pts: any[]): LonLatVertex[] {
+        const verts: LonLatVertex[] = [];
+        for (const p of pts) {
+            try {
+                verts.push(cartesianToVertex(p));
+            } catch {
+                /* skip */
+            }
+        }
+        return dropClosingVertex(verts);
+    }
+
+    function geometryFromCesiumEntity(entity: any): GeoJsonGeometry | null {
+        if (!entity || !Cesium || !viewer) return null;
+        const time = viewer.clock.currentTime;
+        try {
+            if (entity.polygon?.hierarchy) {
+                const h = entity.polygon.hierarchy.getValue(time);
+                const pts = h?.positions ?? h;
+                if (!Array.isArray(pts) || pts.length < 3) return null;
+                return geometryFromDraft(
+                    "Polygon",
+                    cartesiansToVertices(pts),
+                    [],
+                    drawUseHeight,
+                );
+            }
+            if (entity.polyline?.positions) {
+                const pts = entity.polyline.positions.getValue(time);
+                if (!Array.isArray(pts) || pts.length < 2) return null;
+                return geometryFromDraft(
+                    "LineString",
+                    cartesiansToVertices(pts),
+                    [],
+                    drawUseHeight,
+                );
+            }
+            if (entity.position) {
+                const pos = entity.position.getValue(time);
+                if (!pos) return null;
+                return geometryFromDraft(
+                    "Point",
+                    [cartesianToVertex(pos)],
+                    [],
+                    drawUseHeight,
+                );
+            }
+        } catch {
+            return null;
+        }
+        return null;
+    }
+
+    function overlayEntityId(raw: unknown): string | null {
+        const id =
+            typeof raw === "string"
+                ? raw
+                : raw && typeof raw === "object" && "id" in (raw as object)
+                  ? String((raw as { id?: unknown }).id ?? "")
+                  : "";
+        if (!id) return null;
+        const after = id.indexOf(":after:");
+        if (after >= 0) return id.slice(0, after);
+        return null;
+    }
+
+    function loadDraftFromGeom(
+        geom: GeoJsonGeometry,
+        modeHint?: DrawGeomMode,
+    ): boolean {
+        const draft = draftFromGeometry(geom);
+        if (!draft) return false;
+        drawMode = modeHint && draft.mode === modeHint ? modeHint : draft.mode;
+        drawParts = draft.parts;
+        drawPartCartesians = draft.parts.map((p) => vertsToCartesians(p));
+        drawPartCount = draft.parts.length;
+        drawVertices = draft.vertices;
+        drawCartesians = vertsToCartesians(draft.vertices);
+        drawVertexCount = draft.vertices.length;
+        paintDraftDraw();
+        raiseDrawHandles();
+        return true;
+    }
+
+    function setEntityShown(entity: any, shown: boolean) {
+        if (!entity) return;
+        try {
+            entity.show = shown;
+        } catch {
+            /* ignore */
+        }
+    }
+
+    function applyBufferHides() {
+        const hide = new Set<string>();
+        if (bufferOverlayVisible) {
+            for (const e of editBuffer.entries) {
+                if (e.op === "update" || e.op === "delete") {
+                    hide.add(toSelectionKey(e.table, e.entityId));
+                }
+            }
+        }
+        if (vertexSession && vertexSession.bufferOp !== "insert") {
+            hide.add(
+                toSelectionKey(vertexSession.table, vertexSession.entityId),
+            );
+        }
+        for (const ds of layerSources.values()) {
+            for (const entity of ds.entities.values) {
+                const meta = entityMeta.get(entity);
+                if (!meta) continue;
+                const key = toSelectionKey(meta.layerName, meta.entityId);
+                if (layerSelection.isHidden(meta.layerName, meta.entityId)) {
+                    continue;
+                }
+                setEntityShown(entity, !hide.has(key));
+            }
+        }
+        bumpRender();
+    }
+
+    function cancelVertexEdit() {
+        vertexSession = null;
+        vertexUndoStack = [];
+        vertexDragIndex = null;
+        midDragAfter = null;
+        clearDraftDraw();
+        applyBufferHides();
+        paintDraftDraw();
+    }
+
+    function beginVertexEdit(table: string, entityId: string): boolean {
+        if (createFormOpen) return false;
+        const buf = editBuffer.entries.find(
+            (e) => e.table === table && e.entityId === entityId,
+        );
+        let geom: GeoJsonGeometry | null = null;
+        let oldGeometry: GeoJsonGeometry | null = null;
+        let bufferOp: "insert" | "update" = "update";
+        if (buf) {
+            geom = asGeometry(buf.geometry);
+            oldGeometry = asGeometry(buf.oldGeometry);
+            bufferOp = buf.op === "insert" ? "insert" : "update";
+        }
+        if (!geom) {
+            const entity = findEntityByKey(toSelectionKey(table, entityId));
+            geom = geometryFromCesiumEntity(entity);
+            oldGeometry = geom;
+        }
+        if (!geom || !loadDraftFromGeom(geom)) return false;
+        vertexSession = { table, entityId, bufferOp, oldGeometry };
+        vertexUndoStack = [];
+        applyBufferHides();
+        return true;
+    }
+
+    function commitVertexEdit(): boolean {
+        if (!vertexSession) return false;
+        const geom = snapshotPendingGeometry();
+        if (!geom) return false;
+        editBuffer.upsert({
+            op: vertexSession.bufferOp,
+            table: vertexSession.table,
+            entityId: vertexSession.entityId,
+            geometry: geom,
+            oldGeometry:
+                vertexSession.bufferOp === "insert"
+                    ? null
+                    : vertexSession.oldGeometry,
+        });
+        vertexSession = null;
+        vertexUndoStack = [];
+        vertexDragIndex = null;
+        midDragAfter = null;
+        clearDraftDraw();
+        applyBufferHides();
+        bumpRender();
+        return true;
+    }
+
+    function pickedDraftHandle(
+        screenPos: any,
+    ): { kind: "vertex" | "mid"; index: number } | null {
+        if (!viewer) return null;
+        try {
+            const picked = viewer.scene.pick(screenPos);
+            const raw = picked?.id;
+            const id =
+                typeof raw === "string"
+                    ? raw
+                    : raw && typeof raw === "object" && "id" in raw
+                      ? String((raw as { id?: unknown }).id ?? "")
+                      : "";
+            const vertex = /^draw:pt:(\d+)$/.exec(id);
+            if (vertex) {
+                const i = Number(vertex[1]);
+                return Number.isInteger(i) ? { kind: "vertex", index: i } : null;
+            }
+            const mid = /^draw:mid:(\d+)$/.exec(id);
+            if (mid) {
+                const i = Number(mid[1]);
+                return Number.isInteger(i) ? { kind: "mid", index: i } : null;
+            }
+        } catch {
+            /* ignore */
+        }
+        return null;
+    }
+
+    function pickEditTarget(
+        screenPos: any,
+    ): { table: string; entityId: string } | null {
+        if (!viewer || !editLayer || !bufferOverlayVisible) return null;
+        try {
+            const picks = viewer.scene.drillPick(screenPos, 24) ?? [];
+            for (const picked of picks) {
+                const overlayId = overlayEntityId(
+                    typeof picked?.id === "string"
+                        ? picked.id
+                        : picked?.id?.id,
+                );
+                if (!overlayId) continue;
+                const buf = editBuffer.entries.find(
+                    (e) => e.entityId === overlayId,
+                );
+                if (buf && buf.table === editLayer) {
+                    return { table: buf.table, entityId: buf.entityId };
+                }
+            }
+        } catch {
+            /* ignore */
+        }
+        return null;
+    }
+
+    function lockEditCamera() {
+        if (!viewer) return;
+        const c = viewer.scene.screenSpaceCameraController;
+        c.enableRotate = false;
+        c.enableTranslate = false;
+        c.enableLook = false;
+        c.enableTilt = false;
+        c.enableZoom = false;
+    }
+
+    function unlockEditCamera() {
+        if (!viewer) return;
+        const is3d = dim === "3d";
+        const c = viewer.scene.screenSpaceCameraController;
+        c.enableRotate = is3d;
+        c.enableTranslate = true;
+        c.enableLook = is3d;
+        c.enableTilt = is3d;
+        c.enableZoom = true;
+    }
+
+    function startVertexDrag(index: number) {
+        vertexDragIndex = index;
+        midDragAfter = null;
+        vertexDragMoved = false;
+        lockEditCamera();
+    }
+
+    function startMidDrag(afterIndex: number) {
+        vertexDragIndex = null;
+        midDragAfter = afterIndex;
+        vertexDragMoved = false;
+        lockEditCamera();
+    }
+
+    function pushVertexUndo() {
+        vertexUndoStack = [
+            ...vertexUndoStack,
+            drawVertices.map((v) => ({ ...v })),
+        ];
+    }
+
+    function moveVertexDrag(screenPos: any) {
+        if (vertexDragIndex == null && midDragAfter == null) return;
+        const cartesian = pickSnapCartesian(screenPos);
+        if (!cartesian) return;
+        const next = cartesianToVertex(cartesian);
+        if (midDragAfter != null) {
+            const insertAt = Math.min(midDragAfter + 1, drawVertices.length);
+            pushVertexUndo();
+            drawVertices = [
+                ...drawVertices.slice(0, insertAt),
+                next,
+                ...drawVertices.slice(insertAt),
+            ];
+            drawCartesians = vertsToCartesians(drawVertices);
+            drawVertexCount = drawVertices.length;
+            vertexDragIndex = insertAt;
+            midDragAfter = null;
+            vertexDragMoved = true;
+            paintDraftDraw();
+            return;
+        }
+        if (vertexDragIndex == null) return;
+        if (!vertexDragMoved) pushVertexUndo();
+        vertexDragMoved = true;
+        drawVertices = drawVertices.map((v, i) =>
+            i === vertexDragIndex ? next : v,
+        );
+        drawCartesians = vertsToCartesians(drawVertices);
+        paintDraftDraw();
+    }
+
+    function endVertexDrag() {
+        const dragging = vertexDragIndex != null || midDragAfter != null;
+        vertexDragIndex = null;
+        midDragAfter = null;
+        if (!dragging) return;
+        unlockEditCamera();
+        if (vertexDragMoved) vertexSuppressClick = true;
+        vertexDragMoved = false;
+    }
+
+    function onDrawPick(screenPos: any) {
+        if (createFormOpen) return;
+        if (vertexSuppressClick) {
+            vertexSuppressClick = false;
+            return;
+        }
+        if (pickedDraftHandle(screenPos)) return;
+        const target = pickEditTarget(screenPos);
+        if (target) {
+            if (
+                vertexSession &&
+                vertexSession.table === target.table &&
+                vertexSession.entityId === target.entityId
+            ) {
+                return;
+            }
+            if (vertexSession) commitVertexEdit();
+            else if (drawVertexCount > 0 || drawPartCount > 0) return;
+            beginVertexEdit(target.table, target.entityId);
+            return;
+        }
+        if (vertexSession) return;
+        const cartesian = pickSnapCartesian(screenPos);
+        if (!cartesian) return;
         drawVertices = [...drawVertices, cartesianToVertex(cartesian)];
         drawCartesians = vertsToCartesians(drawVertices);
         drawVertexCount = drawVertices.length;
         paintDraftDraw();
         if (drawMode === "Point") {
             openCreateForm();
-            return;
         }
-        const n = drawVertexCount;
-        drawStatus =
-            n < drawNeed
-                ? `${n} point${n === 1 ? "" : "s"} · need ${drawNeed - n} more`
-                : isMultipartMode(drawMode)
-                  ? `${n} in this part · Enter adds a part · Finish commits`
-                  : `${n} points · Finish, double-click, or Enter`;
     }
 
-    async function clearDrawDraftAndDs() {
-        clearDraftDraw();
-        if (drawDataSource && viewer) {
+    async function detachDrawDataSource() {
+        drawDsEpoch += 1;
+        const geom = drawDataSource;
+        const handles = drawHandleDataSource;
+        const pending = [drawDsAdd, drawHandleDsAdd];
+        drawDataSource = null;
+        drawHandleDataSource = null;
+        drawDsAdd = null;
+        drawHandleDsAdd = null;
+        for (const p of pending) {
+            if (!p) continue;
             try {
-                viewer.dataSources.remove(drawDataSource, true);
+                await p;
             } catch {
                 /* ignore */
             }
         }
-        drawDataSource = null;
-        drawDsAdd = null;
+        if (!viewer) return;
+        for (const ds of [geom, handles]) {
+            if (!ds) continue;
+            try {
+                if (viewer.dataSources.contains?.(ds)) {
+                    viewer.dataSources.remove(ds, true);
+                }
+            } catch {
+                /* ignore */
+            }
+        }
     }
 
     function finishDrawDraft(): boolean {
+        if (vertexSession) return commitVertexEdit();
         if (!drawCanFinish) return false;
         openCreateForm();
         return true;
     }
 
     function onEnterInEdit() {
+        if (vertexSession) {
+            finishDrawDraft();
+            return;
+        }
         if (isMultipartMode(drawMode) && drawVertexCount >= drawNeed) {
             addDrawPart();
             return;
@@ -1607,6 +2299,9 @@
     }
 
     function teardownDrawHandler() {
+        vertexDragIndex = null;
+        midDragAfter = null;
+        unlockEditCamera();
         try {
             drawHandler?.destroy?.();
         } catch {
@@ -1620,9 +2315,32 @@
         teardownDrawHandler();
         drawHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         drawHandler.setInputAction((click: { position: unknown }) => {
+            const handle = pickedDraftHandle(click.position);
+            if (handle && (vertexSession || drawVertexCount > 0)) {
+                if (handle.kind === "mid") startMidDrag(handle.index);
+                else startVertexDrag(handle.index);
+            }
+        }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+        drawHandler.setInputAction((move: { endPosition?: unknown }) => {
+            if (
+                (vertexDragIndex == null && midDragAfter == null) ||
+                !move.endPosition
+            ) {
+                return;
+            }
+            moveVertexDrag(move.endPosition);
+        }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+        drawHandler.setInputAction(() => {
+            endVertexDrag();
+        }, Cesium.ScreenSpaceEventType.LEFT_UP);
+        drawHandler.setInputAction((click: { position: unknown }) => {
             onDrawPick(click.position);
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
         drawHandler.setInputAction(() => {
+            if (vertexSession) {
+                finishDrawDraft();
+                return;
+            }
             if (drawMode === "Point") return;
             popLastDrawVertex(false);
             if (!finishDrawDraft()) paintDraftDraw();
@@ -1631,24 +2349,79 @@
     }
 
     function setDrawMode(next: DrawGeomMode) {
-        if (drawMode === next) return;
+        if (drawMode === next || createFormOpen) return;
+        if (vertexSession) cancelVertexEdit();
         drawMode = next;
         clearDraftDraw();
-        drawStatus = drawHint();
         paintDraftDraw();
     }
 
+    function layerFromSelection(): string | null {
+        const key = layerSelection.primaryKey;
+        if (!key) return null;
+        const { layer } = parseSelectionKey(key);
+        return layer || null;
+    }
+
+    function dismissEntityPopup() {
+        hideEntityPopup();
+        pickDismissedKey = layerSelection.primaryKey ?? "";
+    }
+
+    function settleVertexSessionOnExit() {
+        if (!vertexSession) return;
+        const geom = snapshotPendingGeometry();
+        if (!geom) {
+            cancelVertexEdit();
+            return;
+        }
+        const buf = editBuffer.entries.find(
+            (e) =>
+                e.table === vertexSession.table &&
+                e.entityId === vertexSession.entityId,
+        );
+        const baseline = buf
+            ? asGeometry(buf.geometry)
+            : vertexSession.oldGeometry;
+        if (geometriesEqual(geom, baseline)) {
+            cancelVertexEdit();
+            return;
+        }
+        commitVertexEdit();
+    }
+
     function enterEditMode() {
-        if (!canEdit) return;
+        if (!canWrite || !active) return;
+        const layer = editLayer ?? layerFromSelection();
+        if (!layer) return;
+        if (editBuffer.targetLayer !== layer) {
+            editBuffer.setTargetLayer(layer);
+        }
+        dismissEntityPopup();
+        closeContextMenu();
         editEnabled = true;
         measureEnabled = false;
-        drawStatus = drawHint();
+        commentsEnabled = false;
+        commentAdding = false;
+        pendingComment = null;
+        clearCommentSketch();
+        queueMicrotask(() => {
+            if (!editEnabled || vertexSession) return;
+            if (layerSelection.size === 0) return;
+            const key = layerSelection.primaryKey;
+            if (!key) return;
+            const { layer: l, id } = parseSelectionKey(key);
+            if (!id || l !== editBuffer.targetLayer) return;
+            beginVertexEdit(l, id);
+        });
     }
 
     function exitEditMode() {
+        dismissEntityPopup();
         editEnabled = false;
         createFormOpen = false;
         pendingGeometry = null;
+        settleVertexSessionOnExit();
         clearDraftDraw();
     }
 
@@ -2037,6 +2810,11 @@
         }
 
         bumpRender();
+
+        if (editEnabled) {
+            hideEntityPopup();
+            return;
+        }
 
         if (layerSelection.size === 0) {
             pickDismissedKey = "";
@@ -2535,6 +3313,28 @@
             }
             if (measureEnabled || editEnabled) return;
             closeContextMenu();
+            const commentHit = pickCommentId(viewer, click.position);
+            if (commentHit) {
+                layerSelection.clearSelection();
+                clearSelectionUi();
+                commentsEnabled = true;
+                selectedCommentId = commentHit;
+                pendingComment = null;
+                commentAdding = false;
+                clearCommentSketch();
+                commentBalloonAnchor = null;
+                commentBalloonAnchorId = null;
+                const hit = comments.find((c) => c.id === commentHit);
+                if (hit?.status === "resolved" && commentFilter === "open") {
+                    commentFilter = "all";
+                }
+                bumpRender();
+                return;
+            }
+            if (commentAdding && canWrite) {
+                onCommentSketchPick(click.position);
+                return;
+            }
             const { shift, ctrl, meta: cmd } = lastPointerMods;
             const candidates = collectDrillCandidates(click.position);
             if (candidates.length === 0) {
@@ -2542,6 +3342,7 @@
                 closePickPager();
                 return;
             }
+            clearCommentSelection();
             pickDismissedKey = "";
             const top = candidates[0]!;
             if (shift) {
@@ -2593,6 +3394,27 @@
         postRenderRemover = viewer.scene.postRender.addEventListener(() => {
             if (pickOpen && pickAnchorCartesian) updatePickPanelFromAnchor();
             if (filterToView) scheduleInViewUpdate();
+            const now =
+                typeof performance !== "undefined" ? performance.now() : Date.now();
+            if (
+                presenceMember &&
+                commentDataSource &&
+                now - lastCommentClampMs > 250
+            ) {
+                lastCommentClampMs = now;
+                syncCommentPins({
+                    Cesium,
+                    viewer,
+                    ds: commentDataSource,
+                    comments,
+                    filter: commentFilter,
+                    selectedId: selectedCommentId,
+                    pending: pendingComment,
+                    sketch: commentSketchVerts,
+                    sketchMode: commentDrawMode,
+                });
+            }
+            paintCommentBalloons();
         });
 
         ready = true;
@@ -3119,11 +3941,49 @@
 
     $effect(() => {
         diffFeatures;
+        vertexSession;
+        bufferOverlayVisible;
         if (!ready || !started || !viewer || !Cesium) return;
+        const features = !bufferOverlayVisible
+            ? []
+            : diffFeatures.flatMap((f) => {
+                  const editing =
+                      Boolean(vertexSession) &&
+                      f.entityId === vertexSession.entityId &&
+                      f.table === vertexSession.table;
+                  if (editing) {
+                      return f.oldGeometry
+                          ? [{ ...f, geometry: null }]
+                          : [];
+                  }
+                  return f.oldGeometry
+                      ? [{ ...f, oldGeometry: undefined }]
+                      : [f];
+              });
+        if (
+            bufferOverlayVisible &&
+            vertexSession?.oldGeometry &&
+            !features.some(
+                (f) =>
+                    f.entityId === vertexSession.entityId &&
+                    f.table === vertexSession.table &&
+                    f.oldGeometry,
+            )
+        ) {
+            features.push({
+                id: vertexSession.entityId,
+                table: vertexSession.table,
+                entityId: vertexSession.entityId,
+                op: "update",
+                geometry: null,
+                oldGeometry: vertexSession.oldGeometry,
+            });
+        }
         let cancelled = false;
-        void syncDiffOverlay(Cesium, viewer, diffFeatures).then((ds) => {
+        void syncDiffOverlay(Cesium, viewer, features).then((ds) => {
             if (cancelled) return;
             diffDataSource = ds;
+            applyBufferHides();
             bumpRender();
         });
         return () => {
@@ -3159,6 +4019,7 @@
     $effect(() => {
         selectionSig;
         appliedHighlight;
+        editEnabled;
         if (!ready || !started) return;
         syncAllSelectionStyles();
         const flyKey = selectionFlyKey();
@@ -3267,6 +4128,327 @@
         };
     });
 
+    async function reloadComments() {
+        if (!presenceMember || !projectSlug) {
+            comments = [];
+            return;
+        }
+        const gen = ++commentsLoadGen;
+        try {
+            const list = await fetchComments(projectSlug, accessToken);
+            if (gen !== commentsLoadGen) return;
+            comments = list;
+            commentsError = "";
+            bumpRender();
+        } catch (e) {
+            if (gen !== commentsLoadGen) return;
+            commentsError =
+                e instanceof Error ? e.message : "Could not load comments";
+        }
+    }
+
+    async function postComment(body: string, parentId?: string) {
+        const text = body.trim();
+        if (!text) return;
+        commentsBusy = true;
+        commentsError = "";
+        try {
+            const             payload: {
+                body: string;
+                parent_id?: string;
+                layer_name?: string;
+                feature_id?: string;
+                lon?: number;
+                lat?: number;
+                geometry?: GeoJsonGeometry;
+            } = { body: text };
+            if (parentId) {
+                payload.parent_id = parentId;
+            } else if (pendingComment) {
+                payload.lon = pendingComment.lon;
+                payload.lat = pendingComment.lat;
+                if (pendingComment.geometry) {
+                    payload.geometry = pendingComment.geometry;
+                }
+                if (pendingComment.layerName && pendingComment.featureId) {
+                    payload.layer_name = pendingComment.layerName;
+                    payload.feature_id = pendingComment.featureId;
+                }
+            } else {
+                return;
+            }
+            const created = await createComment(
+                projectSlug,
+                accessToken,
+                payload,
+            );
+            pendingComment = null;
+            commentAdding = false;
+            selectedCommentId = created.parent_id ?? created.id;
+            await reloadComments();
+            commentsRealtime?.notify();
+        } catch (e) {
+            commentsError =
+                e instanceof Error ? e.message : "Could not post comment";
+        } finally {
+            commentsBusy = false;
+        }
+    }
+
+    async function resolveComment(id: string, status: "open" | "resolved") {
+        commentsBusy = true;
+        commentsError = "";
+        try {
+            await patchComment(projectSlug, accessToken, id, { status });
+            await reloadComments();
+            commentsRealtime?.notify();
+        } catch (e) {
+            commentsError =
+                e instanceof Error ? e.message : "Could not update comment";
+        } finally {
+            commentsBusy = false;
+        }
+    }
+
+    async function removeComment(id: string) {
+        commentsBusy = true;
+        commentsError = "";
+        try {
+            await deleteComment(projectSlug, accessToken, id);
+            if (selectedCommentId === id) clearCommentSelection();
+            await reloadComments();
+            commentsRealtime?.notify();
+        } catch (e) {
+            commentsError =
+                e instanceof Error ? e.message : "Could not delete comment";
+        } finally {
+            commentsBusy = false;
+        }
+    }
+
+    function startFeatureComment(layerName: string, featureId: string) {
+        commentsEnabled = true;
+        commentAdding = false;
+        const existing = comments.find(
+            (c) =>
+                !c.parent_id &&
+                c.layer_name === layerName &&
+                c.feature_id === featureId,
+        );
+        if (existing) {
+            selectedCommentId = existing.id;
+            pendingComment = null;
+            if (existing.status === "resolved" && commentFilter === "open") {
+                commentFilter = "all";
+            }
+            return;
+        }
+        selectedCommentId = null;
+        pendingComment = {
+            lon: ctxLon,
+            lat: ctxLat,
+            layerName,
+            featureId,
+            geometry: { type: "Point", coordinates: [ctxLon, ctxLat] },
+        };
+    }
+
+    function startCommentAdd() {
+        commentsEnabled = true;
+        commentAdding = true;
+        clearCommentSelection();
+        pendingComment = null;
+        clearCommentSketch();
+        bumpRender();
+    }
+
+    function stopCommentAdd() {
+        commentAdding = false;
+        pendingComment = null;
+        clearCommentSketch();
+        bumpRender();
+    }
+
+    function clearCommentSketch() {
+        commentSketchVerts = [];
+        commentSketchCount = 0;
+    }
+
+    function setCommentDrawMode(mode: DrawGeomMode) {
+        commentDrawMode = mode;
+        pendingComment = null;
+        clearCommentSketch();
+        bumpRender();
+    }
+
+    function onCommentSketchPick(screenPos: unknown) {
+        const cartesian = pickMeasureCartesian(screenPos);
+        if (!cartesian) return;
+        const v = cartesianToVertex(cartesian);
+        pendingComment = null;
+        selectedCommentId = null;
+        commentSketchVerts = [...commentSketchVerts, v];
+        commentSketchCount = commentSketchVerts.length;
+        if (commentDrawMode === "Point") finishCommentSketch();
+        else bumpRender();
+    }
+
+    function finishCommentSketch() {
+        const geom = geometryFromDraft(
+            commentDrawMode,
+            commentSketchVerts,
+            [],
+            true,
+        );
+        const first = commentSketchVerts[0];
+        if (!geom || !first) return;
+        pendingComment = {
+            lon: first.lon,
+            lat: first.lat,
+            geometry: geom,
+        };
+        clearCommentSketch();
+        bumpRender();
+    }
+
+    function commentRootId(id: string | null): string | null {
+        if (!id) return null;
+        const hit = comments.find((c) => c.id === id);
+        if (!hit) return id;
+        return hit.parent_id ?? hit.id;
+    }
+
+    function resolveCommentBalloonAnchor(rootId: string): any | null {
+        if (!viewer || !Cesium) return null;
+        const c = comments.find((x) => x.id === rootId);
+        const lon = c?.lon;
+        const lat = c?.lat;
+        if (lon == null || lat == null) return null;
+        const exclude = commentDataSource?.entities?.values
+            ? [...commentDataSource.entities.values]
+            : [];
+        return clampLonLatToScene(Cesium, viewer, lon, lat, undefined, exclude);
+    }
+
+    function paintCommentBalloons() {
+        if (!Cesium || !viewer) return;
+        const rootId = commentRootId(selectedCommentId);
+        if (!rootId) {
+            commentBalloonAnchor = null;
+            commentBalloonAnchorId = null;
+            if (commentBalloonOnScreen) commentBalloonOnScreen = false;
+            return;
+        }
+        commentBalloonAnchorId = rootId;
+        commentBalloonAnchor = resolveCommentBalloonAnchor(rootId);
+        if (!commentBalloonAnchor) {
+            if (commentBalloonOnScreen) commentBalloonOnScreen = false;
+            return;
+        }
+        const win = Cesium.SceneTransforms.worldToWindowCoordinates(
+            viewer.scene,
+            commentBalloonAnchor,
+        );
+        const canvas = viewer.scene?.canvas;
+        const w = canvas?.clientWidth ?? 400;
+        const h = canvas?.clientHeight ?? 300;
+        if (!win) {
+            if (commentBalloonOnScreen) commentBalloonOnScreen = false;
+            return;
+        }
+        const onScreen =
+            win.x >= -40 &&
+            win.y >= -40 &&
+            win.x <= w + 40 &&
+            win.y <= h + 40;
+        if (!onScreen) {
+            if (commentBalloonOnScreen) commentBalloonOnScreen = false;
+            return;
+        }
+        commentBalloonX = Math.max(8, Math.min(win.x, w - 8));
+        commentBalloonY = Math.max(8, Math.min(win.y, h - 8));
+        if (!commentBalloonOnScreen) commentBalloonOnScreen = true;
+    }
+
+    $effect(() => {
+        presenceMember;
+        projectSlug;
+        accessToken;
+        ready;
+        if (!ready || !presenceMember) {
+            comments = [];
+            return;
+        }
+        void reloadComments();
+    });
+
+    $effect(() => {
+        comments;
+        commentFilter;
+        selectedCommentId;
+        pendingComment;
+        commentSketchCount;
+        commentDrawMode;
+        if (!ready || !viewer || !Cesium) return;
+        if (!presenceMember) {
+            if (commentDataSource) {
+                try {
+                    viewer.dataSources.remove(commentDataSource, true);
+                } catch {
+                    /* ignore */
+                }
+                commentDataSource = null;
+                bumpRender();
+            }
+            return;
+        }
+        commentDataSource = getOrCreateCommentDs(
+            Cesium,
+            viewer,
+            commentDataSource,
+        );
+        syncCommentPins({
+            Cesium,
+            viewer,
+            ds: commentDataSource,
+            comments,
+            filter: commentFilter,
+            selectedId: selectedCommentId,
+            pending: pendingComment,
+            sketch: commentSketchVerts,
+            sketchMode: commentDrawMode,
+        });
+        bumpRender();
+    });
+
+    $effect(() => {
+        const member = presenceMember;
+        const uid = presenceUserId;
+        const slug = projectSlug;
+        if (!browser || !ready || !member || !uid || !slug) return;
+        let stopped = false;
+        let handle: CommentsRealtimeHandle | null = null;
+        void subscribeComments({
+            slug,
+            userId: uid,
+            onChange: () => {
+                if (!stopped) void reloadComments();
+            },
+        }).then((next) => {
+            if (stopped) {
+                void next?.stop();
+                return;
+            }
+            handle = next;
+            commentsRealtime = next;
+        });
+        return () => {
+            stopped = true;
+            commentsRealtime = null;
+            void handle?.stop();
+        };
+    });
+
     onDestroy(() => {
         teardownDrawHandler();
         teardownMeasureHandler();
@@ -3311,6 +4493,7 @@
         for (const hash of [...tilesetPrims.keys()]) destroyTileset(hash);
         for (const hash of [...coverageLayers.keys()]) destroyCoverageLayer(hash);
         for (const name of [...layerSources.keys()]) destroyLayerSource(name);
+        void detachDrawDataSource();
         try {
             destroyDiffOverlay(viewer, diffDataSource);
         } catch {
@@ -3336,18 +4519,36 @@
                 onEnterInEdit();
                 return;
             }
+            if (commentCanFinishSketch) {
+                ev.preventDefault();
+                finishCommentSketch();
+                return;
+            }
             if (measureEnabled) {
                 ev.preventDefault();
                 finishDraft3d();
             }
             return;
         }
+        if (action.type === "undo") {
+            ev.preventDefault();
+            undoDrawOrMeasure();
+            return;
+        }
         if (action.type === "escape") {
-            if (createFormOpen) return;
+            if (createFormOpen) {
+                ev.preventDefault();
+                cancelCreate();
+                return;
+            }
             if (editEnabled) {
+                if (vertexSession) {
+                    ev.preventDefault();
+                    cancelVertexEdit();
+                    return;
+                }
                 if (drawVertexCount > 0 || drawPartCount > 0) {
                     clearDraftDraw();
-                    drawStatus = drawHint();
                     paintDraftDraw();
                     return;
                 }
@@ -3357,6 +4558,28 @@
             if (measureEnabled) {
                 clearDraftMeasure();
                 measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
+                return;
+            }
+            if (commentsEnabled) {
+                ev.preventDefault();
+                if (commentSketchCount > 0) {
+                    clearCommentSketch();
+                    return;
+                }
+                if (pendingComment) {
+                    pendingComment = null;
+                    commentAdding = false;
+                    return;
+                }
+                if (commentAdding) {
+                    stopCommentAdd();
+                    return;
+                }
+                if (selectedCommentId) {
+                    clearCommentSelection();
+                    return;
+                }
+                commentsEnabled = false;
                 return;
             }
             if (ctxOpen) return;
@@ -3407,17 +4630,28 @@
             if (editEnabled) return;
             ev.preventDefault();
             measureEnabled = !measureEnabled;
+            if (measureEnabled) commentsEnabled = false;
+            return;
+        }
+        if (action.type === "comments-toggle") {
+            if (!presenceMember || editEnabled) return;
+            ev.preventDefault();
+            commentsEnabled = !commentsEnabled;
+            if (commentsEnabled) measureEnabled = false;
+            else stopCommentAdd();
             return;
         }
         if (action.type === "edit-toggle") {
             if (createFormOpen) return;
-            if (!canEdit && !editEnabled) return;
-            ev.preventDefault();
             if (editEnabled) {
+                ev.preventDefault();
                 exitEditMode();
-            } else {
-                enterEditMode();
+                return;
             }
+            if (!canWrite || !active) return;
+            if (!editLayer && !layerFromSelection()) return;
+            ev.preventDefault();
+            enterEditMode();
             return;
         }
         if (action.type === "measure-mode") {
@@ -3435,6 +4669,7 @@
             measureMode = action.mode;
             measureEnabled = true;
             editEnabled = false;
+            commentsEnabled = false;
         }
     }
 
@@ -3443,7 +4678,7 @@
     });
 
     $effect(() => {
-        if (!ready || !viewer || !Cesium || measureEnabled || editEnabled) return;
+        if (!ready || !viewer || !Cesium || measureEnabled || editEnabled || commentsEnabled) return;
         if (selectionToolLocal !== "box" && selectionToolLocal !== "lasso") {
             return;
         }
@@ -3679,7 +4914,7 @@
         teardownMeasureHandler();
         clearDraftMeasure();
         measureStatus = "";
-        if (!editEnabled && viewer?.canvas) {
+        if (!editEnabled && !commentAdding && viewer?.canvas) {
             viewer.canvas.style.cursor = "";
         }
     });
@@ -3687,16 +4922,24 @@
     $effect(() => {
         if (!ready || !viewer) return;
         if (editEnabled) {
-            drawStatus = drawHint();
-            clearDraftDraw();
             setupDrawHandler();
             viewer.canvas.style.cursor = "crosshair";
             return;
         }
         teardownDrawHandler();
-        void clearDrawDraftAndDs();
-        drawStatus = "";
-        if (!measureEnabled && viewer?.canvas) {
+        clearDraftDraw();
+        if (!measureEnabled && !commentAdding && viewer?.canvas) {
+            viewer.canvas.style.cursor = "";
+        }
+    });
+
+    $effect(() => {
+        if (!ready || !viewer) return;
+        if (commentAdding && canWrite && !measureEnabled && !editEnabled) {
+            viewer.canvas.style.cursor = "crosshair";
+            return;
+        }
+        if (!measureEnabled && !editEnabled && viewer?.canvas) {
             viewer.canvas.style.cursor = "";
         }
     });
@@ -3711,14 +4954,29 @@
     $effect(() => {
         if (editEnabled && !canEdit) exitEditMode();
     });
+
+    $effect(() => {
+        if (!commentsEnabled) {
+            commentAdding = false;
+            pendingComment = null;
+            clearCommentSketch();
+            clearCommentSelection();
+        }
+    });
+
+    $effect(() => {
+        if (layerSelection.primaryKey) clearCommentSelection();
+    });
 </script>
 
 <div class="relative h-full w-full min-h-0 overflow-hidden">
-    <div class="absolute top-2 left-2 z-20">
+    <div class="absolute top-2 left-2 z-20 flex items-start gap-2">
         <MapToolsRail
             bind:enabled={measureEnabled}
             bind:mode={measureMode}
             bind:selectionTool={selectionToolLocal}
+            bind:commentsEnabled
+            showComments={presenceMember}
             status={measureStatus}
             records={measureRecords}
             {canFinish}
@@ -3757,46 +5015,74 @@
             onFinish={finishDraft3d}
             onRemove={(id) => void removeMeasurement(id)}
         />
+        {#if commentsEnabled && presenceMember}
+            <CommentPanel
+                {comments}
+                filter={commentFilter}
+                selectedId={selectedCommentId}
+                pending={pendingComment}
+                adding={commentAdding}
+                canWrite={canWrite}
+                busy={commentsBusy}
+                error={commentsError}
+                onFilter={(next) => (commentFilter = next)}
+                onSelect={(id) => {
+                    if (id) {
+                        layerSelection.clearSelection();
+                        clearSelectionUi();
+                        pendingComment = null;
+                        commentAdding = false;
+                        clearCommentSketch();
+                        selectedCommentId = id;
+                    } else {
+                        clearCommentSelection();
+                    }
+                }}
+                onAdd={startCommentAdd}
+                onCancelAdd={stopCommentAdd}
+                onCancelPending={stopCommentAdd}
+                onPost={(body) => void postComment(body)}
+                onClose={() => {
+                    commentsEnabled = false;
+                    stopCommentAdd();
+                }}
+            />
+        {/if}
     </div>
 
-    {#if canWrite && editLayer && !editEnabled && active}
-        <div
-            class="pointer-events-none absolute top-2 left-14 z-20 rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm"
-        >
-            {editLayer} · Tab to edit
-        </div>
-    {/if}
-
     {#if canWrite && editEnabled && editLayer}
-        <div class="absolute top-2 left-1/2 z-20 -translate-x-1/2">
+        <div
+            class="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center"
+        >
             <EditModeBar
                 layer={editLayer}
                 mode={drawMode}
-                status={drawStatus}
-                canFinish={drawCanFinish}
-                canAddPart={drawCanAddPart}
+                canFinish={drawCanFinish && !createFormOpen}
+                canAddPart={drawCanAddPart && !createFormOpen && !vertexSession}
                 useHeight={drawUseHeight}
-                {bufferEntries}
+                snap={snapMode}
+                vertexEditing={Boolean(vertexSession)}
                 onMode={setDrawMode}
                 onUseHeight={setDrawUseHeight}
+                onSnap={(m) => (snapMode = m)}
                 onFinish={finishDrawDraft}
                 onAddPart={addDrawPart}
-                onExit={exitEditMode}
-                onBufferRemove={(id) => editBuffer.remove(id)}
-                onBufferClear={() => editBuffer.clear()}
             />
         </div>
-    {/if}
-
-    {#if canWrite}
-        <FeatureCreateForm
-            bind:open={createFormOpen}
-            layer={editLayer ?? ""}
-            geomType={drawMode}
-            fields={createFields}
-            onConfirm={confirmCreate}
-            onCancel={cancelCreate}
-        />
+    {:else if canWrite && commentAdding && !pendingComment}
+        <div
+            class="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center"
+        >
+            <EditModeBar
+                layer="Comment"
+                mode={commentDrawMode}
+                canFinish={commentCanFinishSketch}
+                showHeight={false}
+                showSnap={false}
+                onMode={setCommentDrawMode}
+                onFinish={finishCommentSketch}
+            />
+        </div>
     {/if}
 
     <EntityContextMenu
@@ -3866,13 +5152,18 @@
             applyHiddenVisibility();
         }}
         onClear={() => clearSelection()}
+        onComment={presenceMember && canWrite && ctxKind === "entity"
+            ? () => startFeatureComment(ctxLayerName, ctxEntityId)
+            : undefined}
         onClose={closeContextMenu}
     />
 
     {#if isolating}
         <button
             type="button"
-            class="absolute bottom-10 left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+            class="absolute {editEnabled
+                ? 'bottom-24'
+                : 'bottom-10'} left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
             onclick={() => {
                 layerSelection.exitIsolate();
                 applyHiddenVisibility();
@@ -3883,7 +5174,9 @@
     {:else if hiddenCount > 0}
         <button
             type="button"
-            class="absolute bottom-10 left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+            class="absolute {editEnabled
+                ? 'bottom-24'
+                : 'bottom-10'} left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
             onclick={showAllHiddenEntities}
         >
             {hiddenCount} hidden · Show all
@@ -3895,61 +5188,165 @@
     {/if}
 
     {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
-        <div class="absolute top-2 right-2 z-10 flex items-start gap-2">
+        <div
+            class="pointer-events-none absolute top-2 right-2 bottom-2 z-10 flex items-start gap-2"
+        >
             {#if styleLayerIdx !== null && layers[styleLayerIdx]}
                 {@const styleLayer = layers[styleLayerIdx]}
                 {#key styleLayer.name}
-                    <LayerStylePanel
-                        layer={styleLayer}
-                        rows={rows[styleLayer.name] ?? []}
-                        canEdit={canEditViews}
-                        onClose={() => (styleLayerIdx = null)}
-                        applyViews={(views, activeId) =>
-                            changeLayerViews(styleLayerIdx!, views, activeId)}
-                        onSetOpacity={(v) =>
-                            setLayerOpacity(styleLayerIdx!, v)}
-                    />
+                    <div class="pointer-events-auto">
+                        <LayerStylePanel
+                            layer={styleLayer}
+                            rows={rows[styleLayer.name] ?? []}
+                            canEdit={canEditViews}
+                            onClose={() => (styleLayerIdx = null)}
+                            applyViews={(views, activeId) =>
+                                changeLayerViews(styleLayerIdx!, views, activeId)}
+                            onSetOpacity={(v) =>
+                                setLayerOpacity(styleLayerIdx!, v)}
+                        />
+                    </div>
                 {/key}
             {/if}
-            <SceneGraphPanel
-                {layers}
-                {models}
-                coverages={coverageRows}
-                {rows}
-                {palette}
-                pendingModels={pending}
-                modelVisible={isModelVisible}
-                coverageVisible={isCoverageVisible}
-                onToggleModel={toggleModel}
-                onSetModelsVisible={setAllModelsVisible}
-                onToggleCoverage={toggleCoverage}
-                onToggleLayer={toggleLayer}
-                onOpenStyle={openLayerStyle}
-                styleLayerName={styleLayerIdx !== null
-                    ? (layers[styleLayerIdx]?.name ?? "")
-                    : ""}
-                onApplyHidden={applyHiddenVisibility}
-                onFlyTo={() => {
-                    lastFlownKey = "";
-                    void flyToSelection(true);
-                }}
-                onFlyToLayer={(name) => {
-                    void flyToLayerExtent(name);
-                }}
-                onFlyToCoverage={flyToCoverage}
-                onFlyToModel={flyToModel}
-                {joinedKeys}
-                bind:filterToView
-                {inViewEntityKeys}
-                {inViewModelHashes}
-                {canWrite}
-            />
+            <div
+                class="pointer-events-auto flex max-h-full min-h-0 w-60 flex-col gap-2 overflow-hidden"
+            >
+                <SceneGraphPanel
+                    {layers}
+                    {models}
+                    coverages={coverageRows}
+                    {rows}
+                    {palette}
+                    pendingModels={pending}
+                    modelVisible={isModelVisible}
+                    coverageVisible={isCoverageVisible}
+                    onToggleModel={toggleModel}
+                    onSetModelsVisible={setAllModelsVisible}
+                    onToggleCoverage={toggleCoverage}
+                    onToggleLayer={toggleLayer}
+                    onOpenStyle={openLayerStyle}
+                    styleLayerName={styleLayerIdx !== null
+                        ? (layers[styleLayerIdx]?.name ?? "")
+                        : ""}
+                    onApplyHidden={applyHiddenVisibility}
+                    onFlyTo={() => {
+                        lastFlownKey = "";
+                        void flyToSelection(true);
+                    }}
+                    onFlyToLayer={(name) => {
+                        void flyToLayerExtent(name);
+                    }}
+                    onFlyToCoverage={flyToCoverage}
+                    onFlyToModel={flyToModel}
+                    {joinedKeys}
+                    bind:filterToView
+                    {inViewEntityKeys}
+                    {inViewModelHashes}
+                    {canWrite}
+                    initialQuery={searchQ}
+                    class="min-h-0 flex-1"
+                />
+                {#if canWrite && createFormOpen}
+                    <FeatureCreateForm
+                        layer={editLayer ?? ""}
+                        geomType={drawMode}
+                        fields={createFields}
+                        onConfirm={confirmCreate}
+                        onCancel={cancelCreate}
+                    />
+                {/if}
+                {#if canWrite && bufferEntries.length > 0}
+                    <div
+                        class="flex min-h-0 max-h-32 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
+                    >
+                        <div
+                            class="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1.5"
+                        >
+                            <span
+                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                                >Buffer · {bufferEntries.length}</span
+                            >
+                            <div class="flex items-center gap-0.5">
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                                    title={bufferOverlayVisible
+                                        ? "Hide buffer on map"
+                                        : "Show buffer on map"}
+                                    onclick={() =>
+                                        (bufferOverlayVisible =
+                                            !bufferOverlayVisible)}
+                                >
+                                    {#if bufferOverlayVisible}
+                                        <EyeIcon class="size-3" />
+                                    {:else}
+                                        <EyeOffIcon class="size-3" />
+                                    {/if}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                                    title="Clear session buffer"
+                                    onclick={() => editBuffer.clear()}
+                                >
+                                    <XIcon class="size-3" />
+                                    Clear
+                                </button>
+                            </div>
+                        </div>
+                        <ul class="min-h-0 flex-1 overflow-y-auto p-1">
+                            {#each bufferEntries as rec (rec.entityId)}
+                                <li
+                                    class="flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary/80 {vertexSession?.entityId ===
+                                        rec.entityId &&
+                                    vertexSession?.table === rec.table
+                                        ? 'bg-secondary'
+                                        : ''}"
+                                >
+                                    <button
+                                        type="button"
+                                        class="min-w-0 flex-1 truncate text-left"
+                                        title="Edit {rec.table} · {rec.entityId}"
+                                        onclick={() => {
+                                            if (!editEnabled) enterEditMode();
+                                            queueMicrotask(() =>
+                                                beginVertexEdit(
+                                                    rec.table,
+                                                    rec.entityId,
+                                                ),
+                                            );
+                                        }}
+                                    >
+                                        <span class="text-muted-foreground"
+                                            >{rec.table} ·</span
+                                        >
+                                        <span class="font-medium"
+                                            >{rec.entityId}</span
+                                        >
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                        title="Remove"
+                                        onclick={() =>
+                                            editBuffer.remove(rec.entityId)}
+                                    >
+                                        <XIcon class="size-3" />
+                                    </button>
+                                </li>
+                            {/each}
+                        </ul>
+                    </div>
+                {/if}
+            </div>
         </div>
     {/if}
 
     {#if coverageError}
         <div
-            class="absolute bottom-10 left-2 right-2 z-10 rounded-md border border-border bg-background/95 px-2 py-1.5 text-[11px] text-muted-foreground"
+            class="absolute {editEnabled
+                ? 'bottom-24'
+                : 'bottom-10'} left-2 right-2 z-10 rounded-md border border-border bg-background/95 px-2 py-1.5 text-[11px] text-muted-foreground"
         >
             Coverage: {coverageError}
         </div>
@@ -3977,7 +5374,9 @@
 
     {#if error}
         <div
-            class="absolute bottom-14 left-3 right-3 z-10 rounded-md border border-destructive/40 bg-background/95 px-3 py-2 text-xs text-destructive"
+            class="absolute {editEnabled
+                ? 'bottom-28'
+                : 'bottom-14'} left-3 right-3 z-10 rounded-md border border-destructive/40 bg-background/95 px-3 py-2 text-xs text-destructive"
         >
             {error}
         </div>
@@ -4011,9 +5410,34 @@
         class="cesium-scene absolute inset-0 z-0 bg-neutral-900"
     ></div>
     <PresenceCursors roster={presenceRoster} nodes={presenceCursorNodes} />
+    {#if presenceMember}
+        <CommentBalloons
+            {comments}
+            selectedId={selectedCommentId}
+            open={Boolean(selectedCommentId) && commentBalloonOnScreen}
+            x={commentBalloonX}
+            y={commentBalloonY}
+            canWrite={canWrite}
+            currentUserId={presenceUserId}
+            isAdmin={commentIsAdmin}
+            busy={commentsBusy}
+            onSelect={(id) => {
+                commentsEnabled = true;
+                layerSelection.clearSelection();
+                clearSelectionUi();
+                selectedCommentId = id;
+                pendingComment = null;
+                commentAdding = false;
+                clearCommentSketch();
+            }}
+            onReply={(body, parentId) => void postComment(body, parentId)}
+            onResolve={(id, status) => void resolveComment(id, status)}
+            onDelete={(id) => void removeComment(id)}
+        />
+    {/if}
     <div bind:this={creditSink} class="sr-only" aria-hidden="true"></div>
 
-    {#if pickOpen}
+    {#if pickOpen && !editEnabled}
         <PickPager
             open={pickOpen}
             candidates={pickCandidates}
@@ -4036,11 +5460,6 @@
     <div
         class="absolute bottom-2 right-2 z-20 flex flex-col items-end gap-1"
     >
-        {#if diffFeatures.length > 0}
-            <DiffLegend
-                showBefore={diffFeatures.some((f) => f.oldGeometry)}
-            />
-        {/if}
         {#if presenceMember && ready && presenceConnected}
             <PresenceDock
                 peers={presencePeers}

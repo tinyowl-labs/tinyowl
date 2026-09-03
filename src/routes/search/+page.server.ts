@@ -32,6 +32,14 @@ export type SearchProject = {
   date_end_label?: string | null;
 };
 
+export type SearchEntityHit = {
+  entity_type: string;
+  entity_id: string;
+  column_name: string;
+  match_value: string;
+  project_slug?: string;
+};
+
 export type SimilarMediaItem = {
   hash: string;
   media_type: string;
@@ -112,12 +120,14 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
       dateTo: null,
       tags: [] as string[],
       vocabularies: [] as string[],
+      projectSlugs: [] as string[],
       semantic: parsed.semantic,
       mediaHash: null as string | null,
       imageQuery: false,
       similarItems: [] as SimilarMediaItem[],
       similarStatus: "" as string,
       projects: [] as SearchProject[],
+      entityHits: {} as Record<string, SearchEntityHit[]>,
       placeName: null as string | null,
       accessToken,
     };
@@ -210,12 +220,16 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
     parsed.dateTo != null ||
     parsed.tags.length > 0 ||
     parsed.vocabularies.length > 0 ||
+    parsed.projects.length > 0 ||
     parsed.types.length > 0;
 
   if (wantProjects) {
     const params = new URLSearchParams();
-    if (parsed.q) params.set("q", parsed.q);
-    if (parsed.q && !parsed.semantic) params.set("semantic", "0");
+    const scoped = parsed.projects.length > 0;
+    // Project chips scope entity search (below). Don't AND q against project
+    // title FTS or "pottery @project:toumba-serron" returns nothing.
+    if (parsed.q && !scoped) params.set("q", parsed.q);
+    if (parsed.q && !parsed.semantic && !scoped) params.set("semantic", "0");
     if (parsed.bbox) {
       params.set("bbox", formatBBox(parsed.bbox));
     } else if (parsed.lat != null && parsed.lng != null) {
@@ -227,6 +241,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
     if (parsed.dateTo != null) params.set("date_to", String(parsed.dateTo));
     for (const t of parsed.tags) params.append("tag", t);
     for (const v of parsed.vocabularies) params.append("vocab", v);
+    for (const p of parsed.projects) params.append("project", p);
 
     try {
       const res = await fetch(
@@ -235,6 +250,29 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
       );
       if (res.ok) projects = (await res.json()) ?? [];
     } catch (_) {}
+  }
+
+  const entityHits: Record<string, SearchEntityHit[]> = {};
+  if (parsed.projects.length > 0 && parsed.q) {
+    await Promise.all(
+      parsed.projects.map(async (slug) => {
+        try {
+          const qs = new URLSearchParams({
+            q: parsed.q,
+            limit: "20",
+          });
+          const res = await fetch(
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/search-entities?${qs}`,
+            { headers },
+          );
+          if (!res.ok) return;
+          const rows = (await res.json()) as SearchEntityHit[];
+          entityHits[slug] = Array.isArray(rows) ? rows : [];
+        } catch {
+          /* entity search is best-effort */
+        }
+      }),
+    );
   }
 
   projects = mergeProjects(projects, relatedProjects);
@@ -249,12 +287,14 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
     dateTo: parsed.dateTo,
     tags: parsed.tags,
     vocabularies: parsed.vocabularies,
+    projectSlugs: parsed.projects,
     semantic: parsed.semantic,
     mediaHash: parsed.mediaHash,
     imageQuery: parsed.imageQuery,
     similarItems,
     similarStatus,
     projects,
+    entityHits,
     placeName: parsed.placeName,
     accessToken,
   };

@@ -18,7 +18,6 @@
     } from "../leafletBoot";
     import MapLoading from "../MapLoading.svelte";
     import MapAttribution from "../MapAttribution.svelte";
-    import DiffLegend from "./DiffLegend.svelte";
     import {
         DIFF_OP_FILL,
         asGeometry,
@@ -56,10 +55,6 @@
     onMount(() => {
         mounted = true;
     });
-
-    const showBefore = $derived(
-        features.some((f) => asGeometry(f.oldGeometry) != null),
-    );
 
     function featureOp(f: Feature): DiffOp {
         return parseDiffOp(f.op ?? f.type);
@@ -265,8 +260,4 @@
         <MapLoading class="absolute inset-0" />
     {/if}
     <MapAttribution class="bottom-1 right-1" />
-    <DiffLegend
-        {showBefore}
-        class="leaflet-map-chrome absolute left-2 bottom-2 z-10"
-    />
 </div>

@@ -36,6 +36,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
         ? "2d"
         : "";
   const tileset = url.searchParams.get("tileset") ?? "";
+  const searchQ = (url.searchParams.get("q") ?? "").trim();
 
   const accessToken = await locals.getAccessToken();
   const headers: Record<string, string> = {};
@@ -100,18 +101,49 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     }
   } catch (_) {}
 
+  type SearchEntityHit = {
+    entity_type: string;
+    entity_id: string;
+    column_name: string;
+    match_value: string;
+  };
+  let searchHits: SearchEntityHit[] = [];
+  if (searchQ) {
+    try {
+      const qs = new URLSearchParams({ q: searchQ, limit: "50" });
+      const res = await fetch(
+        `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/search-entities?${qs}`,
+        { headers },
+      );
+      if (res.ok) {
+        const rows = await res.json();
+        searchHits = Array.isArray(rows) ? rows : [];
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+
   // Find which page the highlighted row is on (25 rows per page)
   let highlightPage = 0;
-  if (highlight && layer) {
-    const tableNames = Object.keys(allRows);
+  const highlightFromSearch =
+    !highlight && searchHits.length > 0
+      ? searchHits[0]!.entity_id
+      : highlight;
+  const layerFromSearch =
+    !layer && searchHits.length > 0 ? searchHits[0]!.entity_type : layer;
+  if (highlightFromSearch && layerFromSearch) {
+    const names = Object.keys(allRows);
     const resolved =
-      allRows[layer] != null
-        ? layer
-        : (tableNames.find((t) => t.toLowerCase() === layer.toLowerCase()) ??
-          layer);
+      allRows[layerFromSearch] != null
+        ? layerFromSearch
+        : (names.find(
+            (t) => t.toLowerCase() === layerFromSearch.toLowerCase(),
+          ) ?? layerFromSearch);
     const tableRows = allRows[resolved] ?? [];
     const idx = tableRows.findIndex(
-      (r) => String(r.source_id ?? r.SOURCE_ID ?? "") === highlight,
+      (r) =>
+        String(r.source_id ?? r.SOURCE_ID ?? "") === highlightFromSearch,
     );
     if (idx >= 0) highlightPage = Math.floor(idx / 25);
   }
@@ -119,13 +151,15 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   return {
     tables,
     rows: allRows,
-    layer,
-    highlight,
+    layer: layerFromSearch,
+    highlight: highlightFromSearch,
     highlightPage,
     view,
     dim,
     tileset,
     mediaByEntity,
     accessToken,
+    searchQ,
+    searchHits,
   };
 };

@@ -31,7 +31,7 @@
         textMatchesQuery,
     } from "$lib/search/highlight";
     import { entityLayersHref } from "$lib/project/entityLink";
-    import type { SearchProject, SimilarMediaItem } from "./+page.server";
+    import type { SearchProject, SimilarMediaItem, SearchEntityHit } from "./+page.server";
     import {
         clearImageQuery,
         loadImageQuery,
@@ -60,12 +60,14 @@
         dateTo: number | null;
         tags: string[];
         vocabularies: string[];
+        projectSlugs: string[];
         semantic: boolean;
         mediaHash: string | null;
         imageQuery: boolean;
         similarItems: SimilarMediaItem[];
         similarStatus: string;
         projects: SearchProject[];
+        entityHits: Record<string, SearchEntityHit[]>;
         placeName: string | null;
     };
 
@@ -81,6 +83,7 @@
     let dateTo = $state(untrack(() => data.dateTo?.toString() ?? ""));
     let tags = $state<string[]>(untrack(() => data.tags ?? []));
     let vocabularies = $state<string[]>(untrack(() => data.vocabularies ?? []));
+    let projectSlugs = $state<string[]>(untrack(() => data.projectSlugs ?? []));
     let mediaHash = $state<string | null>(untrack(() => data.mediaHash));
     let imageQuery = $state(untrack(() => data.imageQuery));
     let imageSession = $state<ImageQuerySession | null>(
@@ -97,6 +100,7 @@
         dateTo = data.dateTo?.toString() ?? "";
         tags = data.tags ?? [];
         vocabularies = data.vocabularies ?? [];
+        projectSlugs = data.projectSlugs ?? [];
         mediaHash = data.mediaHash;
         imageQuery = data.imageQuery;
         imageSession = data.imageQuery ? loadImageQuery() : null;
@@ -113,6 +117,7 @@
             dateTo: data.dateTo,
             tags: data.tags ?? [],
             vocabularies: data.vocabularies ?? [],
+            projects: data.projectSlugs ?? [],
             types: [],
             semantic: data.semantic,
             mediaHash: data.mediaHash,
@@ -120,6 +125,14 @@
             placeName: data.placeName,
         } satisfies SearchParams),
     );
+
+    const projectLabels = $derived.by(() => {
+        const labels: Record<string, string> = {};
+        for (const p of data.projects ?? []) {
+            if (p.slug && p.title) labels[p.slug] = p.title;
+        }
+        return labels;
+    });
 
     const imageHits = $derived.by((): Array<SimilarMediaItem | ImageQueryHit> => {
         if (imageSession?.items?.length) return imageSession.items;
@@ -229,8 +242,10 @@
             dateTo: string | number | null;
             tags: string[];
             vocabularies: string[];
+            projects: string[];
             mediaHash: string | null;
             imageQuery: boolean;
+            placeName: string | null;
         }> = {},
     ) {
         const nextBBox =
@@ -270,11 +285,18 @@
                     overrides.vocabularies !== undefined
                         ? overrides.vocabularies
                         : vocabularies,
+                projects:
+                    overrides.projects !== undefined
+                        ? overrides.projects
+                        : projectSlugs,
                 mediaHash: nextMediaHash,
                 // Catalogue seed and temp upload are mutually exclusive.
                 imageQuery: nextMediaHash ? false : nextImageQuery,
                 // Preserve quiet opt-out from the URL; never write semantic=1.
-                placeName: nextBBox ? null : data.placeName,
+                placeName:
+                    overrides.placeName !== undefined
+                        ? overrides.placeName
+                        : data.placeName,
                 semantic: data.semantic ? undefined : false,
             }),
         );
@@ -359,7 +381,7 @@
     async function loadEntities(
         slug: string,
         q: string = data.query,
-        opts: { force?: boolean } = {},
+        opts: { force?: boolean; limit?: number } = {},
     ) {
         if (!q) return;
         const key = entityCacheKey(slug, q);
@@ -373,7 +395,8 @@
 
         entityCache = { ...untrack(() => entityCache), [slug]: "loading" };
         try {
-            const url = `/api/projects/${slug}/search-entities?q=${encodeURIComponent(q)}&limit=8`;
+            const limit = opts.limit ?? 8;
+            const url = `/api/projects/${slug}/search-entities?q=${encodeURIComponent(q)}&limit=${limit}`;
             const res = await fetch(url);
             if (!res.ok) throw new Error(String(res.status));
             const rows: EntityResult[] = await res.json();
@@ -390,7 +413,11 @@
         if (!next) return;
         const existing = untrack(() => entityCache[slug]);
         if (!Array.isArray(existing)) {
-            await loadEntities(slug, data.query, { force: true });
+            const scoped = (data.projectSlugs ?? []).length > 0;
+            await loadEntities(slug, data.query, {
+                force: true,
+                limit: scoped ? 20 : 8,
+            });
         }
     }
 
@@ -398,6 +425,8 @@
     $effect(() => {
         const q = data.query;
         const projects = displayProjects;
+        const scoped = (data.projectSlugs ?? []).length > 0;
+        const seeded = data.entityHits ?? {};
         if (!q || !projects?.length) return;
         untrack(() => {
             if (q !== lastPrefetchQ) {
@@ -405,8 +434,24 @@
                 entityCache = {};
                 entityFetchKeys.clear();
             }
-            for (const p of projects.slice(0, 12)) {
-                void loadEntities(p.slug, q);
+            if (scoped) {
+                const next = { ...entityCache };
+                const exp = { ...expanded };
+                for (const p of projects) {
+                    const rows = seeded[p.slug];
+                    if (rows) {
+                        next[p.slug] = rows;
+                        entityFetchKeys.add(entityCacheKey(p.slug, q));
+                    }
+                    exp[p.slug] = true;
+                }
+                entityCache = next;
+                expanded = exp;
+            }
+            const limit = scoped ? 20 : 8;
+            const slice = scoped ? projects : projects.slice(0, 12);
+            for (const p of slice) {
+                void loadEntities(p.slug, q, { limit });
             }
         });
     });
@@ -432,6 +477,8 @@
                 bind:value={query}
                 {tags}
                 {vocabularies}
+                projects={projectSlugs}
+                {projectLabels}
                 bind:lat={centerLat}
                 bind:lng={centerLng}
                 bind:radius

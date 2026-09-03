@@ -7,6 +7,7 @@
         themePrefs,
         pullThemeFromSupabase,
     } from "$lib/stores/theme.svelte";
+    import SearchOverlay from "$lib/components/SearchOverlay.svelte";
     let { children } = $props();
 
     $effect(() => {
@@ -66,3 +67,4 @@
 </svelte:head>
 
 {@render children()}
+<SearchOverlay />

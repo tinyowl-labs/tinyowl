@@ -153,8 +153,16 @@ export const layerSelection = {
 
 	setSelection(keys: string[]) {
 		const normalized = keys.filter((k) => k.includes(":"));
+		const nextPrimary = normalized[normalized.length - 1] ?? null;
+		if (
+			selected.size === normalized.length &&
+			primaryKey === nextPrimary &&
+			normalized.every((k) => selected.has(k))
+		) {
+			return;
+		}
 		selected = new Set(normalized);
-		primaryKey = normalized[normalized.length - 1] ?? null;
+		primaryKey = nextPrimary;
 	},
 
 	/** Batch replace / add / remove for box & lasso. */
@@ -245,6 +253,13 @@ export const layerSelection = {
 	/** Show only the current selection; exit with {@link exitIsolate}. */
 	isolateSelected() {
 		if (selected.size === 0) return;
+		if (
+			isolatedKeys !== null &&
+			isolatedKeys.size === selected.size &&
+			[...selected].every((k) => isolatedKeys!.has(k))
+		) {
+			return;
+		}
 		isolatedKeys = new Set(selected);
 	},
 

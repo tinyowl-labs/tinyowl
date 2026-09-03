@@ -1,11 +1,13 @@
 /** Shared keyboard shortcuts for LayerScene tool rails. */
 
+import { searchOverlay } from "$lib/stores/searchOverlay.svelte";
 import type { MeasureMode } from "$lib/measure";
 import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
 
 export type MapShortcutAction =
 	| { type: "escape" }
 	| { type: "enter" }
+	| { type: "undo" }
 	| { type: "fly-to" }
 	| { type: "home" }
 	| { type: "isolate" }
@@ -13,6 +15,7 @@ export type MapShortcutAction =
 	| { type: "select-tool"; mode: SelectionToolMode }
 	| { type: "measure-toggle" }
 	| { type: "measure-mode"; mode: MeasureMode }
+	| { type: "comments-toggle" }
 	| { type: "edit-toggle" };
 
 export function isTypingTarget(target: EventTarget | null): boolean {
@@ -29,7 +32,15 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * Does not call preventDefault — callers decide.
  */
 export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
+	if (searchOverlay.open) return null;
 	if (isTypingTarget(ev.target)) return null;
+
+	const chord = ev.metaKey || ev.ctrlKey;
+	if (chord && !ev.altKey && (ev.key === "z" || ev.key === "Z")) {
+		if (ev.shiftKey) return null;
+		return { type: "undo" };
+	}
+
 	if (ev.metaKey || ev.ctrlKey || ev.altKey) return null;
 
 	if (ev.key === "Escape") return { type: "escape" };
@@ -57,6 +68,8 @@ export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
 			return { type: "select-tool", mode: "lasso" };
 		case "m":
 			return { type: "measure-toggle" };
+		case "c":
+			return { type: "comments-toggle" };
 		case "p":
 			return { type: "measure-mode", mode: "point" };
 		case "l":

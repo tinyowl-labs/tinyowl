@@ -48,20 +48,26 @@ function ringToCartesians(Cesium: any, ring: unknown): any[] {
 }
 
 function fillColor(Cesium: any, op: DiffOp, role: Role) {
+    if (role === "before") {
+        const grey = Cesium.Color.fromCssColorString("#94a3b8");
+        return (grey ?? Cesium.Color.GRAY).withAlpha(0.35);
+    }
     const hex = DIFF_OP_FILL[op] ?? DIFF_OP_FILL.head;
     const base =
         Cesium.Color.fromCssColorString(hex) ?? Cesium.Color.ORANGE;
-    if (role === "before") return base.withAlpha(0.28);
     if (op === "delete") return base.withAlpha(0.4);
     if (op === "head") return base.withAlpha(0.55);
-    return base.withAlpha(0.55);
+    return base.withAlpha(0.45);
 }
 
 function lineColor(Cesium: any, op: DiffOp, role: Role) {
+    if (role === "before") {
+        const grey = Cesium.Color.fromCssColorString("#94a3b8");
+        return (grey ?? Cesium.Color.GRAY).withAlpha(0.95);
+    }
     const hex = DIFF_OP_FILL[op] ?? DIFF_OP_FILL.head;
     const base =
         Cesium.Color.fromCssColorString(hex) ?? Cesium.Color.ORANGE;
-    if (role === "before") return base.withAlpha(0.55);
     if (op === "delete") return base.withAlpha(0.7);
     return base;
 }
@@ -102,7 +108,7 @@ function addPoint(
                 : Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
-        allowPicking: false,
+        allowPicking: role === "after",
     });
 }
 
@@ -131,8 +137,51 @@ function addLine(
             material,
             clampToGround: !coordsHaveZ(coords),
         },
-        allowPicking: false,
+        allowPicking: role === "after",
     });
+}
+
+function closedPositions(pts: any[]): any[] {
+    if (pts.length < 2) return pts.slice();
+    const out = pts.slice();
+    out.push(pts[0]);
+    return out;
+}
+
+function addOutlineRings(
+    Cesium: any,
+    ds: any,
+    id: string,
+    rings: unknown[],
+    op: DiffOp,
+    role: Role,
+    pickable: boolean,
+) {
+    const clamp = !coordsHaveZ(rings);
+    const color = lineColor(Cesium, op, role);
+    const material = dashed(op, role)
+        ? new Cesium.PolylineDashMaterialProperty({
+              color,
+              dashLength: 16,
+          })
+        : color;
+    const width = role === "before" ? 2 : 3;
+    let ringIdx = 0;
+    for (const raw of rings) {
+        const pts = ringToCartesians(Cesium, raw);
+        if (pts.length < (ringIdx === 0 ? 3 : 2)) continue;
+        ds.entities.add({
+            id: ringIdx === 0 ? id : `${id}:hole:${ringIdx}`,
+            polyline: {
+                positions: closedPositions(pts),
+                width,
+                material,
+                clampToGround: clamp,
+            },
+            allowPicking: pickable && ringIdx === 0,
+        });
+        ringIdx += 1;
+    }
 }
 
 function addPolygon(
@@ -146,46 +195,34 @@ function addPolygon(
     const rings = asRings(coords);
     const outer = ringToCartesians(Cesium, rings[0]);
     if (outer.length < 3) return;
+    if (role === "before") {
+        addOutlineRings(Cesium, ds, id, rings, op, role, false);
+        return;
+    }
     const holes = rings
         .slice(1)
         .map((r) => ringToCartesians(Cesium, r))
-        .filter((r) => r.length >= 3);
-    const hierarchy =
-        holes.length > 0
-            ? new Cesium.PolygonHierarchy(outer, holes)
-            : outer;
-    const color = fillColor(Cesium, op, role);
+        .filter((r) => r.length >= 3)
+        .map((r) => new Cesium.PolygonHierarchy(r.slice()));
+    const hierarchy = new Cesium.PolygonHierarchy(outer.slice(), holes);
+    const fill = fillColor(Cesium, op, role);
     const outline = lineColor(Cesium, op, role);
+    const withZ = coordsHaveZ(coords);
     ds.entities.add({
         id,
         polygon: {
             hierarchy,
-            material: color,
+            material: fill,
             outline: true,
             outlineColor: outline,
             outlineWidth: 2,
-            perPositionHeight: coordsHaveZ(coords),
-            heightReference: coordsHaveZ(coords)
+            perPositionHeight: withZ,
+            heightReference: withZ
                 ? Cesium.HeightReference.NONE
                 : Cesium.HeightReference.CLAMP_TO_GROUND,
         },
-        allowPicking: false,
+        allowPicking: true,
     });
-    if (dashed(op, role) && outer.length >= 2) {
-        ds.entities.add({
-            id: `${id}:dash`,
-            polyline: {
-                positions: outer,
-                width: 2,
-                material: new Cesium.PolylineDashMaterialProperty({
-                    color: outline,
-                    dashLength: 14,
-                }),
-                clampToGround: !coordsHaveZ(coords),
-            },
-            allowPicking: false,
-        });
-    }
 }
 
 function paintGeometry(
@@ -248,28 +285,32 @@ function addFeature(Cesium: any, ds: any, f: DiffFeature) {
     }
 }
 
-/** Paint `DiffFeature[]` on Cesium. Empty list removes the overlay. */
+/** One in-flight `dataSources.add` so vertex-session filter flips cannot double-push. */
+let overlayAttach: Promise<any> | null = null;
+
+async function getOrAttachOverlayDs(Cesium: any, viewer: any): Promise<any> {
+    const existing = findDiffDataSource(viewer);
+    if (existing) return existing;
+    if (!overlayAttach) {
+        const created = new Cesium.CustomDataSource(GEO_DIFF_DS_NAME);
+        overlayAttach = Promise.resolve(viewer.dataSources.add(created)).then(
+            () => created,
+        );
+        overlayAttach.finally(() => {
+            overlayAttach = null;
+        });
+    }
+    return overlayAttach;
+}
+
+/** Paint `DiffFeature[]` on Cesium. Empty list clears entities; the data source stays attached. */
 export async function syncDiffOverlay(
     Cesium: any,
     viewer: any,
     features: DiffFeature[],
 ): Promise<any | null> {
     if (!Cesium || !viewer) return null;
-    let ds = findDiffDataSource(viewer);
-    if (!features.length) {
-        if (ds) {
-            try {
-                viewer.dataSources.remove(ds, true);
-            } catch {
-                /* ignore */
-            }
-        }
-        return null;
-    }
-    if (!ds) {
-        ds = new Cesium.CustomDataSource(GEO_DIFF_DS_NAME);
-        await viewer.dataSources.add(ds);
-    }
+    const ds = await getOrAttachOverlayDs(Cesium, viewer);
     ds.entities.removeAll();
     for (const f of features) addFeature(Cesium, ds, f);
     return ds;

@@ -58,6 +58,9 @@
         joinedKeys?: string[];
         /** Writers see layer-select + Tab hint for Cesium edit mode. */
         canWrite?: boolean;
+        /** Seed the entity search box (from `/layers?q=`). */
+        initialQuery?: string;
+        class?: string;
     };
 
     let {
@@ -85,9 +88,14 @@
         filterToView = $bindable(false),
         joinedKeys = [],
         canWrite = false,
+        initialQuery = "",
+        class: klass = "",
     }: Props = $props();
 
     let query = $state("");
+    $effect(() => {
+        if (initialQuery) query = initialQuery;
+    });
     let modelsOpen = $state(false);
     let coveragesOpen = $state(true);
     let layerOpen = $state<Record<string, boolean>>({});
@@ -415,7 +423,7 @@
 </script>
 
 <div
-    class="flex max-h-[min(70vh,28rem)] w-60 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
+    class="flex min-h-0 w-60 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm {klass}"
 >
     <div class="border-b border-border px-2 py-1.5">
         <div class="mb-1.5 flex items-center justify-between gap-2 px-0.5">
@@ -730,9 +738,7 @@
                     <button
                         type="button"
                         class="flex min-w-0 flex-1 items-center gap-1 px-0.5 py-0.5 text-left hover:text-foreground"
-                        title={canWrite
-                            ? "Select layer, then Tab to edit"
-                            : layerDisplayName(layer.name)}
+                        title={layerDisplayName(layer.name)}
                         onclick={() => selectEditLayer(layer.name)}
                     >
                         <span
@@ -744,12 +750,6 @@
                         <span class="truncate"
                             >{layerDisplayName(layer.name)}</span
                         >
-                        {#if canWrite && editBuffer.targetLayer === layer.name}
-                            <span
-                                class="ml-1 rounded border border-border px-1 py-px text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
-                                >Tab</span
-                            >
-                        {/if}
                         <span class="ml-auto tabular-nums opacity-60"
                             >{ents.length}</span
                         >

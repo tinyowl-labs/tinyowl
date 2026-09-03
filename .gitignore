@@ -24,3 +24,6 @@ vite.config.ts.timestamp-*
 
 # Cesium (copied from node_modules on vite build/dev)
 /static/cesium
+
+# Pleiades GIS dump (rebuild with `pnpm pleiades:index`)
+.cache/

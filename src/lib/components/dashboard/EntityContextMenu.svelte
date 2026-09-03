@@ -1,5 +1,6 @@
 <script lang="ts">
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
+    import MessageCircleIcon from "@lucide/svelte/icons/message-circle";
     import CopyIcon from "@lucide/svelte/icons/copy";
     import EyeOffIcon from "@lucide/svelte/icons/eye-off";
     import EyeIcon from "@lucide/svelte/icons/eye";
@@ -30,6 +31,7 @@
         onExitIsolate?: () => void;
         onClear?: () => void;
         onClose?: () => void;
+        onComment?: () => void;
     };
 
     let {
@@ -53,6 +55,7 @@
         onExitIsolate,
         onClear,
         onClose,
+        onComment,
     }: Props = $props();
 
     let rootEl = $state<HTMLDivElement>();
@@ -141,6 +144,20 @@
                 <CrosshairIcon class="size-3.5 shrink-0 text-muted-foreground" />
                 Fly to
             </button>
+            {#if !isTileset && onComment}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => {
+                        onComment();
+                        onClose?.();
+                    }}
+                >
+                    <MessageCircleIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                    Comment
+                </button>
+            {/if}
             {#if !isTileset}
                 <button
                     type="button"

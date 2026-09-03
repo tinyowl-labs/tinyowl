@@ -118,6 +118,37 @@ async function copyCesiumAssets() {
   }
 }
 
+function copyPleiadesIndexPlugin() {
+  const src = path.resolve(
+    projectRoot,
+    "src/lib/search/data/pleiades-index.json.gz",
+  );
+  const copyTo = async (dest: string) => {
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.copyFile(src, dest);
+  };
+  return {
+    name: "copy-pleiades-index",
+    async closeBundle() {
+      try {
+        await fs.access(src);
+      } catch {
+        return;
+      }
+      await Promise.all([
+        copyTo(path.resolve(projectRoot, "build/pleiades-index.json.gz")),
+        copyTo(path.resolve(projectRoot, "build/server/pleiades-index.json.gz")),
+        copyTo(
+          path.resolve(
+            projectRoot,
+            ".svelte-kit/output/server/pleiades-index.json.gz",
+          ),
+        ),
+      ]);
+    },
+  };
+}
+
 function ensureCesiumAssetsPlugin() {
   return {
     name: "ensure-cesium-assets",
@@ -145,6 +176,7 @@ function ensureCesiumAssetsPlugin() {
 export default defineConfig({
   plugins: [
     ensureCesiumAssetsPlugin(),
+    copyPleiadesIndexPlugin(),
     tailwindcss(),
     sveltekit({
       adapter: kitAdapter,

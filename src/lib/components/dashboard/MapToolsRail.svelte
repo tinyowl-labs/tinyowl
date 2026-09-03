@@ -2,6 +2,7 @@
     import PlusIcon from "@lucide/svelte/icons/plus";
     import MinusIcon from "@lucide/svelte/icons/minus";
     import RulerIcon from "@lucide/svelte/icons/ruler";
+    import MessageCircleIcon from "@lucide/svelte/icons/message-circle";
     import MaximizeIcon from "@lucide/svelte/icons/maximize-2";
     import MinimizeIcon from "@lucide/svelte/icons/minimize-2";
     import CheckIcon from "@lucide/svelte/icons/check";
@@ -52,6 +53,9 @@
         onClear?: () => void;
         onFinish?: () => void;
         onRemove?: (id: string) => void;
+        /** Members-only comments toggle. */
+        showComments?: boolean;
+        commentsEnabled?: boolean;
     };
 
     let {
@@ -81,6 +85,8 @@
         onClear,
         onFinish,
         onRemove,
+        showComments = false,
+        commentsEnabled = $bindable(false),
     }: Props = $props();
 
     let cameraOpen = $state(false);
@@ -138,12 +144,19 @@
         cameraOpen = false;
         selectionOpen = false;
         enabled = false;
+        commentsEnabled = false;
     }
 
     function toggleMeasure() {
         const next = !enabled;
         closePanels();
         enabled = next;
+    }
+
+    function toggleComments() {
+        const next = !commentsEnabled;
+        closePanels();
+        commentsEnabled = next;
     }
 
     function toggleCamera() {
@@ -239,6 +252,21 @@
         >
             <RulerIcon class="size-3.5" />
         </button>
+
+        {#if showComments}
+            <button
+                type="button"
+                class="{railBtn} border-b border-border {commentsEnabled
+                    ? 'bg-primary/15 text-foreground'
+                    : ''}"
+                title={commentsEnabled ? "Hide comments" : "Comments"}
+                aria-label="Comments"
+                aria-pressed={commentsEnabled}
+                onclick={toggleComments}
+            >
+                <MessageCircleIcon class="size-3.5" />
+            </button>
+        {/if}
 
         <!-- 4–5. Zoom -->
         <button

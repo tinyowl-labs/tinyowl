@@ -18,3 +18,15 @@ export function entityLayersHref(
   const qs = params.toString();
   return `/${projectSlug}/layers${qs ? `?${qs}` : ""}`;
 }
+
+/** Open a project's map, optionally with a cell/value query (`?q=`). */
+export function projectLayersSearchHref(
+  projectSlug: string,
+  q: string,
+): string {
+  const params = new URLSearchParams();
+  params.set("view", "map");
+  const query = q.trim();
+  if (query) params.set("q", query);
+  return `/${projectSlug}/layers?${params}`;
+}

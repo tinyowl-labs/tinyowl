@@ -8,9 +8,11 @@
     import GlobeIcon from "@lucide/svelte/icons/globe";
     import MapIcon from "@lucide/svelte/icons/map";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
+    import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
+    import { projectLayersSearchHref } from "$lib/project/entityLink";
     import {
         searchHref,
         formatBBox,
@@ -19,10 +21,13 @@
         DEFAULT_SEARCH_RADIUS,
         type SearchBBox,
     } from "$lib/search/params";
+    import { searchMergedPlaces } from "$lib/search/photon";
+    import type { PlaceHit } from "$lib/search/placeHit";
     import {
-        searchPleiadesPlaces,
-        type PleiadesPlace,
-    } from "$lib/search/pleiades";
+        searchOmnibox,
+        searchProjectsByText,
+        type ProjectHit,
+    } from "$lib/search/projects";
     import {
         clearImageQuery,
         loadImageQuery,
@@ -31,11 +36,11 @@
         saveImageQuery,
     } from "$lib/search/imageQuery";
 
-    type MentionMode = "kinds" | "tag" | "vocab" | "place";
+    type MentionMode = "kinds" | "tag" | "vocab" | "place" | "project";
 
     type KindItem = {
         kind: "kind";
-        id: "tag" | "vocab" | "place";
+        id: "tag" | "vocab" | "place" | "project";
         label: string;
         hint: string;
     };
@@ -45,13 +50,18 @@
         label: string;
         mode: "tag" | "vocab";
     };
-    type PlaceItem = { kind: "place"; place: PleiadesPlace };
-    type MenuItem = KindItem | ValueItem | PlaceItem;
+    type PlaceItem = { kind: "place"; place: PlaceHit };
+    type ProjectItem = { kind: "project"; project: ProjectHit };
+    type MenuItem = KindItem | ValueItem | PlaceItem | ProjectItem;
 
     type Props = {
         value?: string;
         tags?: string[];
         vocabularies?: string[];
+        /** Project slug chips (`?project=`). */
+        projects?: string[];
+        /** Titles for project chips, keyed by slug (from search results). */
+        projectLabels?: Record<string, string>;
         lat?: number | null;
         lng?: number | null;
         radius?: number | null;
@@ -68,10 +78,12 @@
         autofocus?: boolean;
         placeholder?: string;
         examples?: string[];
-        /** Show ⌘K / Ctrl K cue and focus the input on that shortcut. */
+        /** Show ⌘K / Ctrl K cue. The overlay owns the actual shortcut. */
         shortcutHint?: boolean;
         /** Gazetteer title restored from `?place=` */
         placeLabel?: string | null;
+        /** Combobox listbox id (overlay vs page to avoid duplicate ids). */
+        listboxId?: string;
         class?: string;
     };
 
@@ -79,6 +91,8 @@
         value = $bindable(""),
         tags = [],
         vocabularies = [],
+        projects = [],
+        projectLabels = {},
         lat = $bindable(null),
         lng = $bindable(null),
         radius = $bindable(DEFAULT_SEARCH_RADIUS),
@@ -94,6 +108,7 @@
         examples = [],
         shortcutHint = false,
         placeLabel = null,
+        listboxId = "search-mention-list",
         class: klass = "",
     }: Props = $props();
 
@@ -104,7 +119,13 @@
             kind: "kind",
             id: "place",
             label: "Place",
-            hint: "Ancient places from Pleiades",
+            hint: "Ancient and modern places",
+        },
+        {
+            kind: "kind",
+            id: "project",
+            label: "Project",
+            hint: "Search in a project",
         },
         {
             kind: "kind",
@@ -136,19 +157,28 @@
     let highlight = $state(-1);
     let tagSuggestions = $state<string[]>([]);
     let termSuggestions = $state<string[]>([]);
-    let placeHits = $state<PleiadesPlace[]>([]);
+    let placeHits = $state<PlaceHit[]>([]);
+    let projectHits = $state<ProjectHit[]>([]);
     let loading = $state(false);
     let loadingPlaces = $state(false);
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     let placesTimer: ReturnType<typeof setTimeout> | undefined;
     let placesReq = 0;
-    let placeChip = $state<{ title: string; lat: number; lng: number } | null>(
-        null,
-    );
+    let placeChip = $state<{
+        title: string;
+        lat?: number;
+        lng?: number;
+    } | null>(null);
     let appliedPlaceLabel = $state<string | null>(null);
+    let projectChipTitles = $state<Record<string, string>>({});
 
     const activeTags = $derived(tags);
     const activeVocabs = $derived(vocabularies);
+    const activeProjects = $derived(projects);
+
+    function projectChipLabel(slug: string): string {
+        return projectChipTitles[slug] || projectLabels[slug] || slug;
+    }
     const activeMediaHash = $derived(mediaHash?.trim() || null);
     const imageSession = $derived(
         imageQuery ? loadImageQuery() : null,
@@ -164,7 +194,9 @@
     const placesMenuOpen = $derived(
         !mentionOpen &&
             value.trim().length >= 2 &&
-            (placeHits.length > 0 || loadingPlaces),
+            (placeHits.length > 0 ||
+                projectHits.length > 0 ||
+                loadingPlaces),
     );
     const dropdownOpen = $derived(mentionOpen || placesMenuOpen);
     const paused = $derived(
@@ -174,7 +206,8 @@
             hasImageChip ||
             hasSpatialChip ||
             activeTags.length > 0 ||
-            activeVocabs.length > 0,
+            activeVocabs.length > 0 ||
+            activeProjects.length > 0,
     );
     const activePlaceholder = $derived(
         cycling ? (examples[exampleIndex] ?? placeholder) : placeholder,
@@ -192,8 +225,23 @@
         return placeHits.map((p) => ({ kind: "place" as const, place: p }));
     }
 
+    function projectItems(via?: ProjectHit["via"]): ProjectItem[] {
+        return projectHits
+            .filter((p) => via == null || p.via === via)
+            .map((p) => ({ kind: "project" as const, project: p }));
+    }
+
+    /** Name matches, then places, then geo-suggested projects. */
+    function mixedOmniboxItems(): MenuItem[] {
+        return [
+            ...projectItems("name"),
+            ...placeItems(),
+            ...projectItems("geo"),
+        ];
+    }
+
     const menuItems = $derived.by((): MenuItem[] => {
-        if (!mentionOpen) return placeItems();
+        if (!mentionOpen) return mixedOmniboxItems();
         if (mentionMode === "kinds") {
             const q = mentionQuery.trim().toLowerCase();
             const kinds = q
@@ -226,7 +274,23 @@
                           }),
                       )
                     : [];
-            return [...kinds, ...tagHits, ...termHits, ...placeItems()];
+            const projects = projectItems();
+            // Bare `@slug` (no kind prefix) — project hits first so Enter chips the project
+            if (q.length >= 2 && kinds.length === 0) {
+                return [
+                    ...projects,
+                    ...tagHits,
+                    ...termHits,
+                    ...placeItems(),
+                ];
+            }
+            return [
+                ...kinds,
+                ...projects,
+                ...tagHits,
+                ...termHits,
+                ...placeItems(),
+            ];
         }
         if (mentionMode === "tag") {
             return tagSuggestions.map((t) => ({
@@ -237,6 +301,7 @@
             }));
         }
         if (mentionMode === "place") return placeItems();
+        if (mentionMode === "project") return projectItems();
         return termSuggestions.map((t) => ({
             kind: "value" as const,
             id: `vocab:${t}`,
@@ -244,6 +309,54 @@
             mode: "vocab" as const,
         }));
     });
+
+    function ghostFill(item: MenuItem): string | null {
+        if (mentionOpen) {
+            const prefix = value.replace(/@[^\s]*$/, "");
+            if (item.kind === "kind") return `${prefix}@${item.id}:`;
+            if (item.kind === "value") {
+                return `${prefix}@${item.mode}:${item.label}`;
+            }
+            if (item.kind === "place") {
+                return `${prefix}@place:${item.place.label}`;
+            }
+            if (item.kind === "project") {
+                if (mentionMode === "project") {
+                    return `${prefix}@project:${item.project.slug}`;
+                }
+                return `${prefix}@${item.project.slug}`;
+            }
+            return null;
+        }
+        if (item.kind === "place") return item.place.label;
+        if (item.kind === "project") return item.project.title;
+        return null;
+    }
+
+    const ghostSuffix = $derived.by((): string | null => {
+        if (!focused || menuItems.length === 0) return null;
+        const item =
+            highlight >= 0 ? menuItems[highlight]! : menuItems[0]!;
+        const fill = ghostFill(item);
+        if (!fill) return null;
+        const typed = value;
+        if (!typed) return null;
+        if (!fill.toLowerCase().startsWith(typed.toLowerCase())) return null;
+        if (fill.length <= typed.length) return null;
+        return fill.slice(typed.length);
+    });
+
+    function acceptGhost(): boolean {
+        if (!ghostSuffix) return false;
+        const item =
+            highlight >= 0 ? menuItems[highlight]! : menuItems[0]!;
+        const fill = ghostFill(item);
+        if (!fill) return false;
+        value = fill;
+        syncMentionFromValue(fill);
+        if (!mentionOpen) schedulePlacesFetch(fill);
+        return true;
+    }
 
     let isMac = $state(false);
 
@@ -263,15 +376,18 @@
             if (e.key === "Enter" && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
                 if (e.isComposing) return;
                 const t = e.target as HTMLElement | null;
-                const tag = t?.tagName;
-                if (
-                    t &&
-                    t !== inputEl &&
-                    (tag === "TEXTAREA" ||
+                if (t && t !== inputEl) {
+                    const tag = t.tagName;
+                    if (
+                        tag === "INPUT" ||
+                        tag === "TEXTAREA" ||
                         tag === "SELECT" ||
-                        t.isContentEditable)
-                ) {
-                    return;
+                        tag === "BUTTON" ||
+                        t.isContentEditable ||
+                        t.closest?.('[role="dialog"]')
+                    ) {
+                        return;
+                    }
                 }
                 e.preventDefault();
                 e.stopPropagation();
@@ -280,25 +396,7 @@
                 return;
             }
 
-            const key = e.key.toLowerCase();
-            if (key !== "k") return;
-            if (!(e.metaKey || e.ctrlKey)) return;
-            // Don't steal from editable fields elsewhere.
-            const t = e.target as HTMLElement | null;
-            const tag = t?.tagName;
-            if (
-                t &&
-                t !== inputEl &&
-                (tag === "INPUT" ||
-                    tag === "TEXTAREA" ||
-                    tag === "SELECT" ||
-                    t.isContentEditable)
-            ) {
-                return;
-            }
-            e.preventDefault();
-            inputEl?.focus();
-            inputEl?.select();
+            // ⌘K / Ctrl+K is owned by SearchOverlay (root layout).
         };
         window.addEventListener("keydown", onGlobalKey, true);
 
@@ -336,7 +434,17 @@
     });
 
     $effect(() => {
-        if (bbox || lat == null || lng == null) {
+        if (bbox) {
+            if (
+                placeLabel &&
+                (!placeChip || placeChip.title !== placeLabel)
+            ) {
+                placeChip = { title: placeLabel };
+                appliedPlaceLabel = placeLabel;
+            }
+            return;
+        }
+        if (lat == null || lng == null) {
             if (placeChip) placeChip = null;
             return;
         }
@@ -378,6 +486,7 @@
         q?: string;
         tags?: string[];
         vocabularies?: string[];
+        projects?: string[];
         mediaHash?: string | null;
         imageQuery?: boolean | null;
         lat?: number | null;
@@ -389,21 +498,26 @@
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
         const nextLng = next.lng !== undefined ? next.lng : lng;
+        const nextProjects = next.projects ?? activeProjects;
+        const nextQ = next.q ?? value;
+        if (nextProjects.length === 1) {
+            void goto(projectLayersSearchHref(nextProjects[0]!, nextQ));
+            return;
+        }
         goto(
             searchHref({
-                q: next.q ?? value,
+                q: nextQ,
                 tags: next.tags ?? activeTags,
                 vocabularies: next.vocabularies ?? activeVocabs,
+                projects: nextProjects,
                 lat: nextLat,
                 lng: nextLng,
                 radius: next.radius !== undefined ? next.radius : radius,
                 bbox: nextBBox,
                 placeName:
-                    nextBBox
-                        ? null
-                        : next.placeName !== undefined
-                          ? next.placeName
-                          : placeChip?.title ?? null,
+                    next.placeName !== undefined
+                        ? next.placeName
+                        : placeChip?.title ?? null,
                 dateFrom,
                 dateTo,
                 semantic: semantic ? undefined : false,
@@ -532,6 +646,7 @@
         highlight = -1;
         tagSuggestions = [];
         termSuggestions = [];
+        projectHits = [];
     }
 
     function trySelectFromMenu(): boolean {
@@ -542,7 +657,7 @@
         if (
             !mentionOpen &&
             highlight >= 0 &&
-            menuItems[highlight]?.kind === "place"
+            menuItems[highlight]
         ) {
             selectItem(menuItems[highlight]!);
             return true;
@@ -550,13 +665,75 @@
         return false;
     }
 
+    function isKindToken(typed: string): boolean {
+        const q = typed.trim().toLowerCase();
+        if (!q) return false;
+        return KINDS.some(
+            (k) => k.id === q || k.label.toLowerCase() === q,
+        );
+    }
+
+    function resolveMentionProject(typed: string): ProjectHit | null {
+        const lower = typed.trim().toLowerCase();
+        if (lower.length < 2) return null;
+        const exact =
+            projectHits.find((p) => p.slug.toLowerCase() === lower) ||
+            projectHits.find((p) =>
+                p.slug.toLowerCase().endsWith(`/${lower}`),
+            ) ||
+            projectHits.find((p) => p.title.toLowerCase() === lower);
+        if (exact) return exact;
+        const prefixed = projectHits.filter((p) => {
+            const slug = p.slug.toLowerCase();
+            const tail = slug.includes("/")
+                ? slug.slice(slug.lastIndexOf("/") + 1)
+                : slug;
+            return (
+                slug.startsWith(lower) ||
+                tail.startsWith(lower) ||
+                p.title.toLowerCase().startsWith(lower)
+            );
+        });
+        if (prefixed.length === 1) return prefixed[0]!;
+        return null;
+    }
+
     function commitSearch() {
+        let nextProjects = [...activeProjects];
+        if (mentionMode === "project" || mentionMode === "kinds") {
+            const typed = mentionQuery.trim();
+            if (
+                typed.length >= 2 &&
+                (mentionMode === "project" || !isKindToken(typed))
+            ) {
+                const hit = resolveMentionProject(typed);
+                const slug =
+                    hit?.slug ??
+                    (/^[a-z0-9][a-z0-9/_-]*$/i.test(typed) ? typed : "");
+                if (slug) {
+                    if (
+                        !nextProjects.some(
+                            (s) => s.toLowerCase() === slug.toLowerCase(),
+                        )
+                    ) {
+                        nextProjects.push(slug);
+                    }
+                    if (hit) {
+                        projectChipTitles = {
+                            ...projectChipTitles,
+                            [hit.slug]: hit.title,
+                        };
+                    }
+                }
+            }
+        }
         const cleaned = stripMention(value);
         value = cleaned;
         closeMention();
         placesReq += 1;
         placeHits = [];
-        navigate({ q: cleaned });
+        projectHits = [];
+        navigate({ q: cleaned, projects: nextProjects });
     }
 
     function handleSubmit(e: SubmitEvent) {
@@ -575,6 +752,14 @@
         navigate({
             vocabularies: activeVocabs.filter(
                 (x) => x.toLowerCase() !== v.toLowerCase(),
+            ),
+        });
+    }
+
+    function removeProject(slug: string) {
+        navigate({
+            projects: activeProjects.filter(
+                (s) => s.toLowerCase() !== slug.toLowerCase(),
             ),
         });
     }
@@ -601,18 +786,70 @@
         navigate({ q: cleaned, vocabularies: next });
     }
 
-    function applyPlace(place: PleiadesPlace) {
+    function applyProjectFilter(project: ProjectHit) {
+        const next = [...activeProjects];
+        if (!next.some((s) => s.toLowerCase() === project.slug.toLowerCase())) {
+            next.push(project.slug);
+        }
+        projectChipTitles = {
+            ...projectChipTitles,
+            [project.slug]: project.title,
+        };
+        const cleaned = stripMention(value);
+        value = cleaned;
+        closeMention();
+        navigate({ q: cleaned, projects: next });
+    }
+
+    function applyPlace(place: PlaceHit) {
         closeMention();
         placesReq += 1;
         placeHits = [];
+        projectHits = [];
         value = "";
-        bbox = null;
-        lat = place.lat;
-        lng = place.lng;
-        radius = place.radius;
-        placeChip = { title: place.title, lat: place.lat, lng: place.lng };
-        appliedPlaceLabel = place.title;
+        const geom = place.geom;
+        if (geom.type === "bbox") {
+            bbox = {
+                west: geom.west,
+                south: geom.south,
+                east: geom.east,
+                north: geom.north,
+            };
+            lat = null;
+            lng = null;
+            placeChip = { title: place.label };
+        } else {
+            bbox = null;
+            lat = geom.lat;
+            lng = geom.lng;
+            radius = geom.radius;
+            placeChip = {
+                title: place.label,
+                lat: geom.lat,
+                lng: geom.lng,
+            };
+        }
+        appliedPlaceLabel = place.label;
+        if (atSearch) {
+            navigate({
+                q: "",
+                lat: geom.type === "bbox" ? null : geom.lat,
+                lng: geom.type === "bbox" ? null : geom.lng,
+                radius: geom.type === "bbox" ? null : geom.radius,
+                bbox: geom.type === "bbox" ? bbox : null,
+                placeName: place.label,
+            });
+        }
         queueMicrotask(() => inputEl?.focus());
+    }
+
+    function applyProject(project: ProjectHit) {
+        closeMention();
+        placesReq += 1;
+        placeHits = [];
+        projectHits = [];
+        value = "";
+        void goto(`/${project.slug}`);
     }
 
     function removeSpatial() {
@@ -633,7 +870,7 @@
         }
     }
 
-    function enterKind(id: "tag" | "vocab" | "place") {
+    function enterKind(id: "tag" | "vocab" | "place" | "project") {
         mentionMode = id;
         mentionQuery = "";
         highlight = 0;
@@ -642,6 +879,7 @@
         tagSuggestions = [];
         termSuggestions = [];
         if (id !== "place") placeHits = [];
+        projectHits = [];
         queueMicrotask(() => inputEl?.focus());
     }
 
@@ -652,6 +890,11 @@
         }
         if (item.kind === "place") {
             applyPlace(item.place);
+            return;
+        }
+        if (item.kind === "project") {
+            if (mentionOpen) applyProjectFilter(item.project);
+            else applyProject(item.project);
             return;
         }
         if (item.mode === "tag") applyTag(item.label);
@@ -696,14 +939,21 @@
             scheduleFetch();
             return;
         }
+        if (lower.startsWith("project:")) {
+            mentionMode = "project";
+            mentionQuery = token.slice(8);
+            scheduleFetch();
+            return;
+        }
 
-        // Bare @query — kinds menu, with tag/term/place suggestions once 2+ chars
+        // Bare @query — kinds menu, with tag/term/place/project suggestions once 2+ chars
         mentionMode = "kinds";
         mentionQuery = token;
         if (token.length >= 2) scheduleFetch();
         else {
             tagSuggestions = [];
             termSuggestions = [];
+            projectHits = [];
         }
     }
 
@@ -714,8 +964,17 @@
         if (!mentionOpen) schedulePlacesFetch(value);
         else {
             clearTimeout(placesTimer);
-            if (mentionMode !== "place" && mentionMode !== "kinds") {
+            if (
+                mentionMode !== "place" &&
+                mentionMode !== "kinds"
+            ) {
                 placeHits = [];
+            }
+            if (
+                mentionMode !== "project" &&
+                mentionMode !== "kinds"
+            ) {
+                projectHits = [];
             }
         }
     }
@@ -733,6 +992,10 @@
             removeTag(activeTags[activeTags.length - 1]!);
             return;
         }
+        if (activeProjects.length > 0) {
+            removeProject(activeProjects[activeProjects.length - 1]!);
+            return;
+        }
         if (hasImageChip) removeMedia();
     }
 
@@ -744,6 +1007,7 @@
             (hasSpatialChip ||
                 activeTags.length > 0 ||
                 activeVocabs.length > 0 ||
+                activeProjects.length > 0 ||
                 hasImageChip)
         ) {
             e.preventDefault();
@@ -762,11 +1026,13 @@
 
         if (e.key === "Escape") {
             e.preventDefault();
+            e.stopPropagation();
             if (mentionOpen) {
                 value = stripMention(value);
                 closeMention();
             } else {
                 placeHits = [];
+                projectHits = [];
                 highlight = -1;
                 placesReq += 1;
             }
@@ -798,7 +1064,12 @@
             return;
         }
 
-        if (e.key === "Enter" || e.key === "Tab") {
+        if (e.key === "Tab") {
+            if (acceptGhost()) e.preventDefault();
+            return;
+        }
+
+        if (e.key === "Enter") {
             if (mentionOpen && menuItems.length > 0) {
                 e.preventDefault();
                 selectItem(menuItems[highlight]!);
@@ -822,6 +1093,7 @@
         if (prefix.length < 2) {
             placesReq += 1;
             placeHits = [];
+            projectHits = [];
             loadingPlaces = false;
             return;
         }
@@ -832,12 +1104,16 @@
         const req = ++placesReq;
         loadingPlaces = true;
         try {
-            const hits = await searchPleiadesPlaces(prefix, 8);
+            const { places, projects } = await searchOmnibox(prefix, {
+                accessToken,
+            });
             if (req !== placesReq) return;
-            placeHits = hits;
+            placeHits = places;
+            projectHits = projects;
         } catch {
             if (req !== placesReq) return;
             placeHits = [];
+            projectHits = [];
         } finally {
             if (req === placesReq) loadingPlaces = false;
         }
@@ -854,11 +1130,14 @@
         const wantTerms = mentionMode === "vocab" || mentionMode === "kinds";
         const wantPlaces =
             mentionMode === "place" || mentionMode === "kinds";
+        const wantProjects =
+            mentionMode === "project" || mentionMode === "kinds";
 
         if (!prefix) {
             tagSuggestions = [];
             termSuggestions = [];
             if (mentionMode === "place") placeHits = [];
+            if (mentionMode === "project") projectHits = [];
             return;
         }
 
@@ -896,18 +1175,31 @@
             if (wantPlaces && prefix.length >= 2) {
                 jobs.push(
                     (async () => {
-                        const hits = await searchPleiadesPlaces(prefix, 8);
+                        const hits = await searchMergedPlaces(prefix, 10);
                         placeHits = hits;
                     })(),
                 );
             } else if (mentionMode === "place") {
                 placeHits = [];
             }
+            if (wantProjects && prefix.length >= 2) {
+                jobs.push(
+                    (async () => {
+                        const hits = await searchProjectsByText(prefix, {
+                            accessToken,
+                        });
+                        projectHits = hits;
+                    })(),
+                );
+            } else if (mentionMode === "project") {
+                projectHits = [];
+            }
             await Promise.all(jobs);
         } catch {
             if (wantTags) tagSuggestions = [];
             if (wantTerms) termSuggestions = [];
             if (wantPlaces) placeHits = [];
+            if (wantProjects) projectHits = [];
         } finally {
             loading = false;
         }
@@ -921,6 +1213,7 @@
                 closeMention();
                 placesReq += 1;
                 placeHits = [];
+                projectHits = [];
             }
         }, 150);
     }
@@ -975,12 +1268,17 @@
                 onclick={removeSpatial}
                 title="Remove map area filter"
             >
-                <MapIcon class="size-3 opacity-70" />
-                <span class="text-primary/60">area</span>
-                <span class="truncate tabular-nums"
-                    >{formatLatLng(bbox.south, bbox.west)}
-                    → {formatLatLng(bbox.north, bbox.east)}</span
-                >
+                {#if placeChip}
+                    <GlobeIcon class="size-3 opacity-70" />
+                    <span class="truncate">{placeChip.title}</span>
+                {:else}
+                    <MapIcon class="size-3 opacity-70" />
+                    <span class="text-primary/60">area</span>
+                    <span class="truncate tabular-nums"
+                        >{formatLatLng(bbox.south, bbox.west)}
+                        → {formatLatLng(bbox.north, bbox.east)}</span
+                    >
+                {/if}
                 <XIcon class="size-3 opacity-70" />
             </button>
         {:else if lat != null && lng != null}
@@ -1025,6 +1323,18 @@
                 <XIcon class="size-3 opacity-70" />
             </button>
         {/each}
+        {#each activeProjects as slug (slug.toLowerCase())}
+            <button
+                type="button"
+                class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
+                onclick={() => removeProject(slug)}
+                title="Remove project filter"
+            >
+                <span class="text-primary/60">project:</span>
+                <span class="truncate">{projectChipLabel(slug)}</span>
+                <XIcon class="size-3 opacity-70" />
+            </button>
+        {/each}
         <div class="relative min-w-[8rem] flex-1">
         {#if cycling && !paused}
             <span
@@ -1033,6 +1343,16 @@
                     : 'opacity-0'}"
                 aria-hidden="true">{activePlaceholder}</span
             >
+        {:else if ghostSuffix}
+            <span
+                class="pointer-events-none absolute inset-y-0 left-0 flex items-center overflow-hidden text-sm"
+                aria-hidden="true"
+            >
+                <span class="invisible whitespace-pre">{value}</span><span
+                    class="whitespace-pre text-muted-foreground/50"
+                    >{ghostSuffix}</span
+                >
+            </span>
         {/if}
         <input
             bind:this={inputEl}
@@ -1042,6 +1362,7 @@
                 : hasSpatialChip ||
                     activeTags.length > 0 ||
                     activeVocabs.length > 0 ||
+                    activeProjects.length > 0 ||
                     hasImageChip
                   ? "Add words…"
                   : activePlaceholder}
@@ -1051,7 +1372,7 @@
             autocomplete="off"
             role="combobox"
             aria-expanded={dropdownOpen}
-            aria-controls="search-mention-list"
+            aria-controls={listboxId}
             aria-autocomplete="list"
             oninput={onInput}
             onkeydown={onKeydown}
@@ -1070,7 +1391,7 @@
             aria-hidden="true"
             onchange={onFilePicked}
         />
-        {#if shortcutHint && !focused && !hasSpatialChip && activeTags.length === 0}
+        {#if shortcutHint && !focused && !hasSpatialChip && activeTags.length === 0 && activeVocabs.length === 0 && activeProjects.length === 0}
             <span
                 class="pointer-events-none absolute right-11 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 text-[10px] text-muted-foreground/80"
                 aria-hidden="true"
@@ -1106,7 +1427,7 @@
 
         {#if dropdownOpen}
             <div
-                id="search-mention-list"
+                id={listboxId}
                 role="listbox"
                 class="absolute left-0 right-0 top-[calc(100%+6px)] z-[1100] overflow-hidden rounded-xl border border-border bg-background shadow-md"
             >
@@ -1121,8 +1442,10 @@
                         Vocab
                     {:else if mentionMode === "place" && mentionOpen}
                         Place
+                    {:else if mentionMode === "project" && mentionOpen}
+                        Project
                     {:else}
-                        Places
+                        Projects & places
                     {/if}
                 </div>
                 <div class="max-h-64 overflow-y-auto p-1">
@@ -1142,14 +1465,22 @@
                                     : "Keep typing a mapped term…"}
                             {:else if mentionMode === "place"}
                                 {mentionQuery
-                                    ? "No matching Pleiades places"
+                                    ? "No matching places"
                                     : "Keep typing a place…"}
+                            {:else if mentionMode === "project"}
+                                {mentionQuery
+                                    ? "No matching projects"
+                                    : "Keep typing a project…"}
                             {:else}
-                                Type to filter, or choose Place / Tag / Vocab
+                                Type to filter, or choose Place / Project / Tag / Vocab
                             {/if}
                         </p>
                     {:else}
-                        {#each menuItems as item, i (item.kind === "place" ? `place:${item.place.id}` : `${item.kind}:${item.id}`)}
+                        {#each menuItems as item, i (item.kind === "place"
+                            ? `place:${item.place.id}`
+                            : item.kind === "project"
+                              ? `project:${item.project.slug}`
+                              : `${item.kind}:${item.id}`)}
                             <button
                                 type="button"
                                 role="option"
@@ -1171,6 +1502,10 @@
                                         <BookMarkedIcon
                                             class="size-3.5 shrink-0 text-muted-foreground"
                                         />
+                                    {:else if item.id === "project"}
+                                        <FolderKanbanIcon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
                                     {:else}
                                         <GlobeIcon
                                             class="size-3.5 shrink-0 text-muted-foreground"
@@ -1186,22 +1521,35 @@
                                         >
                                     </span>
                                 {:else if item.kind === "place"}
-                                    <GlobeIcon
+                                    {#if item.place.geom.type === "bbox"}
+                                        <MapIcon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
+                                    {:else}
+                                        <GlobeIcon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
+                                    {/if}
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.place.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{item.place.detail}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "project"}
+                                    <FolderKanbanIcon
                                         class="size-3.5 shrink-0 text-muted-foreground"
                                     />
                                     <span class="min-w-0 flex-1">
                                         <span class="font-medium"
-                                            >{item.place.title}</span
+                                            >{item.project.title}</span
                                         >
                                         <span
                                             class="mt-0.5 block truncate text-[11px] text-muted-foreground"
-                                            >{item.place.types[0]?.replace(
-                                                /_/g,
-                                                " ",
-                                            ) || "place"}{item.place
-                                                .description
-                                                ? ` · ${item.place.description}`
-                                                : ""}</span
+                                            >{item.project.detail}</span
                                         >
                                     </span>
                                 {:else}
@@ -1221,15 +1569,22 @@
                     class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground"
                 >
                     {#if !mentionOpen}
-                        ↑↓ places · Enter searches ·
+                        Tab complete · ↑↓ places · Enter searches ·
                         <a
                             href="https://pleiades.stoa.org/"
                             class="underline-offset-2 hover:underline"
                             target="_blank"
                             rel="noreferrer">Pleiades</a
                         >
+                        ·
+                        <a
+                            href="https://www.openstreetmap.org/copyright"
+                            class="underline-offset-2 hover:underline"
+                            target="_blank"
+                            rel="noreferrer">© OSM</a
+                        >
                     {:else}
-                        ↑↓ navigate · Enter select · Esc cancel
+                        Tab complete · ↑↓ navigate · Enter select · Esc cancel
                         {#if mentionMode === "place" || mentionMode === "kinds"}
                             ·
                             <a
@@ -1237,6 +1592,13 @@
                                 class="underline-offset-2 hover:underline"
                                 target="_blank"
                                 rel="noreferrer">Pleiades</a
+                            >
+                            ·
+                            <a
+                                href="https://www.openstreetmap.org/copyright"
+                                class="underline-offset-2 hover:underline"
+                                target="_blank"
+                                rel="noreferrer">© OSM</a
                             >
                         {/if}
                     {/if}

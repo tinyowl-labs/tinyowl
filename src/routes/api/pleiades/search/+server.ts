@@ -1,52 +1,11 @@
 import type { RequestHandler } from "./$types";
 import { json } from "@sveltejs/kit";
-
-export type PleiadesPlace = {
-	id: string;
-	title: string;
-	description: string;
-	lat: number;
-	lng: number;
-	radius: number;
-	uri: string;
-	types: string[];
-};
+import type { PleiadesPlace } from "$lib/search/pleiades";
+import { radiusFromBbox, searchIndexedPleiades } from "$lib/search/pleiadesIndex.server";
 
 const IDAI = "https://gazetteer.dainst.org/search.json";
 const PLEIADES_PLACE = "https://pleiades.stoa.org/places";
 const UA = "echidna/0.1 (gazetteer typeahead)";
-
-function haversineMetres(
-	lat1: number,
-	lng1: number,
-	lat2: number,
-	lng2: number,
-): number {
-	const R = 6371000;
-	const toRad = (d: number) => (d * Math.PI) / 180;
-	const dLat = toRad(lat2 - lat1);
-	const dLng = toRad(lng2 - lng1);
-	const a =
-		Math.sin(dLat / 2) ** 2 +
-		Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-	return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
-}
-
-function radiusFromBbox(
-	bbox: number[] | null | undefined,
-	fallback = 10000,
-): number {
-	if (!bbox || bbox.length < 4) return fallback;
-	const [west, south, east, north] = bbox;
-	if (![west, south, east, north].every((n) => typeof n === "number")) {
-		return fallback;
-	}
-	const midLat = (south + north) / 2;
-	const width = haversineMetres(midLat, west, midLat, east);
-	const height = haversineMetres(south, west, north, west);
-	const m = Math.max(width, height) * 0.55;
-	return Math.min(50_000, Math.max(1_500, Math.round(m)));
-}
 
 type IdaiHit = {
 	prefName?: { title?: string };
@@ -101,42 +60,34 @@ function pleiadesIdFromHit(hit: IdaiHit): string | null {
 	return null;
 }
 
-export const GET: RequestHandler = async ({ url, fetch }) => {
-	const q = (url.searchParams.get("q") ?? "").trim();
-	const limit = Math.min(
-		16,
-		Math.max(1, Number(url.searchParams.get("limit") ?? 8) || 8),
-	);
-	if (q.length < 2) return json({ places: [] as PleiadesPlace[] });
-
+async function searchIdai(
+	fetchFn: typeof fetch,
+	q: string,
+	limit: number,
+): Promise<PleiadesPlace[]> {
 	if (/^\d{4,}$/.test(q)) {
-		const rec = await fetchPleiadesJson(fetch, q);
-		if (!rec) return json({ places: [] as PleiadesPlace[] });
-		return json({
-			places: [
-				{
-					id: q,
-					title: rec.title,
-					description: rec.description,
-					lat: rec.lat,
-					lng: rec.lng,
-					radius: rec.radius,
-					uri: `${PLEIADES_PLACE}/${q}`,
-					types: [],
-				} satisfies PleiadesPlace,
-			],
-		});
+		const rec = await fetchPleiadesJson(fetchFn, q);
+		if (!rec) return [];
+		return [
+			{
+				id: q,
+				title: rec.title,
+				description: rec.description,
+				lat: rec.lat,
+				lng: rec.lng,
+				radius: rec.radius,
+				uri: `${PLEIADES_PLACE}/${q}`,
+				types: [],
+			} satisfies PleiadesPlace,
+		];
 	}
 
-	// Pleiades site search is behind bot-protection; iDAI is a public index
-	// that carries Pleiades place ids. Canonical coords/names come from
-	// https://pleiades.stoa.org/places/{id}/json.
 	let hits: IdaiHit[] = [];
 	try {
 		const upstream = new URL(IDAI);
 		upstream.searchParams.set("q", q);
 		upstream.searchParams.set("limit", "16");
-		const res = await fetch(upstream, {
+		const res = await fetchFn(upstream, {
 			headers: { Accept: "application/json", "User-Agent": UA },
 			signal: AbortSignal.timeout(4000),
 		});
@@ -158,8 +109,6 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 		if (withId.length >= limit) break;
 	}
 
-	// Typeahead must stay snappy: iDAI already has names + coords. Pleiades
-	// JSON is behind a slow CDN and was the multi-second delay on each keystroke.
 	const places: PleiadesPlace[] = [];
 	for (const { hit, id } of withId) {
 		const coords = hit.prefLocation?.coordinates;
@@ -179,5 +128,24 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 	}
 
 	places.sort((a, b) => a.title.localeCompare(b.title));
-	return json({ places: places.slice(0, limit) });
+	return places.slice(0, limit);
+}
+
+export const GET: RequestHandler = async ({ url, fetch }) => {
+	const q = (url.searchParams.get("q") ?? "").trim();
+	const limit = Math.min(
+		16,
+		Math.max(1, Number(url.searchParams.get("limit") ?? 8) || 8),
+	);
+	if (q.length < 2) {
+		return json({ places: [] as PleiadesPlace[], backend: "none" });
+	}
+
+	const local = searchIndexedPleiades(q, limit);
+	if (local) {
+		return json({ places: local, backend: "local" });
+	}
+
+	const places = await searchIdai(fetch, q, limit);
+	return json({ places, backend: "idai" });
 };
