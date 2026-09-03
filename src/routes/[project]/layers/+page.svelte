@@ -88,6 +88,34 @@
         ),
     );
 
+    type ViewMode = "schema" | "table" | "map";
+    type MapDim = "2d" | "3d";
+
+    let viewMode = $state<ViewMode>(
+        untrack(() => {
+            if (
+                viewParam === "map" ||
+                viewParam === "3d" ||
+                viewParam === "table" ||
+                viewParam === "schema"
+            ) {
+                return viewParam === "3d" ? "map" : viewParam;
+            }
+            return "map";
+        }),
+    );
+
+    let mapEverShown = $state(
+        untrack(() => {
+            const v = viewParam;
+            return v === "" || v === "map" || v === "3d";
+        }),
+    );
+
+    $effect(() => {
+        if (viewMode === "map") mapEverShown = true;
+    });
+
     const dataTabValue = $derived(
         viewMode === "schema" ? SCHEMA_TAB : activeTab,
     );
@@ -118,9 +146,6 @@
             activeTab = tableNames[0];
         }
     });
-
-    type ViewMode = "schema" | "table" | "map";
-    type MapDim = "2d" | "3d";
 
     /** Compact layers URL — interactive selection stays in client state. */
     function layersSearch(opts: {
@@ -203,31 +228,6 @@
     }
 
     let schemaToolsOpen = $state(false);
-
-    let viewMode = $state<ViewMode>(
-        untrack(() => {
-            if (
-                viewParam === "map" ||
-                viewParam === "3d" ||
-                viewParam === "table" ||
-                viewParam === "schema"
-            ) {
-                return viewParam === "3d" ? "map" : viewParam;
-            }
-            return "map";
-        }),
-    );
-
-    let mapEverShown = $state(
-        untrack(() => {
-            const v = viewParam;
-            return v === "" || v === "map" || v === "3d";
-        }),
-    );
-
-    $effect(() => {
-        if (viewMode === "map") mapEverShown = true;
-    });
 
     type LazyCmp = any;
     let LayerSceneCmp = $state<LazyCmp>(null);

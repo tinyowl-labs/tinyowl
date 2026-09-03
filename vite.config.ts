@@ -23,9 +23,8 @@ const cesiumBuildRoot = path.resolve(
 const cesiumTargetRoot = path.resolve(projectRoot, "static/cesium");
 const cesiumFolders = ["Assets", "ThirdParty", "Workers", "Widgets"];
 const cesiumFiles = ["Cesium.js"];
-/** OSM basemap; no Viewer chrome; skyBox off; no ICRF astronomy. */
+/** OSM basemap; no Viewer chrome; skyBox off. IAU2006_XYS stays — globe ICRF fetch. */
 const cesiumSkip = [
-  `${path.sep}IAU2006_XYS`,
   `${path.sep}NaturalEarthII`,
   `${path.sep}SkyBox`,
   `${path.sep}LensFlare`,
@@ -99,7 +98,6 @@ async function copyCesiumAssets() {
     ]);
     await Promise.all(
       [
-        "Assets/IAU2006_XYS",
         "Assets/Textures/NaturalEarthII",
         "Assets/Textures/SkyBox",
         "Assets/Textures/LensFlare",
@@ -164,11 +162,15 @@ export default defineConfig({
   },
   // Cesium is loaded as a browser global from /static/cesium — keep it out of
   // Vite's dep optimizer (prebundled cesium can break WebGL / texture atlas).
+  // Combined `cesium` IIFE stays out of the optimizer (prebundle broke WebGL/atlas).
+  // `@cesium/engine` MUST be optimized: its CJS deps (mersenne-twister, …) have no
+  // default ESM export, so native exclude-mode imports fail in Vite dev.
   ssr: {
-    external: ["cesium"],
+    external: ["cesium", "@cesium/engine"],
   },
   optimizeDeps: {
     exclude: ["cesium"],
+    include: ["@cesium/engine"],
   },
   server: {
     host: true,

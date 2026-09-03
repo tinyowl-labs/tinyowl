@@ -1,8 +1,13 @@
-/** Shared Cesium.js global loader for secondary 2D maps. */
+/** Shared Cesium loader. Default is the IIFE `/cesium/Cesium.js`; ESM engine is opt-in. */
 
 import { OSM_MAX_ZOOM, OSM_TILE_SUBDOMAINS, OSM_TILE_URL } from "./osmTiles";
 
 let loadPromise: Promise<any> | null = null;
+let loaderKind: "engine" | "iife" | null = null;
+
+export function cesiumLoaderKind(): "engine" | "iife" | null {
+    return loaderKind;
+}
 
 export function loadCesiumGlobal(): Promise<any> {
     if (typeof window === "undefined") {
@@ -13,6 +18,23 @@ export function loadCesiumGlobal(): Promise<any> {
 
     loadPromise = (async () => {
         try {
+            const { preferCesiumEngine, loadCesiumEngine } = await import(
+                "./cesiumEngine"
+            );
+            if (preferCesiumEngine()) {
+                try {
+                    const ns = await loadCesiumEngine();
+                    (window as any).Cesium = ns;
+                    (window as any).__tinyowlCesiumLoader = "engine";
+                    loaderKind = "engine";
+                    return ns;
+                } catch (e) {
+                    console.warn(
+                        "Cesium engine ESM failed; falling back to Cesium.js",
+                        e,
+                    );
+                }
+            }
             (window as any).CESIUM_BASE_URL = "/cesium/";
             if (
                 !document.querySelector(
@@ -97,10 +119,13 @@ export function loadCesiumGlobal(): Promise<any> {
                     settle(false, new Error("Failed to load Cesium.js"));
                 document.head.appendChild(s);
             });
+            loaderKind = "iife";
+            (window as any).__tinyowlCesiumLoader = "iife";
             return (window as any).Cesium;
         } catch (e) {
             // Allow a later caller to retry after a transient failure.
             loadPromise = null;
+            loaderKind = null;
             throw e;
         }
     })();
