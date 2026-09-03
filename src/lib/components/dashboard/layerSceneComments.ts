@@ -55,9 +55,11 @@ type CesiumLike = {
 		fromDegrees: (lon: number, lat: number, h?: number) => {
 			height: number;
 		};
+		fromCartesian?: (c: unknown) => { height: number } | undefined;
 		toCartesian: (c: { height: number }) => unknown;
 	};
 	defined?: (v: unknown) => boolean;
+	ArcType?: { NONE: unknown; GEODESIC: unknown };
 };
 
 export function getOrCreateCommentDs(Cesium: CesiumLike, viewer: any, existing: any) {
@@ -76,7 +78,26 @@ export function getOrCreateCommentDs(Cesium: CesiumLike, viewer: any, existing: 
 /**
  * Place a lon/lat on the live scene (3D tiles + globe), not the ellipsoid.
  * Stored comment geom is 2D; authors pick the mesh, collaborators must resample.
+ * Heights are cached after the first successful sample so camera moves do not
+ * re-clamp (LOD / pick changes would otherwise make lines flicker).
  */
+const MESH_LIFT_M = 0.35;
+const heightCache = new Map<string, number>();
+let clampIncomplete = false;
+
+function lonLatKey(lon: number, lat: number): string {
+	return `${lon.toFixed(6)},${lat.toFixed(6)}`;
+}
+
+export function clearCommentHeightCache() {
+	heightCache.clear();
+	clampIncomplete = true;
+}
+
+export function commentClampNeedsRetry(): boolean {
+	return clampIncomplete;
+}
+
 export function clampLonLatToScene(
 	Cesium: any,
 	viewer: any,
@@ -86,30 +107,42 @@ export function clampLonLatToScene(
 	exclude?: unknown[],
 ): any {
 	if (Number.isFinite(height) && Math.abs(height as number) > 1e-3) {
-		return Cesium.Cartesian3.fromDegrees(lon, lat, height);
+		return Cesium.Cartesian3.fromDegrees(lon, lat, (height as number) + MESH_LIFT_M);
+	}
+	const key = lonLatKey(lon, lat);
+	const cached = heightCache.get(key);
+	if (cached != null) {
+		return Cesium.Cartesian3.fromDegrees(lon, lat, cached + MESH_LIFT_M);
 	}
 	if (!viewer?.scene) {
+		clampIncomplete = true;
 		return Cesium.Cartesian3.fromDegrees(lon, lat, 0);
 	}
-	const high = Cesium.Cartesian3.fromDegrees(lon, lat, 8000);
-	try {
-		const clamped = viewer.scene.clampToHeight?.(high, exclude);
-		if (clamped && (typeof Cesium.defined !== "function" || Cesium.defined(clamped))) {
-			return Cesium.Cartesian3.clone(clamped);
-		}
-	} catch {
-		/* ignore */
-	}
+	let sampled: number | undefined;
 	try {
 		const carto = Cesium.Cartographic.fromDegrees(lon, lat);
-		const sampled = viewer.scene.sampleHeight?.(carto, exclude);
-		if (Number.isFinite(sampled)) {
-			carto.height = sampled;
-			return Cesium.Cartographic.toCartesian(carto);
-		}
+		const h = viewer.scene.sampleHeight?.(carto, exclude);
+		if (Number.isFinite(h)) sampled = h as number;
 	} catch {
 		/* ignore */
 	}
+	if (sampled == null) {
+		try {
+			const high = Cesium.Cartesian3.fromDegrees(lon, lat, 8000);
+			const clamped = viewer.scene.clampToHeight?.(high, exclude);
+			if (clamped && (typeof Cesium.defined !== "function" || Cesium.defined(clamped))) {
+				const c = Cesium.Cartographic.fromCartesian?.(clamped);
+				if (c && Number.isFinite(c.height)) sampled = c.height;
+			}
+		} catch {
+			/* ignore */
+		}
+	}
+	if (sampled != null) {
+		heightCache.set(key, sampled);
+		return Cesium.Cartesian3.fromDegrees(lon, lat, sampled + MESH_LIFT_M);
+	}
+	clampIncomplete = true;
 	return Cesium.Cartesian3.fromDegrees(lon, lat, 0);
 }
 
@@ -131,6 +164,7 @@ export function syncCommentPins(opts: {
 }): void {
 	const { Cesium, viewer, ds, comments, filter, selectedId, pending, sketch, sketchMode } = opts;
 	if (!ds) return;
+	clampIncomplete = false;
 	const exclude = commentExclude(ds);
 	const keep = new Set<string>();
 	const roots = commentRoots(comments, filter);
@@ -394,6 +428,8 @@ function upsertLine(
 		material,
 		clampToGround: false,
 		depthFailMaterial: material,
+		disableDepthTestDistance: Number.POSITIVE_INFINITY,
+		arcType: Cesium.ArcType?.NONE,
 	};
 	let entity = ds.entities.getById(id);
 	if (!entity) {
@@ -405,6 +441,8 @@ function upsertLine(
 		entity.polyline.material = material;
 		entity.polyline.clampToGround = false;
 		entity.polyline.depthFailMaterial = material;
+		entity.polyline.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+		if (Cesium.ArcType) entity.polyline.arcType = Cesium.ArcType.NONE;
 	}
 }
 
@@ -425,6 +463,7 @@ function upsertPoly(
 		outlineColor: color,
 		perPositionHeight: true,
 		heightReference: Cesium.HeightReference?.NONE,
+		disableDepthTestDistance: Number.POSITIVE_INFINITY,
 	};
 	if (!entity) {
 		ds.entities.add({ id, polygon });
@@ -436,6 +475,7 @@ function upsertPoly(
 		entity.polygon.outlineColor = color;
 		entity.polygon.height = undefined;
 		entity.polygon.perPositionHeight = true;
+		entity.polygon.disableDepthTestDistance = Number.POSITIVE_INFINITY;
 		if (Cesium.HeightReference) {
 			entity.polygon.heightReference = Cesium.HeightReference.NONE;
 		}

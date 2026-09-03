@@ -84,6 +84,11 @@
         placeLabel?: string | null;
         /** Combobox listbox id (overlay vs page to avoid duplicate ids). */
         listboxId?: string;
+        /**
+         * Command-palette host: always `goto` results (do not apply place
+         * only to unbound local state).
+         */
+        palette?: boolean;
         class?: string;
     };
 
@@ -109,6 +114,7 @@
         shortcutHint = false,
         placeLabel = null,
         listboxId = "search-mention-list",
+        palette = false,
         class: klass = "",
     }: Props = $props();
 
@@ -143,6 +149,15 @@
 
     let inputEl = $state<HTMLInputElement | null>(null);
     let fileInputEl = $state<HTMLInputElement | null>(null);
+
+    /** Focus the query field with the caret at the end (do not select chips or text). */
+    export function focusField() {
+        const el = inputEl;
+        if (!el) return;
+        el.focus({ preventScroll: true });
+        const n = el.value.length;
+        el.setSelectionRange(n, n);
+    }
     let focused = $state(false);
     let exampleIndex = $state(0);
     let exampleVisible = $state(true);
@@ -171,10 +186,35 @@
     } | null>(null);
     let appliedPlaceLabel = $state<string | null>(null);
     let projectChipTitles = $state<Record<string, string>>({});
+    /** Mentions chipped locally (e.g. `@slug `) before Enter navigates. */
+    let extraProjects = $state<string[]>([]);
+    /** Auto-scope chips the user dismissed in the overlay. */
+    let omittedProjects = $state<string[]>([]);
+
+    function mergeSlugs(base: string[], more: string[]): string[] {
+        const out = [...base];
+        for (const slug of more) {
+            if (
+                slug &&
+                !out.some((s) => s.toLowerCase() === slug.toLowerCase())
+            ) {
+                out.push(slug);
+            }
+        }
+        return out;
+    }
 
     const activeTags = $derived(tags);
     const activeVocabs = $derived(vocabularies);
-    const activeProjects = $derived(projects);
+    const activeProjects = $derived.by(() => {
+        const omit = new Set(
+            omittedProjects.map((s) => s.toLowerCase()),
+        );
+        const fromProps = projects.filter(
+            (s) => !omit.has(s.toLowerCase()),
+        );
+        return mergeSlugs(fromProps, extraProjects);
+    });
 
     function projectChipLabel(slug: string): string {
         return projectChipTitles[slug] || projectLabels[slug] || slug;
@@ -698,46 +738,103 @@
         return null;
     }
 
-    function commitSearch() {
-        let nextProjects = [...activeProjects];
-        if (mentionMode === "project" || mentionMode === "kinds") {
-            const typed = mentionQuery.trim();
-            if (
-                typed.length >= 2 &&
-                (mentionMode === "project" || !isKindToken(typed))
-            ) {
-                const hit = resolveMentionProject(typed);
-                const slug =
-                    hit?.slug ??
-                    (/^[a-z0-9][a-z0-9/_-]*$/i.test(typed) ? typed : "");
-                if (slug) {
-                    if (
-                        !nextProjects.some(
-                            (s) => s.toLowerCase() === slug.toLowerCase(),
-                        )
-                    ) {
-                        nextProjects.push(slug);
-                    }
-                    if (hit) {
-                        projectChipTitles = {
-                            ...projectChipTitles,
-                            [hit.slug]: hit.title,
-                        };
-                    }
-                }
-            }
+    function projectSlugFromMentionToken(
+        token: string,
+    ): { slug: string; hit: ProjectHit | null } | null {
+        let typed = token.trim();
+        if (!typed) return null;
+        if (/^project:/i.test(typed)) typed = typed.slice("project:".length);
+        else if (
+            /^(tag|vocab|place):/i.test(typed) ||
+            isKindToken(typed)
+        ) {
+            return null;
         }
-        const cleaned = stripMention(value);
-        value = cleaned;
+        if (typed.length < 2) return null;
+        const hit = resolveMentionProject(typed);
+        const slug =
+            hit?.slug ??
+            (/^[a-z0-9][a-z0-9/_-]*$/i.test(typed) ? typed : "");
+        if (!slug) return null;
+        return { slug, hit };
+    }
+
+    function harvestProjectMentions(
+        raw: string,
+        opts?: { completedOnly?: boolean },
+    ): { q: string; slugs: string[]; hits: ProjectHit[] } {
+        const slugs: string[] = [];
+        const hits: ProjectHit[] = [];
+        const keepTrailingSpace = /\s$/.test(raw);
+        const re = opts?.completedOnly
+            ? /(^|\s)@([^\s]+)(?=\s)/g
+            : /(^|\s)@([^\s]+)/g;
+        const stripped = raw.replace(
+            re,
+            (full, lead: string, token: string) => {
+                const got = projectSlugFromMentionToken(token);
+                if (!got) return full;
+                if (
+                    !slugs.some(
+                        (s) => s.toLowerCase() === got.slug.toLowerCase(),
+                    )
+                ) {
+                    slugs.push(got.slug);
+                    if (got.hit) hits.push(got.hit);
+                }
+                return lead;
+            },
+        );
+        let q = stripped.replace(/\s+/g, " ").trim();
+        if (keepTrailingSpace && q) q += " ";
+        return { q, slugs, hits };
+    }
+
+    function rememberProjectHits(hits: ProjectHit[]) {
+        if (hits.length === 0) return;
+        const next = { ...projectChipTitles };
+        for (const hit of hits) next[hit.slug] = hit.title;
+        projectChipTitles = next;
+    }
+
+    function chipCompletedProjectMentions() {
+        const harvested = harvestProjectMentions(value, {
+            completedOnly: true,
+        });
+        if (harvested.slugs.length === 0) return;
+        extraProjects = mergeSlugs(extraProjects, harvested.slugs);
+        rememberProjectHits(harvested.hits);
+        if (harvested.q === value) return;
+        value = harvested.q;
+        closeMention();
+    }
+
+    function commitSearch() {
+        const harvested = harvestProjectMentions(value);
+        rememberProjectHits(harvested.hits);
+        const nextProjects = mergeSlugs(activeProjects, harvested.slugs);
+        extraProjects = [];
+        omittedProjects = [];
+        value = harvested.q;
         closeMention();
         placesReq += 1;
         placeHits = [];
         projectHits = [];
-        navigate({ q: cleaned, projects: nextProjects });
+        navigate({ q: harvested.q, projects: nextProjects });
     }
 
     function handleSubmit(e: SubmitEvent) {
         e.preventDefault();
+        if (mentionOpen) {
+            if (trySelectFromMenu()) return;
+            commitSearch();
+            return;
+        }
+        const inline = harvestProjectMentions(value);
+        if (inline.slugs.length > 0) {
+            commitSearch();
+            return;
+        }
         if (trySelectFromMenu()) return;
         commitSearch();
     }
@@ -757,11 +854,20 @@
     }
 
     function removeProject(slug: string) {
-        navigate({
-            projects: activeProjects.filter(
-                (s) => s.toLowerCase() !== slug.toLowerCase(),
-            ),
-        });
+        const next = activeProjects.filter(
+            (s) => s.toLowerCase() !== slug.toLowerCase(),
+        );
+        extraProjects = extraProjects.filter(
+            (s) => s.toLowerCase() !== slug.toLowerCase(),
+        );
+        if (
+            projects.some((s) => s.toLowerCase() === slug.toLowerCase())
+        ) {
+            omittedProjects = mergeSlugs(omittedProjects, [slug]);
+        }
+        if (!palette) {
+            navigate({ projects: next });
+        }
     }
 
     function applyTag(tag: string) {
@@ -787,10 +893,10 @@
     }
 
     function applyProjectFilter(project: ProjectHit) {
-        const next = [...activeProjects];
-        if (!next.some((s) => s.toLowerCase() === project.slug.toLowerCase())) {
-            next.push(project.slug);
-        }
+        extraProjects = mergeSlugs(extraProjects, [project.slug]);
+        omittedProjects = omittedProjects.filter(
+            (s) => s.toLowerCase() !== project.slug.toLowerCase(),
+        );
         projectChipTitles = {
             ...projectChipTitles,
             [project.slug]: project.title,
@@ -798,7 +904,10 @@
         const cleaned = stripMention(value);
         value = cleaned;
         closeMention();
-        navigate({ q: cleaned, projects: next });
+        navigate({
+            q: cleaned,
+            projects: mergeSlugs(activeProjects, [project.slug]),
+        });
     }
 
     function applyPlace(place: PlaceHit) {
@@ -830,7 +939,7 @@
             };
         }
         appliedPlaceLabel = place.label;
-        if (atSearch) {
+        if (atSearch || palette) {
             navigate({
                 q: "",
                 lat: geom.type === "bbox" ? null : geom.lat,
@@ -960,6 +1069,7 @@
     function onInput(e: Event) {
         const el = e.currentTarget as HTMLInputElement;
         value = el.value;
+        chipCompletedProjectMentions();
         syncMentionFromValue(value);
         if (!mentionOpen) schedulePlacesFetch(value);
         else {
@@ -1244,6 +1354,7 @@
         {#if hasImageChip}
             <button
                 type="button"
+                tabindex="-1"
                 class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
                 onclick={removeMedia}
                 title="Remove image search"
@@ -1264,6 +1375,7 @@
         {#if bbox}
             <button
                 type="button"
+                tabindex="-1"
                 class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
                 onclick={removeSpatial}
                 title="Remove map area filter"
@@ -1284,6 +1396,7 @@
         {:else if lat != null && lng != null}
             <button
                 type="button"
+                tabindex="-1"
                 class="inline-flex max-w-[14rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
                 onclick={removeSpatial}
                 title="Remove radius filter"
@@ -1304,6 +1417,7 @@
         {#each activeTags as tag (tag.toLowerCase())}
             <button
                 type="button"
+                tabindex="-1"
                 class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
                 onclick={() => removeTag(tag)}
                 title="Remove tag filter"
@@ -1315,6 +1429,7 @@
         {#each activeVocabs as v (v.toLowerCase())}
             <button
                 type="button"
+                tabindex="-1"
                 class="inline-flex items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-foreground hover:bg-secondary/80"
                 onclick={() => removeVocab(v)}
                 title="Remove mapped-term filter"
@@ -1326,6 +1441,7 @@
         {#each activeProjects as slug (slug.toLowerCase())}
             <button
                 type="button"
+                tabindex="-1"
                 class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
                 onclick={() => removeProject(slug)}
                 title="Remove project filter"

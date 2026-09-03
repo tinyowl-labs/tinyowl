@@ -28,7 +28,7 @@ export function attrsFromEntity(props: any, time?: unknown): Record<string, stri
 	const names: string[] = props.propertyNames ?? Object.keys(props);
 	const out: Record<string, string> = {};
 	for (const key of names) {
-		if (!key || key.startsWith("_") || key === "geom" || key === "geometry") continue;
+		if (!key || key.startsWith("_") || key.startsWith("tinyowl") || key === "geom" || key === "geometry") continue;
 		try {
 			const p = props[key] ?? props.get?.(key);
 			const v =

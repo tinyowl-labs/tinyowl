@@ -35,7 +35,7 @@
         canFinish = false,
         canAddPart = false,
         useHeight = true,
-        snap = "terrain",
+        snap = "mesh",
         vertexEditing = false,
         showHeight = true,
         showSnap = true,

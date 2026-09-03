@@ -12,6 +12,7 @@
     import MousePointerSquareDashedIcon from "@lucide/svelte/icons/mouse-pointer-square-dashed";
     import PaletteIcon from "@lucide/svelte/icons/palette";
     import SearchIcon from "@lucide/svelte/icons/search";
+    import XIcon from "@lucide/svelte/icons/x";
     import {
         layerSelection,
         toSelectionKey,
@@ -58,8 +59,9 @@
         joinedKeys?: string[];
         /** Writers see layer-select + Tab hint for Cesium edit mode. */
         canWrite?: boolean;
-        /** Seed the entity search box (from `/layers?q=`). */
-        initialQuery?: string;
+        /** Active `/layers?q=` map isolate — shown as a dismissible chip, not a tree filter. */
+        mapSearchQ?: string;
+        onClearMapSearch?: () => void;
         class?: string;
     };
 
@@ -88,14 +90,12 @@
         filterToView = $bindable(false),
         joinedKeys = [],
         canWrite = false,
-        initialQuery = "",
+        mapSearchQ = "",
+        onClearMapSearch,
         class: klass = "",
     }: Props = $props();
 
     let query = $state("");
-    $effect(() => {
-        if (initialQuery) query = initialQuery;
-    });
     let modelsOpen = $state(false);
     let coveragesOpen = $state(true);
     let layerOpen = $state<Record<string, boolean>>({});
@@ -122,7 +122,7 @@
         `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}|${[...joinedKeys].sort().join(",")}`,
     );
     const hiddenSig = $derived(
-        `${[...layerSelection.hidden].sort().join(",")}|${layerSelection.isIsolating}`,
+        [...layerSelection.hidden].sort().join(","),
     );
 
     const inViewEntitySet = $derived(new Set(inViewEntityKeys));
@@ -275,10 +275,6 @@
 
     function toggleEntityHidden(layerName: string, entityId: string) {
         if (layerSelection.isSessionHidden(layerName, entityId)) {
-            layerSelection.showEntity(layerName, entityId);
-        } else if (layerSelection.isHidden(layerName, entityId)) {
-            // Outside isolate set — exit isolate for this key by exiting isolate.
-            layerSelection.exitIsolate();
             layerSelection.showEntity(layerName, entityId);
         } else {
             layerSelection.hideEntity(layerName, entityId);
@@ -462,6 +458,7 @@
                 </button>
             </div>
         </div>
+        <div class="space-y-1">
         <label
             class="flex items-center gap-1.5 rounded-md border border-border bg-background px-1.5 py-1"
         >
@@ -472,7 +469,37 @@
                 placeholder="Search…"
                 bind:value={query}
             />
+            {#if query.trim()}
+                <button
+                    type="button"
+                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                    title="Clear search"
+                    aria-label="Clear search"
+                    onclick={() => (query = "")}
+                >
+                    <XIcon class="size-3" />
+                </button>
+            {/if}
         </label>
+        {#if mapSearchQ.trim()}
+            <div
+                class="flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-1 text-[11px] text-primary"
+            >
+                <span class="min-w-0 truncate"
+                    >Map: {mapSearchQ.trim()}</span
+                >
+                <button
+                    type="button"
+                    class="shrink-0 rounded p-0.5 hover:bg-primary/15"
+                    title="Clear map search"
+                    aria-label="Clear map search"
+                    onclick={() => onClearMapSearch?.()}
+                >
+                    <XIcon class="size-3" />
+                </button>
+            </div>
+        {/if}
+        </div>
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-1">
@@ -782,7 +809,7 @@
                                 ent.layerName,
                                 ent.entityId,
                             )}
-                            {@const hidden = layerSelection.isHidden(
+                            {@const hidden = layerSelection.isSessionHidden(
                                 ent.layerName,
                                 ent.entityId,
                             )}

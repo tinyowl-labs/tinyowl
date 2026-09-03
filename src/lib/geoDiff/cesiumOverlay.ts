@@ -6,6 +6,12 @@ export const GEO_DIFF_DS_NAME = "tinyowl-geo-diff";
 
 type Role = "after" | "before";
 
+type OverlayStamp = {
+    tinyowlTable: string;
+    tinyowlEntityId: string;
+    tinyowlRole: Role;
+};
+
 function findDiffDataSource(viewer: any): any | null {
     const col = viewer?.dataSources;
     if (!col) return null;
@@ -76,6 +82,18 @@ function dashed(op: DiffOp, role: Role) {
     return role === "before" || op === "delete";
 }
 
+function overlayStamp(
+    table: string,
+    entityId: string,
+    role: Role,
+): OverlayStamp {
+    return {
+        tinyowlTable: table,
+        tinyowlEntityId: entityId,
+        tinyowlRole: role,
+    };
+}
+
 function addPoint(
     Cesium: any,
     ds: any,
@@ -83,6 +101,7 @@ function addPoint(
     coords: unknown,
     op: DiffOp,
     role: Role,
+    stamp: OverlayStamp,
 ) {
     if (!Array.isArray(coords) || coords.length < 2) return;
     const lon = Number(coords[0]);
@@ -95,6 +114,7 @@ function addPoint(
     const color = fillColor(Cesium, op, role);
     ds.entities.add({
         id,
+        properties: stamp,
         position: Cesium.Cartesian3.fromDegrees(lon, lat, h),
         point: {
             pixelSize: role === "before" ? 8 : 12,
@@ -119,6 +139,7 @@ function addLine(
     coords: unknown,
     op: DiffOp,
     role: Role,
+    stamp: OverlayStamp,
 ) {
     const positions = ringToCartesians(Cesium, coords);
     if (positions.length < 2) return;
@@ -131,6 +152,7 @@ function addLine(
         : color;
     ds.entities.add({
         id,
+        properties: stamp,
         polyline: {
             positions,
             width: role === "before" ? 2 : 3,
@@ -156,6 +178,7 @@ function addOutlineRings(
     op: DiffOp,
     role: Role,
     pickable: boolean,
+    stamp: OverlayStamp,
 ) {
     const clamp = !coordsHaveZ(rings);
     const color = lineColor(Cesium, op, role);
@@ -172,6 +195,7 @@ function addOutlineRings(
         if (pts.length < (ringIdx === 0 ? 3 : 2)) continue;
         ds.entities.add({
             id: ringIdx === 0 ? id : `${id}:hole:${ringIdx}`,
+            properties: stamp,
             polyline: {
                 positions: closedPositions(pts),
                 width,
@@ -191,12 +215,13 @@ function addPolygon(
     coords: unknown,
     op: DiffOp,
     role: Role,
+    stamp: OverlayStamp,
 ) {
     const rings = asRings(coords);
     const outer = ringToCartesians(Cesium, rings[0]);
     if (outer.length < 3) return;
     if (role === "before") {
-        addOutlineRings(Cesium, ds, id, rings, op, role, false);
+        addOutlineRings(Cesium, ds, id, rings, op, role, false, stamp);
         return;
     }
     const holes = rings
@@ -210,6 +235,7 @@ function addPolygon(
     const withZ = coordsHaveZ(coords);
     ds.entities.add({
         id,
+        properties: stamp,
         polygon: {
             hierarchy,
             material: fill,
@@ -232,6 +258,7 @@ function paintGeometry(
     geom: GeoJsonGeometry,
     op: DiffOp,
     role: Role,
+    stamp: OverlayStamp,
 ) {
     let n = 0;
     const nextId = () => `${idBase}:${n++}`;
@@ -239,27 +266,27 @@ function paintGeometry(
     const visit = (g: GeoJsonGeometry) => {
         switch (g.type) {
             case "Point":
-                addPoint(Cesium, ds, nextId(), g.coordinates, op, role);
+                addPoint(Cesium, ds, nextId(), g.coordinates, op, role, stamp);
                 break;
             case "MultiPoint":
                 for (const c of asRings(g.coordinates)) {
-                    addPoint(Cesium, ds, nextId(), c, op, role);
+                    addPoint(Cesium, ds, nextId(), c, op, role, stamp);
                 }
                 break;
             case "LineString":
-                addLine(Cesium, ds, nextId(), g.coordinates, op, role);
+                addLine(Cesium, ds, nextId(), g.coordinates, op, role, stamp);
                 break;
             case "MultiLineString":
                 for (const c of asRings(g.coordinates)) {
-                    addLine(Cesium, ds, nextId(), c, op, role);
+                    addLine(Cesium, ds, nextId(), c, op, role, stamp);
                 }
                 break;
             case "Polygon":
-                addPolygon(Cesium, ds, nextId(), g.coordinates, op, role);
+                addPolygon(Cesium, ds, nextId(), g.coordinates, op, role, stamp);
                 break;
             case "MultiPolygon":
                 for (const c of asRings(g.coordinates)) {
-                    addPolygon(Cesium, ds, nextId(), c, op, role);
+                    addPolygon(Cesium, ds, nextId(), c, op, role, stamp);
                 }
                 break;
             case "GeometryCollection":
@@ -278,10 +305,26 @@ function paintGeometry(
 function addFeature(Cesium: any, ds: any, f: DiffFeature) {
     const op = f.op;
     if (f.oldGeometry) {
-        paintGeometry(Cesium, ds, `${f.id}:before`, f.oldGeometry, op, "before");
+        paintGeometry(
+            Cesium,
+            ds,
+            `${f.id}:before`,
+            f.oldGeometry,
+            op,
+            "before",
+            overlayStamp(f.table, f.entityId, "before"),
+        );
     }
     if (f.geometry) {
-        paintGeometry(Cesium, ds, `${f.id}:after`, f.geometry, op, "after");
+        paintGeometry(
+            Cesium,
+            ds,
+            `${f.id}:after`,
+            f.geometry,
+            op,
+            "after",
+            overlayStamp(f.table, f.entityId, "after"),
+        );
     }
 }
 
@@ -316,10 +359,34 @@ export async function syncDiffOverlay(
     return ds;
 }
 
-export function destroyDiffOverlay(viewer: any, ds: any | null) {
-    if (!ds) return;
+export function overlayEntityInfo(
+    entity: any,
+): { table: string; entityId: string; role: Role } | null {
+    if (!entity?.properties) return null;
+    const read = (key: string): string => {
+        try {
+            const p = entity.properties[key];
+            if (p == null) return "";
+            const v = typeof p.getValue === "function" ? p.getValue() : p;
+            return v == null ? "" : String(v);
+        } catch {
+            return "";
+        }
+    };
+    const table = read("tinyowlTable");
+    const entityId = read("tinyowlEntityId");
+    const role = read("tinyowlRole");
+    if (!table || !entityId || (role !== "after" && role !== "before")) {
+        return null;
+    }
+    return { table, entityId, role: role as Role };
+}
+
+export function destroyDiffOverlay(viewer: any, ds?: any) {
+    const target = ds ?? findDiffDataSource(viewer);
+    if (!target) return;
     try {
-        viewer?.dataSources?.remove?.(ds, true);
+        viewer?.dataSources?.remove?.(target, true);
     } catch {
         /* ignore */
     }

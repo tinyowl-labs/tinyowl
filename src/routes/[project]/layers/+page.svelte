@@ -195,6 +195,19 @@
         return qs ? `?${qs}` : "";
     }
 
+    function clearSearchQ() {
+        const slug = $page.params.project;
+        if (!slug) return;
+        void goto(
+            `/${slug}/layers${layersSearch({
+                mode: viewMode,
+                dim: mapDim,
+                q: "",
+            })}`,
+            { replaceState: true, noScroll: true },
+        );
+    }
+
     function handleTabChange(value: string) {
         if (value === SCHEMA_TAB) {
             setViewMode("schema");
@@ -821,6 +834,7 @@
                         {diffFeatures}
                         {joinedKeys}
                         searchQ={searchQ}
+                        onClearSearchQ={clearSearchQ}
                     />
                 {:else}
                     <CesiumLoading />

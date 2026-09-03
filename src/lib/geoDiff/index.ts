@@ -14,5 +14,6 @@ export { fromEditBuffer } from "./fromEditBuffer";
 export {
     GEO_DIFF_DS_NAME,
     destroyDiffOverlay,
+    overlayEntityInfo,
     syncDiffOverlay,
 } from "./cesiumOverlay";

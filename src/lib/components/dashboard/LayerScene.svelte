@@ -90,6 +90,7 @@
     } from "$lib/components/osmTiles";
     import {
         destroyDiffOverlay,
+        overlayEntityInfo,
         syncDiffOverlay,
         type DiffFeature,
         type GeoJsonGeometry,
@@ -138,6 +139,8 @@
         pickCommentId,
         syncCommentPins,
         clampLonLatToScene,
+        commentClampNeedsRetry,
+        clearCommentHeightCache,
     } from "./layerSceneComments";
 
     type EntityMeta = {
@@ -260,7 +263,7 @@
     let bufferOverlayVisible = $state(true);
     let drawMode = $state<DrawGeomMode>("Polygon");
     let drawUseHeight = $state(true);
-    let snapMode = $state<SnapMode>("terrain");
+    let snapMode = $state<SnapMode>("mesh");
     let vertexSession = $state<{
         table: string;
         entityId: string;
@@ -633,7 +636,7 @@
         if (!viewer || !Cesium) return null;
         const spheres: any[] = [];
         try {
-            for (const ds of layerSources.values()) {
+            for (const ds of entityDataSources()) {
                 if (!ds?.show) continue;
                 for (const entity of ds.entities.values) {
                     try {
@@ -755,18 +758,30 @@
 
     function allSelectableEntities(): SelectableEntity[] {
         const out: SelectableEntity[] = [];
-        for (const ds of layerSources.values()) {
+        const seen = new Set<string>();
+        for (const ds of entityDataSources()) {
             for (const entity of ds.entities.values) {
                 const meta = entityMeta.get(entity);
                 if (!meta) continue;
+                try {
+                    if (entity.show === false) continue;
+                } catch {
+                    /* ignore */
+                }
                 if (layerSelection.isHidden(meta.layerName, meta.entityId)) continue;
                 if (isViewFiltered(meta.layerName, meta.entityId)) continue;
-                out.push({
-                    key: toSelectionKey(meta.layerName, meta.entityId),
-                    entity,
-                });
+                const key = toSelectionKey(meta.layerName, meta.entityId);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push({ key, entity });
             }
         }
+        return out;
+    }
+
+    function entityDataSources(): any[] {
+        const out: any[] = [...layerSources.values()];
+        if (diffDataSource) out.push(diffDataSource);
         return out;
     }
 
@@ -775,8 +790,7 @@
         const { layer, id } = parseSelectionKey(key);
         if (!id) return [];
         const out: any[] = [];
-        for (const [name, ds] of layerSources) {
-            if (layer && name !== layer) continue;
+        for (const ds of entityDataSources()) {
             try {
                 for (const entity of ds.entities.values) {
                     const meta = entityMeta.get(entity);
@@ -792,7 +806,14 @@
                 /* ignore */
             }
         }
-        return out;
+        const visible = out.filter((e) => {
+            try {
+                return e.show !== false;
+            } catch {
+                return true;
+            }
+        });
+        return visible.length > 0 ? visible : out;
     }
 
     function findEntityByKey(key: string): any | null {
@@ -839,7 +860,7 @@
 
         const entitySpheres: any[] = [];
         try {
-            for (const ds of layerSources.values()) {
+            for (const ds of entityDataSources()) {
                 if (!ds?.show) continue;
                 for (const entity of ds.entities.values) {
                     if (entity.show === false) continue;
@@ -1018,14 +1039,50 @@
     }
 
     function applyHiddenVisibility() {
-        for (const [, ds] of layerSources) {
+        const bufHide = new Set<string>();
+        if (bufferOverlayVisible) {
+            for (const e of editBuffer.entries) {
+                if (e.op === "update" || e.op === "delete") {
+                    bufHide.add(toSelectionKey(e.table, e.entityId));
+                }
+            }
+        }
+        if (vertexSession && vertexSession.bufferOp !== "insert") {
+            bufHide.add(
+                toSelectionKey(vertexSession.table, vertexSession.entityId),
+            );
+        }
+        const layerOff = new Set(
+            layers.filter((l) => !l.visible).map((l) => l.name),
+        );
+        for (const ds of entityDataSources()) {
             try {
                 for (const entity of ds.entities.values) {
+                    const info = overlayEntityInfo(entity);
+                    if (info?.role === "before") {
+                        const wantShow =
+                            !layerOff.has(info.table) &&
+                            !layerSelection.isHidden(
+                                info.table,
+                                info.entityId,
+                            ) &&
+                            !isViewFiltered(info.table, info.entityId);
+                        try {
+                            entity.show = wantShow;
+                        } catch {
+                            /* ignore */
+                        }
+                        continue;
+                    }
                     const meta = entityMeta.get(entity);
                     if (!meta) continue;
+                    const key = toSelectionKey(meta.layerName, meta.entityId);
+                    const overlayAfter = info?.role === "after";
                     const wantShow =
+                        !layerOff.has(meta.layerName) &&
                         !layerSelection.isHidden(meta.layerName, meta.entityId) &&
-                        !isViewFiltered(meta.layerName, meta.entityId);
+                        !isViewFiltered(meta.layerName, meta.entityId) &&
+                        (overlayAfter || !bufHide.has(key));
                     try {
                         entity.show = wantShow;
                     } catch {
@@ -1044,6 +1101,12 @@
         const view = activeView(layer?.views, layer?.activeViewId ?? "");
         if (!view?.filter?.field) return false;
         const row = rowByEntityId(rows[layerName], entityId);
+        if (!row) {
+            const buf = editBuffer.entries.find(
+                (e) => e.table === layerName && e.entityId === entityId,
+            );
+            if (buf?.op === "insert") return false;
+        }
         return !rowMatchesFilter(row, view.filter);
     }
 
@@ -1951,19 +2014,6 @@
         return null;
     }
 
-    function overlayEntityId(raw: unknown): string | null {
-        const id =
-            typeof raw === "string"
-                ? raw
-                : raw && typeof raw === "object" && "id" in (raw as object)
-                  ? String((raw as { id?: unknown }).id ?? "")
-                  : "";
-        if (!id) return null;
-        const after = id.indexOf(":after:");
-        if (after >= 0) return id.slice(0, after);
-        return null;
-    }
-
     function loadDraftFromGeom(
         geom: GeoJsonGeometry,
         modeHint?: DrawGeomMode,
@@ -1982,50 +2032,13 @@
         return true;
     }
 
-    function setEntityShown(entity: any, shown: boolean) {
-        if (!entity) return;
-        try {
-            entity.show = shown;
-        } catch {
-            /* ignore */
-        }
-    }
-
-    function applyBufferHides() {
-        const hide = new Set<string>();
-        if (bufferOverlayVisible) {
-            for (const e of editBuffer.entries) {
-                if (e.op === "update" || e.op === "delete") {
-                    hide.add(toSelectionKey(e.table, e.entityId));
-                }
-            }
-        }
-        if (vertexSession && vertexSession.bufferOp !== "insert") {
-            hide.add(
-                toSelectionKey(vertexSession.table, vertexSession.entityId),
-            );
-        }
-        for (const ds of layerSources.values()) {
-            for (const entity of ds.entities.values) {
-                const meta = entityMeta.get(entity);
-                if (!meta) continue;
-                const key = toSelectionKey(meta.layerName, meta.entityId);
-                if (layerSelection.isHidden(meta.layerName, meta.entityId)) {
-                    continue;
-                }
-                setEntityShown(entity, !hide.has(key));
-            }
-        }
-        bumpRender();
-    }
-
     function cancelVertexEdit() {
         vertexSession = null;
         vertexUndoStack = [];
         vertexDragIndex = null;
         midDragAfter = null;
         clearDraftDraw();
-        applyBufferHides();
+        applyHiddenVisibility();
         paintDraftDraw();
     }
 
@@ -2050,7 +2063,7 @@
         if (!geom || !loadDraftFromGeom(geom)) return false;
         vertexSession = { table, entityId, bufferOp, oldGeometry };
         vertexUndoStack = [];
-        applyBufferHides();
+        applyHiddenVisibility();
         return true;
     }
 
@@ -2073,7 +2086,7 @@
         vertexDragIndex = null;
         midDragAfter = null;
         clearDraftDraw();
-        applyBufferHides();
+        applyHiddenVisibility();
         bumpRender();
         return true;
     }
@@ -2114,16 +2127,18 @@
         try {
             const picks = viewer.scene.drillPick(screenPos, 24) ?? [];
             for (const picked of picks) {
-                const overlayId = overlayEntityId(
-                    typeof picked?.id === "string"
+                const entity =
+                    picked?.id && typeof picked.id === "object"
                         ? picked.id
-                        : picked?.id?.id,
-                );
-                if (!overlayId) continue;
+                        : picked;
+                const info = overlayEntityInfo(entity);
+                if (!info || info.role !== "after") continue;
+                if (info.table !== editLayer) continue;
                 const buf = editBuffer.entries.find(
-                    (e) => e.entityId === overlayId,
+                    (e) =>
+                        e.table === info.table && e.entityId === info.entityId,
                 );
-                if (buf && buf.table === editLayer) {
+                if (buf) {
                     return { table: buf.table, entityId: buf.entityId };
                 }
             }
@@ -2439,7 +2454,7 @@
 
         const entityKeys: string[] = [];
         const time = viewer.clock.currentTime;
-        for (const ds of layerSources.values()) {
+        for (const ds of entityDataSources()) {
             for (const entity of ds.entities.values) {
                 const meta = entityMeta.get(entity);
                 if (!meta) continue;
@@ -2530,10 +2545,10 @@
             /* ignore */
         }
 
-        entityKeys.sort();
+        const uniqueEntityKeys = [...new Set(entityKeys)].sort();
         modelHashes.sort();
-        if (!arraysEqual(entityKeys, inViewEntityKeys)) {
-            inViewEntityKeys = entityKeys;
+        if (!arraysEqual(uniqueEntityKeys, inViewEntityKeys)) {
+            inViewEntityKeys = uniqueEntityKeys;
         }
         if (!arraysEqual(modelHashes, inViewModelHashes)) {
             inViewModelHashes = modelHashes;
@@ -2586,7 +2601,19 @@
         entityId: string,
     ): PickCandidate {
         const time = Cesium?.JulianDate?.now?.();
-        const attributes = attrsFromEntity(entity?.properties, time);
+        const row = rowByEntityId(rows[layerName], entityId);
+        const buf = editBuffer.entries.find(
+            (e) => e.table === layerName && e.entityId === entityId,
+        );
+        const fromRow = attrsFromRecord(row);
+        const fromBuf = attrsFromRecord(buf?.attributes);
+        const fromEntity = attrsFromEntity(entity?.properties, time);
+        const attributes =
+            Object.keys(fromRow).length > 0
+                ? fromRow
+                : Object.keys(fromBuf).length > 0
+                  ? fromBuf
+                  : fromEntity;
         return {
             key: toSelectionKey(layerName, entityId),
             layerName,
@@ -2594,6 +2621,27 @@
             label: pickCandidateLabel(entityId, attributes),
             attributes,
         };
+    }
+
+    function attrsFromRecord(
+        src: Record<string, unknown> | undefined | null,
+    ): Record<string, string> {
+        if (!src) return {};
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(src)) {
+            if (
+                !k ||
+                k.startsWith("_") ||
+                k.startsWith("tinyowl") ||
+                k === "geom" ||
+                k === "geometry"
+            ) {
+                continue;
+            }
+            if (v == null || v === "") continue;
+            out[k] = String(v);
+        }
+        return out;
     }
 
     /** Show pick pager for an entity (store selection already updated). */
@@ -2703,6 +2751,11 @@
         for (const picked of picks) {
             const entity = resolvePickedEntity(picked);
             if (!entity) continue;
+            try {
+                if (entity.show === false) continue;
+            } catch {
+                /* ignore */
+            }
             const meta = entityMeta.get(entity);
             if (!meta) continue;
             if (layerSelection.isHidden(meta.layerName, meta.entityId)) continue;
@@ -3038,6 +3091,28 @@
             if (!entityId) continue;
             const style = snapshotEntityStyle(entity, kind);
             trackEntity(entity, layerName, entityId, kind, style.base, style);
+        }
+    }
+
+    function indexOverlayEntities(ds: any) {
+        if (!ds) return;
+        for (const entity of ds.entities.values) {
+            const info = overlayEntityInfo(entity);
+            if (!info || info.role !== "after") continue;
+            let kind: EntityMeta["kind"] | null = null;
+            if (entity.point) kind = "point";
+            else if (entity.polygon) kind = "polygon";
+            else if (entity.polyline) kind = "polyline";
+            if (!kind) continue;
+            const style = snapshotEntityStyle(entity, kind);
+            trackEntity(
+                entity,
+                info.table,
+                info.entityId,
+                kind,
+                style.base,
+                style,
+            );
         }
     }
 
@@ -3399,6 +3474,7 @@
             if (
                 presenceMember &&
                 commentDataSource &&
+                commentClampNeedsRetry() &&
                 now - lastCommentClampMs > 250
             ) {
                 lastCommentClampMs = now;
@@ -3772,7 +3848,7 @@
                     : null,
             });
         }
-        for (const [, ds] of layerSources) {
+        for (const ds of entityDataSources()) {
             try {
                 for (const entity of ds.entities.values) {
                     const meta = entityMeta.get(entity);
@@ -3853,8 +3929,10 @@
         const ds = layerSources.get(layer.name);
         if (ds) {
             ds.show = layer.visible;
-            bumpRender();
-        } else if (layer.visible) void syncLayers();
+        } else if (layer.visible) {
+            void syncLayers();
+        }
+        applyHiddenVisibility();
     }
 
     function setLayerOpacity(idx: number, opacity: number) {
@@ -3956,9 +4034,7 @@
                           ? [{ ...f, geometry: null }]
                           : [];
                   }
-                  return f.oldGeometry
-                      ? [{ ...f, oldGeometry: undefined }]
-                      : [f];
+                  return [f];
               });
         if (
             bufferOverlayVisible &&
@@ -3983,7 +4059,17 @@
         void syncDiffOverlay(Cesium, viewer, features).then((ds) => {
             if (cancelled) return;
             diffDataSource = ds;
-            applyBufferHides();
+            indexOverlayEntities(ds);
+            applyLayerViews();
+            if (layerSelection.primaryKey) {
+                selectedEntity = findEntityByKey(layerSelection.primaryKey);
+            }
+            try {
+                if (ds) viewer.dataSources.raiseToTop(ds);
+            } catch {
+                /* ignore */
+            }
+            raiseDrawHandles();
             bumpRender();
         });
         return () => {
@@ -4298,7 +4384,7 @@
             commentDrawMode,
             commentSketchVerts,
             [],
-            true,
+            false,
         );
         const first = commentSketchVerts[0];
         if (!geom || !first) return;
@@ -4398,6 +4484,7 @@
                     /* ignore */
                 }
                 commentDataSource = null;
+                clearCommentHeightCache();
                 bumpRender();
             }
             return;

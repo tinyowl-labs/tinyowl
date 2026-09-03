@@ -11,6 +11,22 @@
 	} from "$lib/stores/searchOverlay.svelte";
 
 	let isMac = $state(false);
+	let composer = $state<{ focusField?: () => void } | null>(null);
+
+	const routeSlug = $derived(
+		($page.params as { project?: string }).project ?? null,
+	);
+	const pageProject = $derived(
+		(
+			$page.data as
+				| { project?: { slug?: string; title?: string } }
+				| undefined
+		)?.project ?? null,
+	);
+	const scopeSlug = $derived(routeSlug || pageProject?.slug || null);
+	const scopeTitle = $derived(
+		pageProject?.title || scopeSlug || "",
+	);
 
 	const accessToken = $derived(
 		(($page.data as { accessToken?: string | null } | undefined)
@@ -24,6 +40,7 @@
 
 		const onKey = (e: KeyboardEvent) => {
 			if (!isSearchModK(e)) return;
+			if (window.location.pathname.startsWith("/auth")) return;
 			e.preventDefault();
 			e.stopPropagation();
 			searchOverlay.toggle();
@@ -50,6 +67,10 @@
 		<Dialog.Content
 			trapFocus
 			class="fixed left-1/2 top-[12vh] z-[2001] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 overflow-visible rounded-xl border border-border bg-background p-2 shadow-lg outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+			onOpenAutoFocus={(e) => {
+				e.preventDefault();
+				requestAnimationFrame(() => composer?.focusField?.());
+			}}
 			onEscapeKeydown={(e) => {
 				if (document.getElementById("search-overlay-list")) {
 					e.preventDefault();
@@ -65,10 +86,18 @@
 				<div class="min-w-0 flex-1">
 					{#if searchOverlay.open}
 						<SearchComposer
+							bind:this={composer}
 							accessToken={accessToken}
-							autofocus
+							palette
 							listboxId="search-overlay-list"
-							placeholder="Search projects or places…  Type @ for filters"
+							projects={scopeSlug ? [scopeSlug] : []}
+							projectLabels={scopeSlug && scopeTitle
+								? { [scopeSlug]: scopeTitle }
+								: {}}
+							placeholder={scopeSlug
+								? `Search in ${scopeTitle}…  Type @ for filters`
+								: "Search projects or places…  Type @ for filters"}
+							class="shadow-none"
 						/>
 					{/if}
 				</div>

@@ -130,8 +130,8 @@ export function attrFieldsForTable(columns: string[]): string[] {
 export type SnapMode = "mesh" | "terrain" | "ellipsoid";
 
 export const SNAP_MODES: { id: SnapMode; label: string }[] = [
-	{ id: "terrain", label: "Terrain" },
 	{ id: "mesh", label: "Mesh" },
+	{ id: "terrain", label: "Terrain" },
 	{ id: "ellipsoid", label: "Ellipsoid" },
 ];
 
