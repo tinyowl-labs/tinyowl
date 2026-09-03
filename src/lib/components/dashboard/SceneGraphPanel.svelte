@@ -10,6 +10,7 @@
     import HexagonIcon from "@lucide/svelte/icons/hexagon";
     import LayersIcon from "@lucide/svelte/icons/layers";
     import MousePointerSquareDashedIcon from "@lucide/svelte/icons/mouse-pointer-square-dashed";
+    import PaletteIcon from "@lucide/svelte/icons/palette";
     import SearchIcon from "@lucide/svelte/icons/search";
     import {
         layerSelection,
@@ -19,6 +20,14 @@
     import type { ProjectTileset } from "./tilesetTypes";
     import { isLocalTileset } from "./tilesetTypes";
     import type { ProjectCoverage } from "./coverageTypes";
+    import {
+        activeView,
+        contrastColor,
+        layerLegendColor,
+        rgbaToHex,
+        rowByEntityId,
+        rowMatchesFilter,
+    } from "./layerViews";
 
     type Props = {
         layers?: LayerData[];
@@ -31,6 +40,8 @@
         onSetModelsVisible?: (visible: boolean) => void;
         onToggleCoverage?: (hash: string) => void;
         onToggleLayer?: (idx: number) => void;
+        onOpenStyle?: (idx: number) => void;
+        styleLayerName?: string;
         onApplyHidden?: () => void;
         onFlyTo?: () => void;
         /** Fly camera to a whole layer's extent without requiring selection. */
@@ -55,6 +66,8 @@
         onSetModelsVisible,
         onToggleCoverage,
         onToggleLayer,
+        onOpenStyle,
+        styleLayerName = "",
         onApplyHidden,
         onFlyTo,
         onFlyToLayer,
@@ -195,6 +208,11 @@
             ) {
                 return false;
             }
+            const view = activeView(layer.views, layer.activeViewId ?? "");
+            if (view?.filter?.field) {
+                const row = rowByEntityId(rows[layer.name], e.entityId);
+                if (!rowMatchesFilter(row, view.filter)) return false;
+            }
             if (filterToView) return inViewEntitySet.has(e.key);
             return true;
         });
@@ -288,6 +306,12 @@
 
     function flyToLayer(name: string) {
         onFlyToLayer?.(name);
+        closeLayerMenu();
+    }
+
+    function openStyleFromMenu() {
+        if (!layerMenu) return;
+        onOpenStyle?.(layerMenu.idx);
         closeLayerMenu();
     }
 
@@ -638,9 +662,16 @@
             {@const allEnts = entitiesForLayerSorted(layer)}
             {@const ents = filterEntities(layer, allEnts)}
             {@const orderedKeys = ents.map((e) => e.key)}
+            {@const legend = layerLegendColor(
+                layer.views,
+                layer.activeViewId ?? "",
+            )}
             {#if ents.length > 0 || (!filterToView && !query.trim()) || matchesQuery(layer.name)}
                 <div
-                    class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                    class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {styleLayerName ===
+                    layer.name
+                        ? 'bg-secondary text-foreground'
+                        : 'text-muted-foreground'}"
                     oncontextmenu={(e) =>
                         openLayerMenu(
                             e,
@@ -661,7 +692,13 @@
                                 ? ''
                                 : '-rotate-90'}"
                         />
-                        <LayersIcon class="size-3.5 shrink-0" />
+                        <span
+                            class="size-3.5 shrink-0 rounded-sm border"
+                            style="background: {rgbaToHex(legend)}; border-color: {rgbaToHex(
+                                contrastColor(legend),
+                            )}"
+                            title={layerDisplayName(layer.name)}
+                        ></span>
                         <span class="truncate"
                             >{layerDisplayName(layer.name)}</span
                         >
@@ -802,6 +839,15 @@
         >
             <CrosshairIcon class="size-3.5 shrink-0 text-muted-foreground" />
             Fly to layer
+        </button>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={openStyleFromMenu}
+        >
+            <PaletteIcon class="size-3.5 shrink-0 text-muted-foreground" />
+            Style
         </button>
         <button
             type="button"

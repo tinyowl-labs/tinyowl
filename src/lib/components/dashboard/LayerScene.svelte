@@ -17,6 +17,7 @@
     import MapToolsRail from "./MapToolsRail.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
+    import LayerStylePanel from "./LayerStylePanel.svelte";
     import PickPager from "./PickPager.svelte";
     import { SELECTION_PRIMARY, SELECTION_SECONDARY } from "./selectionStyle";
     import {
@@ -32,6 +33,16 @@
         type PickCandidate,
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
+    import {
+        activeView,
+        POINT_OUTLINE_WIDTH,
+        contrastColor,
+        defaultOpacityForPackets,
+        resolveFill,
+        rowByEntityId,
+        rowMatchesFilter,
+        type LayerView,
+    } from "./layerViews";
     import type { ProjectTileset } from "./tilesetTypes";
     import { isLocalTileset } from "./tilesetTypes";
     import type { ProjectCoverage } from "./coverageTypes";
@@ -67,6 +78,12 @@
         OSM_TILE_SUBDOMAINS,
         OSM_TILE_URL,
     } from "$lib/components/osmTiles";
+    import {
+        destroyDiffOverlay,
+        syncDiffOverlay,
+        type DiffFeature,
+    } from "$lib/geoDiff";
+    import DiffLegend from "./DiffLegend.svelte";
 
     type EntityMeta = {
         layerName: string;
@@ -78,6 +95,7 @@
         baseOutlineWidth: number;
         baseOutline: any;
         baseAlpha: number;
+        dash?: boolean;
     };
 
     type Props = {
@@ -98,6 +116,13 @@
         onDimChange?: (dim: "2d" | "3d") => void;
         /** False when map tab is hidden — resize on show, never destroy. */
         active?: boolean;
+        canEditViews?: boolean;
+        onPersistViews?: (layerName: string, views: LayerView[]) => void;
+        /**
+         * Op-colored geo overlay (pending/history/CRUD buffer). Empty = none.
+         * Same DiffFeature model as ReviewMap — not a second changeset store.
+         */
+        diffFeatures?: DiffFeature[];
     };
 
     let {
@@ -115,6 +140,9 @@
         onToggleFullscreen,
         onDimChange,
         active = true,
+        canEditViews = false,
+        onPersistViews,
+        diffFeatures = [],
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -154,6 +182,7 @@
     let draftVertices: MeasureVertex[] = [];
     let draftCartesians: any[] = [];
     let measureDataSource: any = null;
+    let diffDataSource: any = null;
     let measureClickTimer: ReturnType<typeof setTimeout> | null = null;
     const MEASURE_CLICK_DELAY_MS = 280;
     const MEASURE_COLOR = "#ca8a04";
@@ -194,6 +223,7 @@
     let framedEntityHome = false;
     let lastFlownKey = "";
     let filterToView = $state(false);
+    let styleLayerIdx = $state<number | null>(null);
     let inViewEntityKeys = $state<string[]>([]);
     let inViewModelHashes = $state<string[]>([]);
     let inViewThrottle: ReturnType<typeof setTimeout> | null = null;
@@ -546,6 +576,7 @@
                 const meta = entityMeta.get(entity);
                 if (!meta) continue;
                 if (layerSelection.isHidden(meta.layerName, meta.entityId)) continue;
+                if (isViewFiltered(meta.layerName, meta.entityId)) continue;
                 out.push({
                     key: toSelectionKey(meta.layerName, meta.entityId),
                     entity,
@@ -799,10 +830,9 @@
                 for (const entity of ds.entities.values) {
                     const meta = entityMeta.get(entity);
                     if (!meta) continue;
-                    const wantShow = !layerSelection.isHidden(
-                        meta.layerName,
-                        meta.entityId,
-                    );
+                    const wantShow =
+                        !layerSelection.isHidden(meta.layerName, meta.entityId) &&
+                        !isViewFiltered(meta.layerName, meta.entityId);
                     try {
                         entity.show = wantShow;
                     } catch {
@@ -814,6 +844,14 @@
             }
         }
         bumpRender();
+    }
+
+    function isViewFiltered(layerName: string, entityId: string): boolean {
+        const layer = layers.find((l) => l.name === layerName);
+        const view = activeView(layer?.views, layer?.activeViewId ?? "");
+        if (!view?.filter?.field) return false;
+        const row = rowByEntityId(rows[layerName], entityId);
+        return !rowMatchesFilter(row, view.filter);
     }
 
     function showAllHiddenEntities() {
@@ -1517,6 +1555,7 @@
             const meta = entityMeta.get(entity);
             if (!meta) continue;
             if (layerSelection.isHidden(meta.layerName, meta.entityId)) continue;
+            if (isViewFiltered(meta.layerName, meta.entityId)) continue;
             out.push(makePickCandidate(entity, meta.layerName, meta.entityId));
         }
         return dedupePickCandidates(out);
@@ -1549,19 +1588,22 @@
             entity.point.color = accent ?? base;
             entity.point.outlineColor = selected
                 ? Cesium.Color.WHITE
-                : (meta.baseOutline ?? Cesium.Color.WHITE.withAlpha(0.85));
-            entity.point.outlineWidth = kind === "primary"
-                ? Math.max(meta.baseOutlineWidth + 2, 3)
-                : selected
-                  ? Math.max(meta.baseOutlineWidth + 1, 2)
-                  : meta.baseOutlineWidth;
+                : (meta.baseOutline ?? Cesium.Color.WHITE);
+            entity.point.outlineWidth = 1;
         } else if (meta.kind === "polyline" && entity.polyline) {
             entity.polyline.width = kind === "primary"
                 ? Math.max(meta.baseWidth + 3, 5)
                 : selected
                   ? Math.max(meta.baseWidth + 1.5, 3.5)
                   : meta.baseWidth;
-            entity.polyline.material = accent ?? base;
+            const color = accent ?? base;
+            if (!selected && meta.dash && Cesium.PolylineDashMaterialProperty) {
+                entity.polyline.material = new Cesium.PolylineDashMaterialProperty({
+                    color,
+                });
+            } else {
+                entity.polyline.material = color;
+            }
         } else if (meta.kind === "polygon" && entity.polygon) {
             const fill = accent ?? base;
             const a = selected
@@ -1642,6 +1684,7 @@
                 | "baseOutlineWidth"
                 | "baseOutline"
                 | "baseAlpha"
+                | "dash"
             >
         > = {},
     ) {
@@ -1656,6 +1699,7 @@
             baseOutlineWidth: extras.baseOutlineWidth ?? 1,
             baseOutline: extras.baseOutline ?? null,
             baseAlpha: extras.baseAlpha ?? 0.35,
+            dash: extras.dash ?? false,
         });
         entity.name = toSelectionKey(layerName, entityId);
         if (layerSelection.isHidden(layerName, entityId)) {
@@ -1705,11 +1749,10 @@
                 cesiumPropValue(entity.point.color, time) ?? fallback;
             const pixelSize =
                 Number(cesiumPropValue(entity.point.pixelSize, time)) || 8;
-            const outlineWidth =
-                Number(cesiumPropValue(entity.point.outlineWidth, time)) || 1;
+            const outlineWidth = 1;
             const outline =
                 cesiumPropValue(entity.point.outlineColor, time) ??
-                Cesium.Color.WHITE.withAlpha(0.85);
+                Cesium.Color.WHITE;
             return {
                 base: color,
                 basePixelSize: pixelSize,
@@ -2351,12 +2394,90 @@
         if (gen !== layerLoadGen) return;
 
         if (!hasFramed) await frameScene();
-        applyHiddenVisibility();
-        syncAllSelectionStyles();
+        applyLayerViews();
         if (layerSelection.size > 0) {
             void flyToSelection(false);
         }
         bumpRender();
+    }
+
+    function colorFromRgba(rgba: number[], opacity: number) {
+        const [r = 0, g = 0, b = 0, a = 255] = rgba;
+        return new Cesium.Color(
+            r / 255,
+            g / 255,
+            b / 255,
+            (a / 255) * opacity,
+        );
+    }
+
+    function selectionKindFor(
+        layerName: string,
+        entityId: string,
+    ): "primary" | "secondary" | null {
+        const key = toSelectionKey(layerName, entityId);
+        if (!layerSelection.selected.has(key)) return null;
+        return key === layerSelection.primaryKey ? "primary" : "secondary";
+    }
+
+    function applyLayerViews() {
+        if (!viewer || !Cesium) return;
+        for (const [, ds] of layerSources) {
+            try {
+                for (const entity of ds.entities.values) {
+                    const meta = entityMeta.get(entity);
+                    if (!meta) continue;
+                    const layer = layers.find((l) => l.name === meta.layerName);
+                    const view = activeView(layer?.views, layer?.activeViewId ?? "");
+                    const op = Math.max(
+                        0,
+                        Math.min(
+                            1,
+                            layer?.opacity ??
+                                defaultOpacityForPackets(layer?.packets),
+                        ),
+                    );
+                    if (view) {
+                        const row = rowByEntityId(
+                            rows[meta.layerName],
+                            meta.entityId,
+                        );
+                        const fill = resolveFill(view.style, row);
+                        const outline = contrastColor(fill);
+                        meta.dash = Boolean(view.style.dash);
+                        meta.basePixelSize = view.style.pointSize || meta.basePixelSize;
+                        meta.baseWidth = view.style.strokeWidth || meta.baseWidth;
+                        if (meta.kind === "point") {
+                            meta.baseOutlineWidth = POINT_OUTLINE_WIDTH;
+                            meta.base = colorFromRgba(fill, op);
+                            meta.baseOutline = colorFromRgba(outline, 1);
+                            meta.baseAlpha = ((fill[3] ?? 255) / 255) * op;
+                        } else if (meta.kind === "polyline") {
+                            const line =
+                                view.source === "sld" &&
+                                view.style.strokeColor?.length
+                                    ? view.style.strokeColor
+                                    : fill;
+                            meta.base = colorFromRgba(line, op);
+                            meta.baseOutline = colorFromRgba(line, op);
+                            meta.baseAlpha = ((line[3] ?? 255) / 255) * op;
+                        } else {
+                            meta.baseOutlineWidth = view.style.strokeWidth || 1;
+                            meta.base = colorFromRgba(fill, op);
+                            meta.baseOutline = colorFromRgba(outline, 1);
+                            meta.baseAlpha = ((fill[3] ?? 255) / 255) * op;
+                        }
+                    }
+                    applyEntitySelectionStyle(
+                        entity,
+                        selectionKindFor(meta.layerName, meta.entityId),
+                    );
+                }
+            } catch {
+                /* ignore */
+            }
+        }
+        applyHiddenVisibility();
     }
 
     function toggleLayer(idx: number) {
@@ -2368,6 +2489,26 @@
             ds.show = layer.visible;
             bumpRender();
         } else if (layer.visible) void syncLayers();
+    }
+
+    function setLayerOpacity(idx: number, opacity: number) {
+        const layer = layers[idx];
+        if (!layer) return;
+        layer.opacity = Math.max(0, Math.min(1, opacity));
+        applyLayerViews();
+    }
+
+    function changeLayerViews(idx: number, next: LayerView[], activeId: string) {
+        const layer = layers[idx];
+        if (!layer) return;
+        layer.views = next;
+        layer.activeViewId = activeId;
+        applyLayerViews();
+        if (canEditViews) onPersistViews?.(layer.name, next);
+    }
+
+    function openLayerStyle(idx: number) {
+        styleLayerIdx = styleLayerIdx === idx ? null : idx;
     }
 
     onMount(() => {
@@ -2394,6 +2535,19 @@
             .map((l) => `${l.name}:${l.packets?.length ?? 0}`)
             .join("|"),
     );
+    let viewApplyKey = $derived(
+        layers
+            .map(
+                (l) =>
+                    `${l.name}:${l.activeViewId ?? ""}:${l.opacity ?? defaultOpacityForPackets(l.packets)}:${JSON.stringify(l.views ?? [])}`,
+            )
+            .join("|"),
+    );
+
+    $effect(() => {
+        if (styleLayerIdx === null) return;
+        if (!layers[styleLayerIdx]) styleLayerIdx = null;
+    });
 
     $effect(() => {
         modelKey;
@@ -2411,6 +2565,26 @@
         layerContentKey;
         if (!ready || !started) return;
         void syncLayers();
+    });
+
+    $effect(() => {
+        viewApplyKey;
+        if (!ready || !started) return;
+        applyLayerViews();
+    });
+
+    $effect(() => {
+        diffFeatures;
+        if (!ready || !started || !viewer || !Cesium) return;
+        let cancelled = false;
+        void syncDiffOverlay(Cesium, viewer, diffFeatures).then((ds) => {
+            if (cancelled) return;
+            diffDataSource = ds;
+            bumpRender();
+        });
+        return () => {
+            cancelled = true;
+        };
     });
 
     // CZML fetch finished — frame now if we skipped while loading=true.
@@ -2514,6 +2688,12 @@
         for (const hash of [...coverageLayers.keys()]) destroyCoverageLayer(hash);
         for (const name of [...layerSources.keys()]) destroyLayerSource(name);
         try {
+            destroyDiffOverlay(viewer, diffDataSource);
+        } catch {
+            /* ignore */
+        }
+        diffDataSource = null;
+        try {
             viewer?.destroy?.();
         } catch {
             /* ignore */
@@ -2541,6 +2721,10 @@
             if (ctxOpen) return;
             if (pickOpen) {
                 closePickPager();
+                return;
+            }
+            if (styleLayerIdx !== null) {
+                styleLayerIdx = null;
                 return;
             }
             if (layerSelection.isIsolating) {
@@ -2998,7 +3182,22 @@
     {/if}
 
     {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
-        <div class="absolute top-2 right-2 z-10">
+        <div class="absolute top-2 right-2 z-10 flex items-start gap-2">
+            {#if styleLayerIdx !== null && layers[styleLayerIdx]}
+                {@const styleLayer = layers[styleLayerIdx]}
+                {#key styleLayer.name}
+                    <LayerStylePanel
+                        layer={styleLayer}
+                        rows={rows[styleLayer.name] ?? []}
+                        canEdit={canEditViews}
+                        onClose={() => (styleLayerIdx = null)}
+                        applyViews={(views, activeId) =>
+                            changeLayerViews(styleLayerIdx!, views, activeId)}
+                        onSetOpacity={(v) =>
+                            setLayerOpacity(styleLayerIdx!, v)}
+                    />
+                {/key}
+            {/if}
             <SceneGraphPanel
                 {layers}
                 {models}
@@ -3012,6 +3211,10 @@
                 onSetModelsVisible={setAllModelsVisible}
                 onToggleCoverage={toggleCoverage}
                 onToggleLayer={toggleLayer}
+                onOpenStyle={openLayerStyle}
+                styleLayerName={styleLayerIdx !== null
+                    ? (layers[styleLayerIdx]?.name ?? "")
+                    : ""}
                 onApplyHidden={applyHiddenVisibility}
                 onFlyTo={() => {
                     lastFlownKey = "";
@@ -3035,6 +3238,13 @@
         >
             Coverage: {coverageError}
         </div>
+    {/if}
+
+    {#if diffFeatures.length > 0}
+        <DiffLegend
+            showBefore={diffFeatures.some((f) => f.oldGeometry)}
+            class="absolute bottom-2 right-14 z-20"
+        />
     {/if}
 
     {#if ready && !loading && models.length === 0 && layers.length === 0 && coverageRows.length === 0}

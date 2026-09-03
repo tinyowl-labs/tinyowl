@@ -10,6 +10,11 @@
     import type { ProjectCoverage } from "$lib/components/dashboard/coverageTypes";
     import type { LayerData } from "$lib/components/dashboard/layerTypes";
     import {
+        defaultOpacityForPackets,
+        ensureExplicitViews,
+        type LayerView,
+    } from "$lib/components/dashboard/layerViews";
+    import {
         entityIdsFromPackets,
         parseNdjsonCzml,
     } from "$lib/components/dashboard/czmlLoad";
@@ -433,7 +438,23 @@
         // later would destroy/recreate LayerScene (full Cesium remount).
         const initial = mapLayers.length === 0;
         if (initial) mapLoading = true;
+        const prevByName = new Map(mapLayers.map((l) => [l.name, l]));
         const results: LayerData[] = [];
+        const persistQueue: { name: string; views: LayerView[] }[] = [];
+
+        let viewsByLayer: Record<string, LayerView[]> = {};
+        try {
+            const vr = await fetch(
+                `/api/v1/projects/${slug}/layer-views`,
+                { headers: authHeaders() },
+            );
+            if (vr.ok) {
+                const doc = (await vr.json()) as { layers?: Record<string, LayerView[]> };
+                viewsByLayer = doc.layers ?? {};
+            }
+        } catch {
+            /* seed later if CZML succeeds */
+        }
 
         for (const name of spatial) {
             if (gen !== czmlLoadGen) return;
@@ -446,11 +467,27 @@
                     const packets = parseNdjsonCzml(await res.text());
                     const entityIds = entityIdsFromPackets(packets, name);
                     if (entityIds.length > 0) {
+                        const prev = prevByName.get(name);
+                        const stored = viewsByLayer[name] ?? prev?.views;
+                        const { views, persist } = ensureExplicitViews(
+                            name,
+                            stored,
+                        );
+                        if (persist) persistQueue.push({ name, views });
                         results.push({
                             name,
                             packets,
                             entityIds,
-                            visible: true,
+                            visible: prev?.visible ?? true,
+                            opacity:
+                                prev?.opacity ??
+                                defaultOpacityForPackets(packets),
+                            views,
+                            activeViewId:
+                                prev?.activeViewId &&
+                                views.some((v) => v.id === prev.activeViewId)
+                                    ? prev.activeViewId
+                                    : (views[0]?.id ?? ""),
                         });
                     }
                 }
@@ -462,13 +499,65 @@
             return;
         }
         const key = layersContentKey(results);
-        if (key !== czmlContentKey) {
+        if (key !== czmlContentKey || persistQueue.length > 0) {
             czmlContentKey = key;
             mapLayers = results;
         }
         czmlFetchedKey = fetchKey;
         czmlInFlightKey = "";
         if (initial) mapLoading = false;
+        if (canWrite) {
+            for (const item of persistQueue) {
+                persistLayerViews(item.name, item.views);
+            }
+        }
+    }
+
+    let persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    function persistLayerViews(layerName: string, views: LayerView[]) {
+        const prev = persistTimers.get(layerName);
+        if (prev) clearTimeout(prev);
+        persistTimers.set(
+            layerName,
+            setTimeout(() => {
+                persistTimers.delete(layerName);
+                void persistLayerViewsNow(layerName, views);
+            }, 400),
+        );
+    }
+
+    async function persistLayerViewsNow(layerName: string, views: LayerView[]) {
+        const slug = $page.params.project;
+        try {
+            const res = await fetch(
+                `/api/v1/projects/${slug}/layers/${encodeURIComponent(layerName)}/views`,
+                {
+                    method: "PUT",
+                    headers: {
+                        ...authHeaders(),
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ views }),
+                },
+            );
+            if (!res.ok) return;
+            const body = (await res.json()) as { views?: LayerView[] };
+            if (!body.views) return;
+            const idx = mapLayers.findIndex((l) => l.name === layerName);
+            if (idx < 0) return;
+            const layer = mapLayers[idx]!;
+            const oldIdx = Math.max(
+                0,
+                (layer.views ?? []).findIndex((v) => v.id === layer.activeViewId),
+            );
+            layer.views = body.views;
+            layer.activeViewId =
+                body.views[oldIdx]?.id ?? body.views[0]?.id ?? "";
+            mapLayers = [...mapLayers];
+        } catch {
+            /* keep session views */
+        }
     }
 
     /** Ensure selected layer is visible — no refetch. */
@@ -646,6 +735,8 @@
                         onSelectTileset={selectTileset}
                         onToggleFullscreen={toggleMapFullscreen}
                         onDimChange={setMapDim}
+                        canEditViews={canWrite}
+                        onPersistViews={persistLayerViews}
                     />
                 {:else}
                     <CesiumLoading />

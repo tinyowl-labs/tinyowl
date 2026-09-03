@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import type { Snippet } from "svelte";
+    import { page } from "$app/stores";
     import {
         isDark,
         setPreference,
@@ -16,6 +17,7 @@
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import { cn } from "$lib/utils.js";
     import EchidnaLogo from "$lib/components/ui/echidna-logo.svelte";
+    import UserAvatar from "$lib/components/ui/user-avatar.svelte";
 
     let {
         subtitle = "",
@@ -42,6 +44,9 @@
     } = $props();
 
     const dark = $derived(isDark());
+    const userId = $derived(
+        ($page.data?.user as { id?: string } | undefined)?.id ?? "",
+    );
 
     let isMounted = $state(false);
     onMount(() => (isMounted = true));
@@ -136,10 +141,14 @@
         {#if hasSession}
             <div class="group/profile relative">
                 <a
-                    href="/profile"
-                    class="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground group-hover/profile:bg-accent group-hover/profile:text-foreground group-focus-within/profile:bg-accent group-focus-within/profile:text-foreground"
+                    href={userId ? `/users/${userId}` : "/profile"}
+                    class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground group-hover/profile:bg-accent group-hover/profile:text-foreground group-focus-within/profile:bg-accent group-focus-within/profile:text-foreground"
                 >
-                    <UserIcon class="size-3.5" />
+                    {#if userId}
+                        <UserAvatar userId={userId} class="size-6" />
+                    {:else}
+                        <UserIcon class="size-3.5" />
+                    {/if}
                     Profile
                     <ChevronDownIcon class="size-3 opacity-60" />
                 </a>
@@ -154,12 +163,27 @@
                         >
                             Account
                         </p>
+                        {#if userId}
+                            <a
+                                href="/users/{userId}"
+                                class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
+                            >
+                                <UserIcon class="size-3.5 shrink-0" />
+                                Your profile
+                            </a>
+                        {/if}
                         <a
                             href="/profile"
                             class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
                         >
                             <UserIcon class="size-3.5 shrink-0" />
                             Projects
+                        </a>
+                        <a
+                            href="/orgs"
+                            class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
+                        >
+                            Organisations
                         </a>
                         <a
                             href="/settings"

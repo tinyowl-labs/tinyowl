@@ -3,12 +3,12 @@ import { TINYOWL_CORE_URL } from "$env/static/private";
 
 export const load: PageServerLoad = async ({ locals, fetch }) => {
   const { user } = await locals.getSession();
-  if (!user) return { user: null, projects: [], diffs: [] };
+  if (!user) return { user: null, projects: [], diffs: [], orgs: [] };
 
   const accessToken = await locals.getAccessToken();
-  if (!accessToken) return { user, projects: [], diffs: [] };
+  if (!accessToken) return { user, projects: [], diffs: [], orgs: [] };
 
-  let projects: { slug: string; title: string; role: string }[] = [];
+  let projects: { slug: string; title: string; role: string; org_slug?: string }[] = [];
   try {
     const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -37,7 +37,16 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
     if (res.ok) diffs = await res.json();
   } catch (_) {}
 
-  return { user, projects, diffs };
+  let orgs: { slug: string; name: string; role: string; has_avatar: boolean }[] =
+    [];
+  try {
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/orgs`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) orgs = await res.json();
+  } catch (_) {}
+
+  return { user, projects, diffs, orgs };
 };
 
 export const actions: Actions = {

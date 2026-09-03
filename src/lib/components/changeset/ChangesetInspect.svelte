@@ -1,5 +1,6 @@
 <script lang="ts">
     import ReviewMap from "$lib/components/dashboard/ReviewMap.svelte";
+    import { fromListChanges } from "$lib/geoDiff";
 
     type Props = {
         geodiff: any[];
@@ -115,6 +116,8 @@
         }),
     );
 
+    const diffFeatures = $derived(fromListChanges(geodiff));
+
     const entityRows = $derived(rows.filter((r) => !r.isMeta));
     const metaRows = $derived(rows.filter((r) => r.isMeta));
     const visibleRows = $derived(
@@ -122,13 +125,15 @@
     );
 
     const features = $derived(
-        rows
-            .filter((r) => r.geometry)
-            .map((r) => ({
-                id: r.id,
-                table: r.table,
-                type: r.type,
-                geometry: r.geometry,
+        diffFeatures
+            .filter((f) => f.geometry || f.oldGeometry)
+            .map((f) => ({
+                id: f.id,
+                table: f.table,
+                type: f.op,
+                op: f.op,
+                geometry: f.geometry,
+                oldGeometry: f.oldGeometry,
             })),
     );
 

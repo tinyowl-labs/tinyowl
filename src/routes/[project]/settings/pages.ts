@@ -1,4 +1,5 @@
 export const SETTINGS_PAGES = [
+    { id: "general", label: "General" },
     { id: "visibility", label: "Visibility" },
     { id: "licence", label: "Licence" },
     { id: "embargo", label: "Embargo" },
@@ -10,7 +11,7 @@ export type SettingsPageId = (typeof SETTINGS_PAGES)[number]["id"];
 
 /** Old `?tab=` values on `/[project]/settings`. */
 export const LEGACY_TAB_TO_PAGE: Record<string, SettingsPageId> = {
-    general: "visibility",
+    general: "general",
     visibility: "visibility",
     licence: "licence",
     embargo: "embargo",

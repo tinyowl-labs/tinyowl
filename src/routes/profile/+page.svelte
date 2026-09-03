@@ -12,6 +12,7 @@
     import CheckIcon from "@lucide/svelte/icons/check";
     import UserPlusIcon from "@lucide/svelte/icons/user-plus";
     import Header from "$lib/components/ui/header.svelte";
+    import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import { Button } from "$lib/components/ui/button/index.js";
     import CommitTimeline from "$lib/components/dashboard/CommitTimeline.svelte";
 
@@ -26,6 +27,7 @@
     const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const user = $derived(data?.user);
     const projects = $derived(data?.projects ?? []);
+    const orgs = $derived(data?.orgs ?? []);
     const diffs = $derived(data?.diffs ?? []);
 
     const displayName = $derived(
@@ -137,10 +139,21 @@
                             onclick={() => (accountOpen = !accountOpen)}
                         >
                             <span
-                                class="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium text-muted-foreground"
+                                class="flex size-9 shrink-0 items-center justify-center"
                                 aria-hidden="true"
                             >
-                                {initials}
+                                {#if user?.id}
+                                    <UserAvatar
+                                        userId={user.id}
+                                        name={displayName}
+                                        class="size-9"
+                                    />
+                                {:else}
+                                    <span
+                                        class="flex size-9 items-center justify-center rounded-full bg-secondary text-xs font-medium text-muted-foreground"
+                                        >{initials}</span
+                                    >
+                                {/if}
                             </span>
                             <span class="min-w-0">
                                 <span
@@ -177,10 +190,21 @@
                                     aria-selected="true"
                                 >
                                     <div
-                                        class="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-medium text-muted-foreground"
+                                        class="flex size-7 shrink-0 items-center justify-center"
                                         aria-hidden="true"
                                     >
-                                        {initials}
+                                        {#if user?.id}
+                                            <UserAvatar
+                                                userId={user.id}
+                                                name={displayName}
+                                                class="size-7"
+                                            />
+                                        {:else}
+                                            <span
+                                                class="flex size-7 items-center justify-center rounded-full bg-secondary text-[10px] font-medium text-muted-foreground"
+                                                >{initials}</span
+                                            >
+                                        {/if}
                                     </div>
                                     <div class="min-w-0 flex-1">
                                         <p
@@ -221,6 +245,44 @@
                 </div>
 
                 <section class="mb-8">
+                    {#if orgs.length > 0}
+                        <div class="mb-6">
+                            <div
+                                class="mb-3 flex items-center justify-between gap-3"
+                            >
+                                <h2
+                                    class="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                                >
+                                    Organisations
+                                </h2>
+                                <a
+                                    href="/orgs"
+                                    class="text-xs text-muted-foreground no-underline hover:text-foreground"
+                                    >All</a
+                                >
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                {#each orgs as org (org.slug)}
+                                    <a
+                                        href="/orgs/{org.slug}"
+                                        class="inline-flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs no-underline hover:bg-accent"
+                                    >
+                                        {#if org.has_avatar}
+                                            <img
+                                                src="/orgs/{org.slug}/avatar"
+                                                alt=""
+                                                class="size-5 rounded-full object-cover"
+                                            />
+                                        {/if}
+                                        <span class="font-medium text-foreground"
+                                            >{org.name}</span
+                                        >
+                                    </a>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
+
                     <div
                         class="mb-3 flex items-center justify-between gap-3"
                     >

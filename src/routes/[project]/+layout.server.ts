@@ -13,6 +13,9 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
     slug: string;
     title: string;
     description?: string | null;
+    org_slug?: string | null;
+    org?: { slug: string; name: string; has_avatar: boolean } | null;
+    members?: { user_id: string; email: string; role: string }[];
     gpkg_uri?: string | null;
     media_uri?: string | null;
     entity_count?: number | null;

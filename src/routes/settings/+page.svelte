@@ -9,6 +9,7 @@
     import { page } from "$app/stores";
     import { untrack } from "svelte";
     import Header from "$lib/components/ui/header.svelte";
+    import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
@@ -42,6 +43,7 @@
 
     const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const user = $derived(data?.user);
+    const hasAvatar = $derived(Boolean(data?.hasAvatar));
     const qfieldAccounts = $derived(data?.qfieldAccounts ?? []);
     const qfieldLinks = $derived(
         (data?.qfieldLinks ?? []) as {
@@ -435,6 +437,21 @@
                 last_name: lastName.trim(),
             },
         });
+        if (!error) {
+            const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+            const { data: sessionData } = await supabase.auth.getSession();
+            const token = sessionData.session?.access_token;
+            if (token) {
+                await fetch("/api/v1/me", {
+                    method: "PATCH",
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ display_name: displayName }),
+                });
+            }
+        }
         accountSaving = false;
         if (error) {
             accountError = error.message;
@@ -602,11 +619,27 @@
                         <div class="space-y-6 w-full">
                             <section>
                                 <div class="flex items-center gap-4 mb-4">
-                                    <div
-                                        class="size-16 shrink-0 rounded-full bg-secondary flex items-center justify-center text-xl font-medium text-muted-foreground"
-                                    >
-                                        {initials}
-                                    </div>
+                                    {#if user?.id}
+                                        <UserAvatar
+                                            userId={user.id}
+                                            name={firstName
+                                                ? `${firstName} ${lastName}`.trim()
+                                                : (user?.email ?? "")}
+                                            class="size-16"
+                                            bust={hasAvatar
+                                                ? "1"
+                                                : form?.accountAction ===
+                                                    "avatar-removed"
+                                                  ? "0"
+                                                  : ""}
+                                        />
+                                    {:else}
+                                        <div
+                                            class="size-16 shrink-0 rounded-full bg-secondary flex items-center justify-center text-xl font-medium text-muted-foreground"
+                                        >
+                                            {initials}
+                                        </div>
+                                    {/if}
                                     <div class="min-w-0">
                                         <p
                                             class="text-sm font-medium text-foreground truncate"
@@ -622,7 +655,52 @@
                                                 {user.email}
                                             </p>
                                         {/if}
+                                        {#if user?.id}
+                                            <a
+                                                href="/users/{user.id}"
+                                                class="mt-1 inline-block text-xs text-muted-foreground no-underline hover:text-foreground"
+                                                >View profile</a
+                                            >
+                                        {/if}
                                     </div>
+                                </div>
+                                <div class="mb-4 flex flex-wrap gap-2">
+                                    <form
+                                        method="POST"
+                                        action="?/uploadAvatar"
+                                        enctype="multipart/form-data"
+                                        use:enhance
+                                    >
+                                        <label
+                                            class="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                                        >
+                                            Upload avatar
+                                            <input
+                                                type="file"
+                                                name="avatar"
+                                                accept="image/jpeg,image/png,image/gif,image/webp"
+                                                class="sr-only"
+                                                onchange={(e) => {
+                                                    e.currentTarget.form?.requestSubmit();
+                                                }}
+                                            />
+                                        </label>
+                                    </form>
+                                    {#if hasAvatar}
+                                        <form
+                                            method="POST"
+                                            action="?/removeAvatar"
+                                            use:enhance
+                                        >
+                                            <Button
+                                                type="submit"
+                                                size="sm"
+                                                variant="ghost"
+                                                class="text-muted-foreground"
+                                                >Remove</Button
+                                            >
+                                        </form>
+                                    {/if}
                                 </div>
 
                                 <form onsubmit={saveAccount} class="space-y-4">

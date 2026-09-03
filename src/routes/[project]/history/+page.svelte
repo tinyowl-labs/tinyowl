@@ -5,6 +5,7 @@
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
     import ReviewMap from "$lib/components/dashboard/ReviewMap.svelte";
     import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
+    import { fromListChanges } from "$lib/geoDiff";
 
     let { data } = $props();
 
@@ -83,13 +84,19 @@
         }
         if (names.size === 0) names.add("Sites");
 
-        const opByKey = new Map<string, { type: string; geometry: any }>();
-        for (const e of geodiff) {
-            const table = String((e as any)?.table ?? "");
+        const parsed = fromListChanges(geodiff);
+        const opByKey = new Map<
+            string,
+            { type: string; geometry: any; oldGeometry?: any }
+        >();
+        for (let i = 0; i < geodiff.length; i++) {
+            const e = geodiff[i] as any;
+            const table = String(e?.table ?? "");
             if (!table || table.startsWith("_")) continue;
-            const op = String((e as any)?.type ?? "").toLowerCase();
+            const f = parsed[i];
+            const op = String(f?.op ?? e?.type ?? "").toLowerCase();
             if (op !== "insert" && op !== "update" && op !== "delete") continue;
-            const cols = Array.isArray((e as any)?.changes) ? (e as any).changes : [];
+            const cols = Array.isArray(e?.changes) ? e.changes : [];
             let eid = "";
             for (const c of cols) {
                 const n = String(c?.name ?? "");
@@ -102,7 +109,13 @@
                 }
             }
             const key = eid ? `${table}:${eid}` : "";
-            if (key) opByKey.set(key, { type: op, geometry: (e as any).geometry });
+            if (key) {
+                opByKey.set(key, {
+                    type: op,
+                    geometry: f?.geometry ?? e.geometry,
+                    oldGeometry: f?.oldGeometry,
+                });
+            }
         }
 
         for (const name of names) {
@@ -122,6 +135,7 @@
                         table: name,
                         type: op?.type ?? "head",
                         geometry: f.geometry,
+                        oldGeometry: op?.oldGeometry,
                     });
                     if (op) opByKey.delete(key);
                 }
@@ -130,23 +144,25 @@
             }
         }
         for (const [key, op] of opByKey) {
-            if (!op.geometry) continue;
+            if (!op.geometry && !op.oldGeometry) continue;
             const table = key.slice(0, key.indexOf(":"));
             feats.push({
                 id: key,
                 table,
                 type: op.type,
                 geometry: op.geometry,
+                oldGeometry: op.oldGeometry,
             });
         }
         if (feats.length === 0) {
-            for (const e of geodiff) {
-                if (!(e as any)?.geometry) continue;
+            for (const f of parsed) {
+                if (!f.geometry && !f.oldGeometry) continue;
                 feats.push({
-                    id: `${(e as any).table}:${(e as any).changes?.[0]?.new ?? feats.length}`,
-                    table: (e as any).table,
-                    type: (e as any).type ?? "head",
-                    geometry: (e as any).geometry,
+                    id: `${f.table}:${f.entityId}`,
+                    table: f.table,
+                    type: f.op,
+                    geometry: f.geometry,
+                    oldGeometry: f.oldGeometry,
                 });
             }
         }

@@ -9,9 +9,10 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
   }
 
   const accessToken = await locals.getAccessToken();
-  if (!accessToken) {
+    if (!accessToken) {
     return {
       user,
+      hasAvatar: false,
       qfieldAccounts: [],
       qfieldLinks: [],
       ocLinks: [],
@@ -92,7 +93,16 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
     if (res.ok) cliTokens = await res.json();
   } catch (_) {}
 
-  return { user, qfieldAccounts, qfieldLinks, ocLinks, cliTokens };
+  let hasAvatar = false;
+  try {
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/me`, { headers });
+    if (res.ok) {
+      const me = (await res.json()) as { has_avatar?: boolean };
+      hasAvatar = Boolean(me.has_avatar);
+    }
+  } catch (_) {}
+
+  return { user, hasAvatar, qfieldAccounts, qfieldLinks, ocLinks, cliTokens };
 };
 
 export const actions: Actions = {
@@ -306,5 +316,43 @@ export const actions: Actions = {
       publishedSlug: slug,
       importStatus: "pending",
     };
+  },
+
+  uploadAvatar: async ({ request, locals, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", accountAction: "avatar" };
+    const data = await request.formData();
+    const file = data.get("avatar");
+    if (!(file instanceof File) || file.size === 0) {
+      return { error: "Choose an image.", accountAction: "avatar" };
+    }
+    const buf = Buffer.from(await file.arrayBuffer());
+    const token = await locals.getAccessToken();
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/me/avatar`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: buf,
+    });
+    if (!res.ok) {
+      return { error: `Avatar: ${await res.text()}`, accountAction: "avatar" };
+    }
+    return { success: true, accountAction: "avatar" };
+  },
+
+  removeAvatar: async ({ locals, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in", accountAction: "avatar-removed" };
+    const token = await locals.getAccessToken();
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/me/avatar`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      return { error: `Failed: ${await res.text()}`, accountAction: "avatar-removed" };
+    }
+    return { success: true, accountAction: "avatar-removed" };
   },
 };

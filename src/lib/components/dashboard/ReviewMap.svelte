@@ -18,12 +18,21 @@
     } from "../leafletBoot";
     import MapLoading from "../MapLoading.svelte";
     import MapAttribution from "../MapAttribution.svelte";
+    import DiffLegend from "./DiffLegend.svelte";
+    import {
+        DIFF_OP_FILL,
+        asGeometry,
+        parseDiffOp,
+        type DiffOp,
+    } from "$lib/geoDiff";
 
     type Feature = {
         id: string;
-        table: string;
-        type: string;
-        geometry: any;
+        table?: string;
+        type?: string;
+        op?: DiffOp;
+        geometry: unknown;
+        oldGeometry?: unknown;
     };
 
     type Props = {
@@ -48,38 +57,47 @@
         mounted = true;
     });
 
-    function asGeometry(raw: unknown): any | null {
-        if (!raw) return null;
-        let g: any = raw;
-        if (typeof g === "string") {
-            try {
-                g = JSON.parse(g);
-            } catch {
-                return null;
-            }
-        }
-        if (!g || typeof g !== "object") return null;
-        if (typeof g.type === "string" && Array.isArray(g.coordinates)) return g;
-        if (g.type === "Feature" && g.geometry) return asGeometry(g.geometry);
-        return null;
+    const showBefore = $derived(
+        features.some((f) => asGeometry(f.oldGeometry) != null),
+    );
+
+    function featureOp(f: Feature): DiffOp {
+        return parseDiffOp(f.op ?? f.type);
     }
 
-    const OP_FILL: Record<string, string> = {
-        insert: "#34d399",
-        update: "#fbbf24",
-        delete: "#f87171",
-        head: "#64748b",
-    };
-
-    function paint(type: string, selected: boolean) {
-        const fill = OP_FILL[type.toLowerCase()] ?? "#c45c26";
+    function paint(op: DiffOp, selected: boolean, role: "after" | "before") {
+        const fill = DIFF_OP_FILL[op] ?? "#c45c26";
+        const before = role === "before";
         return {
-            radius: selected ? 8 : 6,
-            color: selected ? "#fff" : "rgba(255,255,255,0.85)",
-            weight: selected ? 3 : 1.5,
+            radius: selected && !before ? 8 : before ? 5 : 6,
+            color: selected && !before ? "#fff" : "rgba(255,255,255,0.85)",
+            weight: selected && !before ? 3 : 1.5,
             fillColor: fill,
-            fillOpacity: type.toLowerCase() === "head" ? 0.7 : 0.95,
+            fillOpacity: before
+                ? 0.35
+                : op === "head"
+                  ? 0.7
+                  : op === "delete"
+                    ? 0.55
+                    : 0.95,
+            dashArray:
+                before || op === "delete" ? ("6 4" as const) : undefined,
         };
+    }
+
+    function addPoint(
+        L: LeafletNS,
+        lon: number,
+        lat: number,
+        op: DiffOp,
+        selected: boolean,
+        role: "after" | "before",
+    ) {
+        if (!cluster) return;
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+        cluster.addLayer(
+            L.circleMarker([lat, lon], paint(op, selected, role)),
+        );
     }
 
     function redrawFeatures() {
@@ -94,27 +112,46 @@
         }
 
         const otherFeatures: GeoJSON.Feature[] = [];
-        for (const f of features) {
-            const geometry = asGeometry(f.geometry);
-            if (!geometry) continue;
+
+        const pushGeom = (
+            f: Feature,
+            raw: unknown,
+            role: "after" | "before",
+        ) => {
+            const geometry = asGeometry(raw);
+            if (!geometry) return;
+            const op = featureOp(f);
+            const selected = selectedId === f.id;
             if (
                 geometry.type === "Point" &&
                 Array.isArray(geometry.coordinates)
             ) {
-                const lon = Number(geometry.coordinates[0]);
-                const lat = Number(geometry.coordinates[1]);
-                if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-                const selected = selectedId === f.id;
-                const marker = L.circleMarker([lat, lon], paint(f.type, selected));
-                cluster.addLayer(marker);
-            } else {
-                otherFeatures.push({
-                    type: "Feature",
-                    id: f.id,
-                    properties: { table: f.table, type: f.type, id: f.id },
-                    geometry,
-                });
+                addPoint(
+                    L,
+                    Number(geometry.coordinates[0]),
+                    Number(geometry.coordinates[1]),
+                    op,
+                    selected,
+                    role,
+                );
+                return;
             }
+            otherFeatures.push({
+                type: "Feature",
+                id: `${f.id}:${role}`,
+                properties: {
+                    table: f.table,
+                    type: op,
+                    id: f.id,
+                    role,
+                },
+                geometry: geometry as GeoJSON.Geometry,
+            });
+        };
+
+        for (const f of features) {
+            pushGeom(f, f.oldGeometry, "before");
+            pushGeom(f, f.geometry, "after");
         }
 
         if (otherFeatures.length) {
@@ -125,15 +162,26 @@
                 } as GeoJSON.FeatureCollection,
                 {
                     style: (feat) => {
-                        const id = String(feat?.id ?? feat?.properties?.id ?? "");
-                        const type = String(feat?.properties?.type ?? "head");
-                        const selected = selectedId != null && id === selectedId;
-                        const p = paint(type, selected);
+                        const id = String(feat?.properties?.id ?? "");
+                        const op = parseDiffOp(feat?.properties?.type);
+                        const role =
+                            feat?.properties?.role === "before"
+                                ? "before"
+                                : "after";
+                        const selected =
+                            selectedId != null && id === selectedId;
+                        const p = paint(op, selected, role);
                         return {
                             color: p.fillColor,
-                            weight: selected ? 3 : 2,
+                            weight: selected && role === "after" ? 3 : 2,
                             fillColor: p.fillColor,
-                            fillOpacity: type === "head" ? 0.18 : 0.35,
+                            fillOpacity:
+                                role === "before"
+                                    ? 0.12
+                                    : op === "head"
+                                      ? 0.18
+                                      : 0.35,
+                            dashArray: p.dashArray,
                         };
                     },
                 },
@@ -217,17 +265,8 @@
         <MapLoading class="absolute inset-0" />
     {/if}
     <MapAttribution class="bottom-1 right-1" />
-    <div
-        class="leaflet-map-chrome pointer-events-none absolute left-2 bottom-2 z-10 flex gap-2 rounded bg-background/90 px-1.5 py-1 text-[10px] text-muted-foreground shadow-sm ring-1 ring-border/60"
-    >
-        <span class="inline-flex items-center gap-1"
-            ><i class="size-2 rounded-full bg-emerald-400"></i> insert</span
-        >
-        <span class="inline-flex items-center gap-1"
-            ><i class="size-2 rounded-full bg-amber-400"></i> update</span
-        >
-        <span class="inline-flex items-center gap-1"
-            ><i class="size-2 rounded-full bg-red-400"></i> delete</span
-        >
-    </div>
+    <DiffLegend
+        {showBefore}
+        class="leaflet-map-chrome absolute left-2 bottom-2 z-10"
+    />
 </div>

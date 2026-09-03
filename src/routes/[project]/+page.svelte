@@ -10,13 +10,39 @@
     import FileTextIcon from "@lucide/svelte/icons/file-text";
     import { marked } from "marked";
     import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
+    import UserAvatar from "$lib/components/ui/user-avatar.svelte";
+    import { buildSearchParams } from "$lib/search/params";
 
     let { data, form } = $props();
 
     const project = $derived(data?.project);
+    const description = $derived(
+        (
+            ((project as any)?.description as string | null | undefined) ?? ""
+        ).trim(),
+    );
     const accessToken = $derived(((data as any)?.accessToken as string) ?? "");
     const role = $derived(((data as any)?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
+
+    type ProjectPerson = { user_id: string; email: string; role: string };
+    type OrgSummary = { slug: string; name: string; has_avatar: boolean };
+    const org = $derived(
+        ((project as any)?.org as OrgSummary | null | undefined) ?? null,
+    );
+    const people = $derived(
+        ((project as any)?.members as ProjectPerson[] | undefined) ?? [],
+    );
+    const humanOwners = $derived(people.filter((p) => p.role === "owner"));
+    const memberPeople = $derived(
+        org ? people : people.filter((p) => p.role !== "owner"),
+    );
+    const memberStack = $derived(memberPeople.slice(0, 8));
+    const memberExtra = $derived(Math.max(0, memberPeople.length - memberStack.length));
+    function personLabel(p: ProjectPerson) {
+        return p.email || p.user_id;
+    }
+
     const head = $derived(
         (data as any)?.head as Record<string, unknown> | null,
     );
@@ -93,6 +119,10 @@
         ].slice(0, 8);
         return { manual, auto };
     });
+
+    function tagHref(tag: string) {
+        return `/search?${buildSearchParams({ tags: [tag] }).toString()}`;
+    }
 
     // Drop leading H1 when it duplicates the project title.
     const readmeHtml = $derived.by(() => {
@@ -248,7 +278,7 @@
             </h1>
             {#if canManage}
                 <a
-                    href="/{project?.slug}/settings"
+                    href="/{project?.slug}/settings/general"
                     class="text-muted-foreground hover:text-foreground transition-colors -mb-1"
                     title="Edit project"
                 >
@@ -256,6 +286,13 @@
                 </a>
             {/if}
         </div>
+        {#if description}
+            <p
+                class="mt-3 max-w-2xl text-base leading-relaxed text-muted-foreground whitespace-pre-wrap"
+            >
+                {description}
+            </p>
+        {/if}
         <div
             class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
         >
@@ -288,18 +325,20 @@
                 {#if displayTags.manual.length > 0 || displayTags.auto.length > 0}
                     <div class="mb-5 flex flex-wrap items-center gap-2">
                         {#each displayTags.manual as tag}
-                            <span
-                                class="rounded-md bg-secondary px-2 py-1 text-[12px] text-foreground/85"
-                                >{tag}</span
+                            <a
+                                href={tagHref(tag)}
+                                class="rounded-md bg-secondary px-2 py-1 text-[12px] text-foreground/85 no-underline hover:bg-secondary/80 hover:text-foreground"
+                                >{tag}</a
                             >
                         {/each}
                         {#if displayTags.manual.length > 0 && displayTags.auto.length > 0}
                             <span class="text-muted-foreground/30 mx-0.5">·</span>
                         {/if}
                         {#each displayTags.auto as tag, i}
-                            <span
-                                class="text-[12px] text-muted-foreground/65"
-                                title="Auto-derived">{tag}</span
+                            <a
+                                href={tagHref(tag)}
+                                class="text-[12px] text-muted-foreground/65 no-underline hover:text-foreground hover:underline"
+                                title="Auto-derived">{tag}</a
                             >
                             {#if i < displayTags.auto.length - 1}
                                 <span class="text-muted-foreground/25">·</span>
@@ -373,6 +412,84 @@
         </div>
 
         <aside class="flex flex-col gap-3 lg:sticky lg:top-6">
+            <div class="rounded-lg border border-border overflow-hidden">
+                <div class="px-4 py-3">
+                    <p class="text-sm font-medium text-foreground">Owner</p>
+                    <div class="mt-2.5 flex items-center">
+                        {#if org}
+                            <a
+                                href="/orgs/{org.slug}"
+                                class="relative z-0 inline-flex no-underline"
+                                title={org.name}
+                            >
+                                {#if org.has_avatar}
+                                    <img
+                                        src="/orgs/{org.slug}/avatar"
+                                        alt={org.name}
+                                        class="size-8 rounded-full object-cover ring-2 ring-background"
+                                    />
+                                {:else}
+                                    <span
+                                        class="flex size-8 items-center justify-center rounded-full bg-secondary text-xs font-medium text-muted-foreground ring-2 ring-background"
+                                        >{org.name.charAt(0).toUpperCase()}</span
+                                    >
+                                {/if}
+                            </a>
+                        {:else if humanOwners.length > 0}
+                            <div class="flex -space-x-2">
+                                {#each humanOwners as person, i (person.user_id)}
+                                    <span
+                                        class="relative hover:z-20"
+                                        style="z-index: {humanOwners.length - i}"
+                                    >
+                                        <UserAvatar
+                                            userId={person.user_id}
+                                            name={personLabel(person)}
+                                            href="/users/{person.user_id}"
+                                            class="size-8 ring-2 ring-background"
+                                        />
+                                    </span>
+                                {/each}
+                            </div>
+                        {:else}
+                            <p class="text-xs text-muted-foreground">—</p>
+                        {/if}
+                    </div>
+                </div>
+                <div class="border-t border-border px-4 py-3">
+                    <p class="text-sm font-medium text-foreground">Members</p>
+                    {#if memberPeople.length > 0}
+                        <div class="mt-2.5 flex items-center">
+                            <div class="flex -space-x-2">
+                                {#each memberStack as person, i (person.user_id)}
+                                    <span
+                                        class="relative hover:z-20"
+                                        style="z-index: {memberStack.length - i}"
+                                    >
+                                        <UserAvatar
+                                            userId={person.user_id}
+                                            name={personLabel(person)}
+                                            href="/users/{person.user_id}"
+                                            class="size-8 ring-2 ring-background"
+                                        />
+                                    </span>
+                                {/each}
+                                {#if memberExtra > 0}
+                                    <span
+                                        class="relative flex size-8 items-center justify-center rounded-full bg-muted text-[11px] font-medium text-muted-foreground ring-2 ring-background"
+                                        style="z-index: 0"
+                                        title="+{memberExtra} more"
+                                        >+{memberExtra}</span
+                                    >
+                                {/if}
+                            </div>
+                        </div>
+                    {:else}
+                        <p class="mt-2.5 text-xs text-muted-foreground">—</p>
+                    {/if}
+                </div>
+            </div>
+
             <div class="rounded-lg border border-border overflow-hidden">
                 <button
                     onclick={toggleSimilar}

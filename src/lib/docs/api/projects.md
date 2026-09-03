@@ -179,18 +179,22 @@ Update project metadata.
 {
   "title": "Updated Project Title",
   "description": "Updated description",
+  "tags_manual": ["rock-art", "survey"],
   "visibility": "public",
   "licence": "CC-BY-4.0",
   "embargo_until": null,
   "embargo_note": null,
-  "location_precision": 3
+  "location_precision": "exact"
 }
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `title` | string | No | New display title |
-| `description` | string | No | New description |
+| `description` | string\|null | No | New description (`""` to clear) |
+| `tags_manual` | string[] | No | Curator tags (`[]` to clear). Auto tags are not writable. |
+| `date_start` / `date_end` | int\|null | No | Temporal extent in astronomical years (`null` to clear) |
+| `date_start_label` / `date_end_label` | string\|null | No | Human labels (`""` to clear) |
 | `visibility` | string | No | `"public"` or `"private"` |
 | `licence` | string | No | Licence identifier (e.g. `"CC-BY-4.0"`, `"ALL_RIGHTS"`) |
 | `embargo_until` | string\|null | No | ISO 8601 date when embargo lifts (`null` to clear) |
