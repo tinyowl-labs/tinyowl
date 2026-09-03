@@ -12,6 +12,7 @@
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
     import { onMount } from "svelte";
+    import type { Snippet } from "svelte";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
     import { projectLayersSearchHref, projectLayerHref, projectArtefactHref, projectLayersPlaceHref, entityLayersHref } from "$lib/project/entityLink";
@@ -113,6 +114,8 @@
         palette?: boolean;
         /** Always reserve a chip row under the bar so filters don't jump the layout. */
         reserveChipTray?: boolean;
+        /** Extra controls on the chip row (e.g. spatial tools). */
+        chipActions?: Snippet;
         class?: string;
     };
 
@@ -140,6 +143,7 @@
         listboxId = "search-mention-list",
         palette = false,
         reserveChipTray = false,
+        chipActions,
         class: klass = "",
     }: Props = $props();
 
@@ -1651,7 +1655,7 @@
 
     <form
         onsubmit={handleSubmit}
-        class="relative w-full"
+        class="relative w-full shrink-0"
         ondragover={onDragOver}
         ondragleave={onDragLeave}
         ondrop={onDrop}
@@ -1755,13 +1759,16 @@
             {/if}
         </button>
         </div>
-        {#if hasChips || palette || reserveChipTray}
+        {#if hasChips || palette || reserveChipTray || chipActions}
             <div
-                class="search-chip-tray mt-1.5 flex min-h-7 flex-wrap items-center gap-1 {palette
-                    ? 'border-t border-border px-1 pt-1.5'
+                class="search-chip-tray mt-1.5 flex h-8 shrink-0 items-center gap-1.5 {palette
+                    ? 'border-t border-border px-1 pt-1.5 h-auto min-h-8'
                     : ''}"
                 onclick={(e) => e.stopPropagation()}
             >
+                <div
+                    class="flex h-8 min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden rounded-md border border-border bg-muted/30 px-1.5"
+                >
                 {#if hasImageChip}
                     <button
                         type="button"
@@ -1862,6 +1869,12 @@
                         <XIcon class="size-3 opacity-70" />
                     </button>
                 {/each}
+                </div>
+                {#if chipActions}
+                    <div class="flex shrink-0 items-center gap-1.5">
+                        {@render chipActions()}
+                    </div>
+                {/if}
                 {#if palette}
                     <span
                         class="ml-auto shrink-0 px-1 text-[10px] text-muted-foreground"

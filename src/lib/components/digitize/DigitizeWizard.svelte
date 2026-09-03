@@ -22,6 +22,8 @@
     let title = $state(existingTitle);
     let tableKey = $state("");
     let rowCount = $state(0);
+    let pendingReview = $state(false);
+    let changesetId = $state("");
 
     const steps: { id: Step; label: string; hint: string }[] = existingSlug
         ? [
@@ -61,8 +63,9 @@
         </div>
         <p class="mt-1 text-sm text-muted-foreground">
             {#if inProject}
-                Add CSV or GeoJSON into {existingTitle || existingSlug}. Tables
-                stay project-owned — map values when you’re ready.
+                Add CSV or GeoJSON into {existingTitle || existingSlug}. A
+                commit message is required; the table stays pending until
+                review.
             {:else}
                 Every site keeps its own tables. Import what you have, then link
                 foreign keys and map values when you’re ready.
@@ -130,7 +133,9 @@
                     onImported={(info) => {
                         tableKey = info.tableKey;
                         rowCount = info.rows;
-                        step = "media";
+                        pendingReview = Boolean(info.pending);
+                        changesetId = info.changesetId ?? "";
+                        step = info.pending ? "done" : "media";
                     }}
                 />
             {:else if step === "media"}
@@ -141,7 +146,14 @@
                     onSkip={() => (step = "done")}
                 />
             {:else}
-                <DoneStep {slug} {title} {tableKey} {rowCount} />
+                <DoneStep
+                    {slug}
+                    {title}
+                    {tableKey}
+                    {rowCount}
+                    pending={pendingReview}
+                    {changesetId}
+                />
             {/if}
         </div>
     </div>

@@ -13,6 +13,8 @@
             tableKey: string;
             rows: number;
             format?: string;
+            pending?: boolean;
+            changesetId?: string;
         }) => void;
     };
 
@@ -37,6 +39,7 @@
     let progressPct = $state(0);
     let error = $state("");
     let dragOver = $state(false);
+    let message = $state("");
 
     const typeOptions = [
         "string",
@@ -139,6 +142,10 @@
             error = "Choose a file first";
             return;
         }
+        if (!message.trim()) {
+            error = "Commit message required";
+            return;
+        }
         error = "";
         busy = true;
         setPhase("importing", 25);
@@ -157,6 +164,7 @@
                     })),
                 ),
             );
+            fd.append("message", message.trim());
             // Soft progress while request is in flight
             const tick = window.setInterval(() => {
                 if (phase === "importing" && progressPct < 70) {
@@ -169,7 +177,10 @@
                 `/api/v1/projects/${encodeURIComponent(slug)}/import`,
                 {
                     method: "POST",
-                    headers: { Authorization: `Bearer ${accessToken}` },
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        "X-TinyOwl-Message": message.trim(),
+                    },
                     body: fd,
                 },
             );
@@ -190,6 +201,9 @@
                 tableKey: data.table_key || tableKey,
                 rows: data.rows ?? rowCount,
                 format: data.format || format,
+                pending:
+                    res.status === 202 || data.status === "pending",
+                changesetId: data.changeset_id || undefined,
             });
         } catch (err) {
             error = err instanceof Error ? err.message : "Import failed";
@@ -206,7 +220,6 @@
         sampleRows = [];
         rowCount = 0;
         error = "";
-        setPhase("idle", 0);
     }
 </script>
 
@@ -216,7 +229,8 @@
             <h2 class="text-base font-semibold text-foreground">Add a table</h2>
             <p class="text-sm text-muted-foreground mt-0.5 max-w-lg">
                 Drop a CSV or GeoJSON. Columns become <em>this</em> project’s
-                schema — rename freely.
+                schema — rename freely. A commit message is required; into an
+                existing project the table is pending until review.
             </p>
         </div>
         <div class="flex gap-1.5 text-[11px]">
@@ -230,6 +244,41 @@
             >
         </div>
     </div>
+
+    <label class="flex flex-col gap-1.5 text-sm max-w-lg">
+        <span class="text-xs font-medium text-muted-foreground"
+            >Commit message</span
+        >
+        <textarea
+            class="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground min-h-[64px]"
+            bind:value={message}
+            disabled={busy}
+            required
+            maxlength={500}
+            placeholder="Required — same review gate as map edits"
+        ></textarea>
+    </label>
+
+    {#if columns.length}
+        <button
+            type="button"
+            disabled={busy || !message.trim()}
+            onclick={() => void commit()}
+            class="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+            {busy
+                ? phaseLabel || "Importing…"
+                : `Import ${tableKey || "table"}`}
+        </button>
+    {/if}
+
+    {#if error}
+        <p
+            class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+            {error}
+        </p>
+    {/if}
 
     {#if busy && phase !== "idle"}
         <div
@@ -423,24 +472,5 @@
                 >
             </details>
         {/if}
-
-        <button
-            type="button"
-            disabled={busy}
-            onclick={() => void commit()}
-            class="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-        >
-            {busy
-                ? phaseLabel || "Importing…"
-                : `Import ${tableKey || "table"}`}
-        </button>
-    {/if}
-
-    {#if error}
-        <p
-            class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-        >
-            {error}
-        </p>
     {/if}
 </div>

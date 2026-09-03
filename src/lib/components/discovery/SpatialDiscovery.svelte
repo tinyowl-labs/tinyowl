@@ -260,7 +260,7 @@
     }
 
     const toolBtn =
-        "flex size-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
+        "flex size-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
     const toolBtnActive = "border-foreground bg-accent text-foreground";
 
     function open3d() {
@@ -276,13 +276,13 @@
 <svelte:head><title>{title}</title></svelte:head>
 
 <div class="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-    <Header {hasSession} />
+    <Header {hasSession} opaque />
 
     <div class="flex min-h-0 flex-1">
         <aside
             class="search-vt-panel flex w-[22.5rem] shrink-0 flex-col border-r border-border bg-background"
         >
-            <div class="relative z-20 shrink-0 space-y-3 border-b border-border p-3">
+            <div class="shrink-0 space-y-3 border-b border-border p-3">
                 <SearchComposer
                     bind:this={composer}
                     bind:value={query}
@@ -306,11 +306,9 @@
                     shortcutHint={false}
                     reserveChipTray
                     placeholder="Search projects or places…"
-                    class="shadow-none"
-                />
-
-                {#if !inspecting}
-                    <div class="flex items-center gap-2">
+                    class="rounded-lg shadow-none"
+                >
+                    {#snippet chipActions()}
                         <button
                             type="button"
                             onclick={setArea}
@@ -352,15 +350,17 @@
                             <button
                                 type="button"
                                 onclick={clearSpatial}
-                                class="{toolBtn} ml-auto"
+                                class={toolBtn}
                                 title="Clear spatial filter"
                                 aria-label="Clear spatial filter"
                             >
                                 <XIcon class="size-4" />
                             </button>
                         {/if}
-                    </div>
+                    {/snippet}
+                </SearchComposer>
 
+                {#if !inspecting}
                     <TemporalRangeFilter
                         projects={results}
                         bind:dateFrom

@@ -34,6 +34,8 @@
         sidebarToggleClass = "hidden md:inline-flex",
         /** Extra content after the brand/subtitle (e.g. project nav dropdowns). */
         leading,
+        /** Solid bar instead of glass — use on full-bleed canvases. */
+        opaque = false,
     }: {
         subtitle?: string;
         /** When set, the subtitle (project title) links here — used as Overview. */
@@ -44,6 +46,7 @@
         onSidebarToggle?: () => void;
         sidebarToggleClass?: string;
         leading?: Snippet;
+        opaque?: boolean;
     } = $props();
 
     const dark = $derived(isDark());
@@ -73,7 +76,9 @@
     )}
 >
     <div
-        class="glass-dock pointer-events-none absolute inset-0 border-b border-border"
+        class={opaque
+            ? "pointer-events-none absolute inset-0 border-b border-border bg-background"
+            : "glass-dock pointer-events-none absolute inset-0 border-b border-border"}
         aria-hidden="true"
     ></div>
     <div

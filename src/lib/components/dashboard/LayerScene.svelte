@@ -90,10 +90,22 @@
     } from "$lib/measure";
     import { cesiumMapLabel } from "$lib/components/cesiumBoot";
     import {
-        OSM_MAX_ZOOM,
-        OSM_TILE_SUBDOMAINS,
-        OSM_TILE_URL,
-    } from "$lib/components/osmTiles";
+        createImageryProvider,
+        createOsmImageryProvider,
+        createTerrainProvider,
+        creditsFor,
+        imageryOption,
+        persistImageryId,
+        persistTerrainId,
+        readStoredImageryId,
+        readStoredTerrainId,
+        replaceBasemapLayer,
+        resolveImageryId,
+        resolveTerrainId,
+        usesIon,
+        type ImageryId,
+        type TerrainId,
+    } from "$lib/components/cesiumProviders";
     import {
         destroyDiffOverlay,
         overlayEntityInfo,
@@ -244,8 +256,17 @@
     let creditSink = $state<HTMLDivElement>();
     let error = $state("");
     let ready = $state(false);
-    /** True when World Terrain was attached (Ion attribution). */
+    /** True when an Ion imagery or terrain provider is active. */
     let hasIonTerrain = $state(false);
+    let imageryId = $state<ImageryId>("osm");
+    let terrainId = $state<TerrainId>("ellipsoid");
+    let imageryBusy = $state(false);
+    let terrainBusy = $state(false);
+    let providerError = $state("");
+    let ionAvailable = $state(false);
+    let basemapLayer: any = null;
+    let imageryGen = 0;
+    let terrainGen = 0;
     let modelVis = $state<Record<string, boolean>>({});
     let coverageVis = $state<Record<string, boolean>>({});
     let coverageError = $state("");
@@ -526,23 +547,68 @@
         return loadCesiumGlobal();
     }
 
-    /** Attach World Terrain before any entity load (injalak Terrain.svelte order). */
-    async function attachWorldTerrain(token: string) {
-        if (!viewer || !Cesium || !token) return;
+    async function applyImagery(id: ImageryId) {
+        if (!viewer || !Cesium) return;
+        const next = resolveImageryId(id, ionAvailable);
+        const gen = ++imageryGen;
+        imageryBusy = true;
+        providerError = "";
         try {
-            if (typeof Cesium.createWorldTerrainAsync === "function") {
-                viewer.terrainProvider = await Cesium.createWorldTerrainAsync();
-                hasIonTerrain = true;
-                return;
+            const provider = await createImageryProvider(Cesium, next);
+            if (gen !== imageryGen) return;
+            basemapLayer = replaceBasemapLayer(viewer, basemapLayer, provider);
+            imageryId = next;
+            persistImageryId(next);
+            hasIonTerrain = usesIon(next, terrainId);
+            if (basemapLayer) {
+                tuneBasemapLayer(
+                    basemapLayer,
+                    isDark() && Boolean(imageryOption(next).themeAdjust),
+                );
             }
-            if (typeof Cesium.createWorldTerrain === "function") {
-                viewer.terrainProvider = Cesium.createWorldTerrain();
-                hasIonTerrain = true;
-                return;
-            }
+            bumpRender();
         } catch (e) {
-            console.warn("[LayerScene] World Terrain failed", e);
-            hasIonTerrain = false;
+            if (gen !== imageryGen) return;
+            console.warn("[LayerScene] imagery provider failed", e);
+            providerError =
+                e instanceof Error ? e.message : "Imagery provider failed";
+            if (imageryId !== next) {
+                // keep the previous working layer
+            }
+        } finally {
+            if (gen === imageryGen) imageryBusy = false;
+        }
+    }
+
+    async function applyTerrain(id: TerrainId) {
+        if (!viewer || !Cesium) return;
+        const next = resolveTerrainId(id, ionAvailable);
+        const gen = ++terrainGen;
+        terrainBusy = true;
+        providerError = "";
+        try {
+            const provider = await createTerrainProvider(Cesium, next);
+            if (gen !== terrainGen) return;
+            viewer.terrainProvider = provider;
+            terrainId = next;
+            persistTerrainId(next);
+            hasIonTerrain = usesIon(imageryId, next);
+            bumpRender();
+        } catch (e) {
+            if (gen !== terrainGen) return;
+            console.warn("[LayerScene] terrain provider failed", e);
+            providerError =
+                e instanceof Error ? e.message : "Terrain provider failed";
+            try {
+                viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                terrainId = "ellipsoid";
+                persistTerrainId("ellipsoid");
+                hasIonTerrain = usesIon(imageryId, "ellipsoid");
+            } catch {
+                hasIonTerrain = usesIon(imageryId, terrainId);
+            }
+        } finally {
+            if (gen === terrainGen) terrainBusy = false;
         }
     }
 
@@ -714,7 +780,7 @@
         await new Promise<void>((resolve) => {
             viewer.camera.flyTo({
                 ...pose,
-                duration,
+            duration,
                 complete: () => resolve(),
                 cancel: () => resolve(),
             });
@@ -999,7 +1065,7 @@
             homeFlyStarted = true;
             lastFlownKey = selectionFlyKey();
             void flyHome(1.0).then(() => {
-                hasFramed = true;
+            hasFramed = true;
             });
             return;
         }
@@ -3317,11 +3383,35 @@
         return null;
     }
 
-    function basemapTemplateUrl(): string {
-        return OSM_TILE_URL;
-    }
+    function applyBasemapTheme() {
+        if (!viewer || !Cesium) return;
+        const dark = isDark();
+        const is3d =
+            appliedDim === "3d" ||
+            viewer.scene.mode === Cesium.SceneMode.SCENE3D;
+        const colors = mapColors();
+        const bg =
+            cesiumColorFromCss(colors.card, dark ? "#1a1a1a" : "#f5f5f5") ??
+            (dark ? Cesium.Color.BLACK : Cesium.Color.WHITE);
+        viewer.scene.backgroundColor = bg;
+        viewer.scene.globe.baseColor = bg;
+        if (viewer.scene.skyAtmosphere) {
+            viewer.scene.skyAtmosphere.show = is3d && !dark;
+        }
+        if (viewer.scene.sun) viewer.scene.sun.show = is3d && !dark;
+        if (viewer.scene.moon) viewer.scene.moon.show = is3d && !dark;
+        if (viewer.scene.skyBox) viewer.scene.skyBox.show = is3d && !dark;
+        if (viewer.scene.globe) {
+            viewer.scene.globe.showGroundAtmosphere = is3d;
+        }
 
-    function tuneBasemapLayer(layer: { brightness: number; saturation: number; contrast: number; gamma: number; minificationFilter?: unknown; magnificationFilter?: unknown }, dark: boolean) {
+        if (basemapLayer) {
+            tuneBasemapLayer(
+                basemapLayer,
+                dark && Boolean(imageryOption(imageryId).themeAdjust),
+            );
+        }
+    }
         // LINEAR (no mipmaps) avoids WebGL generateMipmap lazy-init jank on zoom.
         if (Cesium?.TextureMinificationFilter) {
             layer.minificationFilter = Cesium.TextureMinificationFilter.LINEAR;
@@ -5522,53 +5612,53 @@
                 {@const styleLayer = layers[styleLayerIdx]}
                 {#key styleLayer.name}
                     <div class="pointer-events-auto">
-                        <LayerStylePanel
-                            layer={styleLayer}
-                            rows={rows[styleLayer.name] ?? []}
-                            canEdit={canEditViews}
-                            onClose={() => (styleLayerIdx = null)}
-                            applyViews={(views, activeId) =>
-                                changeLayerViews(styleLayerIdx!, views, activeId)}
-                            onSetOpacity={(v) =>
-                                setLayerOpacity(styleLayerIdx!, v)}
-                        />
+                    <LayerStylePanel
+                        layer={styleLayer}
+                        rows={rows[styleLayer.name] ?? []}
+                        canEdit={canEditViews}
+                        onClose={() => (styleLayerIdx = null)}
+                        applyViews={(views, activeId) =>
+                            changeLayerViews(styleLayerIdx!, views, activeId)}
+                        onSetOpacity={(v) =>
+                            setLayerOpacity(styleLayerIdx!, v)}
+                    />
                     </div>
                 {/key}
             {/if}
             <div
                 class="pointer-events-auto flex max-h-full min-h-0 w-60 flex-col gap-2 overflow-hidden"
             >
-                <SceneGraphPanel
-                    {layers}
-                    {models}
-                    coverages={coverageRows}
-                    {rows}
-                    {palette}
-                    pendingModels={pending}
-                    modelVisible={isModelVisible}
-                    coverageVisible={isCoverageVisible}
-                    onToggleModel={toggleModel}
-                    onSetModelsVisible={setAllModelsVisible}
-                    onToggleCoverage={toggleCoverage}
-                    onToggleLayer={toggleLayer}
-                    onOpenStyle={openLayerStyle}
-                    styleLayerName={styleLayerIdx !== null
-                        ? (layers[styleLayerIdx]?.name ?? "")
-                        : ""}
-                    onApplyHidden={applyHiddenVisibility}
-                    onFlyTo={() => {
-                        lastFlownKey = "";
-                        void flyToSelection(true);
-                    }}
-                    onFlyToLayer={(name) => {
-                        void flyToLayerExtent(name);
-                    }}
-                    onFlyToCoverage={flyToCoverage}
-                    onFlyToModel={flyToModel}
-                    {joinedKeys}
-                    bind:filterToView
-                    {inViewEntityKeys}
-                    {inViewModelHashes}
+            <SceneGraphPanel
+                {layers}
+                {models}
+                coverages={coverageRows}
+                {rows}
+                {palette}
+                pendingModels={pending}
+                modelVisible={isModelVisible}
+                coverageVisible={isCoverageVisible}
+                onToggleModel={toggleModel}
+                onSetModelsVisible={setAllModelsVisible}
+                onToggleCoverage={toggleCoverage}
+                onToggleLayer={toggleLayer}
+                onOpenStyle={openLayerStyle}
+                styleLayerName={styleLayerIdx !== null
+                    ? (layers[styleLayerIdx]?.name ?? "")
+                    : ""}
+                onApplyHidden={applyHiddenVisibility}
+                onFlyTo={() => {
+                    lastFlownKey = "";
+                    void flyToSelection(true);
+                }}
+                onFlyToLayer={(name) => {
+                    void flyToLayerExtent(name);
+                }}
+                onFlyToCoverage={flyToCoverage}
+                onFlyToModel={flyToModel}
+                {joinedKeys}
+                bind:filterToView
+                {inViewEntityKeys}
+                {inViewModelHashes}
                     {canWrite}
                     class="min-h-0 flex-1"
                 />
@@ -5864,7 +5954,7 @@
                 }}
             />
         {/if}
-        <CesiumAttribution ion={hasIonTerrain} />
+    <CesiumAttribution ion={hasIonTerrain} />
     </div>
 </div>
 
