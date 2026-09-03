@@ -4,6 +4,7 @@
     import TagIcon from "@lucide/svelte/icons/tag";
     import BookMarkedIcon from "@lucide/svelte/icons/book-marked";
     import LayersIcon from "@lucide/svelte/icons/layers";
+    import Table2Icon from "@lucide/svelte/icons/table-2";
     import ImageIcon from "@lucide/svelte/icons/image";
     import LoaderIcon from "@lucide/svelte/icons/loader";
     import GlobeIcon from "@lucide/svelte/icons/globe";
@@ -35,6 +36,7 @@
         type ArtefactHit,
         type EntityHit,
         type LayerHit,
+        type ValueHit,
     } from "$lib/search/projectScope";
     import {
         clearImageQuery,
@@ -63,6 +65,7 @@
     type LayerItem = { kind: "layer"; layer: LayerHit };
     type ArtefactItem = { kind: "artefact"; artefact: ArtefactHit };
     type EntityItem = { kind: "entity"; entity: EntityHit };
+    type CellItem = { kind: "cell"; cell: ValueHit };
     type MenuItem =
         | KindItem
         | ValueItem
@@ -70,7 +73,8 @@
         | ProjectItem
         | LayerItem
         | ArtefactItem
-        | EntityItem;
+        | EntityItem
+        | CellItem;
 
     type Props = {
         value?: string;
@@ -127,7 +131,7 @@
         imageQuery = false,
         accessToken = null,
         autofocus = false,
-        placeholder = "Search projects or places…  Type @ for filters",
+        placeholder = "Search projects or places…  @ filters · # tag",
         examples = [],
         shortcutHint = false,
         placeLabel = null,
@@ -161,7 +165,7 @@
             kind: "kind",
             id: "tag",
             label: "Tag",
-            hint: "Filter projects by tag",
+            hint: "Project tag — also #",
         },
         {
             kind: "kind",
@@ -190,6 +194,7 @@
     let imageBusy = $state(false);
     let imageError = $state("");
 
+    let hashMention = $state(false);
     let mentionOpen = $state(false);
     let mentionMode = $state<MentionMode>("kinds");
     let mentionQuery = $state("");
@@ -201,6 +206,7 @@
     let layerHits = $state<LayerHit[]>([]);
     let artefactHits = $state<ArtefactHit[]>([]);
     let entityHits = $state<EntityHit[]>([]);
+    let cellHits = $state<ValueHit[]>([]);
     let loading = $state(false);
     let loadingPlaces = $state(false);
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -215,6 +221,8 @@
     let projectChipTitles = $state<Record<string, string>>({});
     /** Mentions chipped locally (e.g. `@slug `) before Enter navigates. */
     let extraProjects = $state<string[]>([]);
+    /** Hash-tag chips harvested locally (`#pottery `) before Enter. */
+    let extraTags = $state<string[]>([]);
     /** Auto-scope chips the user dismissed in the overlay. */
     let omittedProjects = $state<string[]>([]);
 
@@ -231,7 +239,7 @@
         return out;
     }
 
-    const activeTags = $derived(tags);
+    const activeTags = $derived(mergeSlugs(tags, extraTags));
     const activeVocabs = $derived(vocabularies);
     const activeProjects = $derived.by(() => {
         const omit = new Set(
@@ -256,6 +264,13 @@
     const hasSpatialChip = $derived(
         bbox != null || (lat != null && lng != null),
     );
+    const hasChips = $derived(
+        hasImageChip ||
+            hasSpatialChip ||
+            activeTags.length > 0 ||
+            activeVocabs.length > 0 ||
+            activeProjects.length > 0,
+    );
     const scopedSlug = $derived(
         activeProjects.length === 1 ? activeProjects[0]! : null,
     );
@@ -264,7 +279,7 @@
             ? KINDS
             : KINDS.filter((k) => k.id !== "entity"),
     );
-    const atSearch = $derived($page.url.pathname === "/search");
+    const atSearch = $derived($page.url.pathname === "/");
     const cycling = $derived(examples.length > 0);
     const placesMenuOpen = $derived(
         !mentionOpen &&
@@ -273,6 +288,7 @@
                 projectHits.length > 0 ||
                 layerHits.length > 0 ||
                 artefactHits.length > 0 ||
+                cellHits.length > 0 ||
                 loadingPlaces),
     );
     const dropdownOpen = $derived(mentionOpen || placesMenuOpen);
@@ -326,12 +342,17 @@
         }));
     }
 
+    function cellItems(): CellItem[] {
+        return cellHits.map((c) => ({ kind: "cell" as const, cell: c }));
+    }
+
     /** Name matches, then places, then geo-suggested projects. */
     function mixedOmniboxItems(): MenuItem[] {
         if (scopedSlug) {
             return [
                 ...layerItems(),
                 ...artefactItems(),
+                ...cellItems(),
                 ...placeItems(),
                 ...projectItems("name"),
                 ...projectItems("geo"),
@@ -419,6 +440,13 @@
     });
 
     function ghostFill(item: MenuItem): string | null {
+        if (mentionOpen && hashMention) {
+            const prefix = value.replace(/#[^\s]*$/, "");
+            if (item.kind === "value" && item.mode === "tag") {
+                return `${prefix}#${item.label}`;
+            }
+            return null;
+        }
         if (mentionOpen) {
             const prefix = value.replace(/@[^\s]*$/, "");
             if (item.kind === "kind") return `${prefix}@${item.id}:`;
@@ -437,6 +465,7 @@
             if (item.kind === "layer") return `${prefix}${item.layer.label}`;
             if (item.kind === "artefact") return `${prefix}${item.artefact.label}`;
             if (item.kind === "entity") return `${prefix}@entity:${item.entity.id}`;
+            if (item.kind === "cell") return `${prefix}${item.cell.match}`;
             return null;
         }
         if (item.kind === "place") return item.place.label;
@@ -444,6 +473,7 @@
         if (item.kind === "layer") return item.layer.label;
         if (item.kind === "artefact") return item.artefact.label;
         if (item.kind === "entity") return item.entity.id;
+        if (item.kind === "cell") return item.cell.match;
         return null;
     }
 
@@ -786,13 +816,14 @@
             imageError = "Drop an image file (JPEG, PNG, or WebP)";
     }
 
-    /** Strip the active @mention token from the free-text query. */
+    /** Strip the active @mention or #tag token from the free-text query. */
     function stripMention(raw: string): string {
-        return raw.replace(/(^|\s)@[^\s]*$/, "$1").trimEnd();
+        return raw.replace(/(^|\s)[@#][^\s]*$/, "$1").trimEnd();
     }
 
     function closeMention() {
         mentionOpen = false;
+        hashMention = false;
         mentionMode = "kinds";
         mentionQuery = "";
         highlight = -1;
@@ -801,6 +832,7 @@
         projectHits = [];
         layerHits = [];
         artefactHits = [];
+        cellHits = [];
         entityHits = [];
     }
 
@@ -905,6 +937,34 @@
         return { q, slugs, hits };
     }
 
+    function harvestHashTags(
+        raw: string,
+        opts?: { completedOnly?: boolean },
+    ): { q: string; tags: string[] } {
+        const found: string[] = [];
+        const keepTrailingSpace = /\s$/.test(raw);
+        const re = opts?.completedOnly
+            ? /(^|\s)#([^\s#]+)(?=\s)/g
+            : /(^|\s)#([^\s#]+)/g;
+        const stripped = raw.replace(
+            re,
+            (full, lead: string, token: string) => {
+                if (!token || token.includes(":")) return full;
+                if (
+                    !found.some(
+                        (t) => t.toLowerCase() === token.toLowerCase(),
+                    )
+                ) {
+                    found.push(token);
+                }
+                return lead;
+            },
+        );
+        let q = stripped.replace(/\s+/g, " ").trim();
+        if (keepTrailingSpace && q) q += " ";
+        return { q, tags: found };
+    }
+
     function rememberProjectHits(hits: ProjectHit[]) {
         if (hits.length === 0) return;
         const next = { ...projectChipTitles };
@@ -924,20 +984,37 @@
         closeMention();
     }
 
+    function chipCompletedHashTags() {
+        const harvested = harvestHashTags(value, { completedOnly: true });
+        if (harvested.tags.length === 0) return;
+        extraTags = mergeSlugs(extraTags, harvested.tags);
+        if (harvested.q === value) return;
+        value = harvested.q;
+        closeMention();
+    }
+
     function commitSearch() {
         const harvested = harvestProjectMentions(value);
         rememberProjectHits(harvested.hits);
+        const hashed = harvestHashTags(harvested.q);
         const nextProjects = mergeSlugs(activeProjects, harvested.slugs);
+        const nextTags = mergeSlugs(activeTags, hashed.tags);
         extraProjects = [];
+        extraTags = [];
         omittedProjects = [];
-        value = harvested.q;
+        value = hashed.q;
         closeMention();
         placesReq += 1;
         placeHits = [];
         projectHits = [];
         layerHits = [];
         artefactHits = [];
-        navigate({ q: harvested.q, projects: nextProjects });
+        cellHits = [];
+        navigate({
+            q: hashed.q,
+            projects: nextProjects,
+            tags: nextTags,
+        });
     }
 
     function handleSubmit(e: SubmitEvent) {
@@ -948,7 +1025,8 @@
             return;
         }
         const inline = harvestProjectMentions(value);
-        if (inline.slugs.length > 0) {
+        const hashed = harvestHashTags(value);
+        if (inline.slugs.length > 0 || hashed.tags.length > 0) {
             commitSearch();
             return;
         }
@@ -957,9 +1035,15 @@
     }
 
     function removeTag(tag: string) {
-        navigate({
-            tags: activeTags.filter((t) => t.toLowerCase() !== tag.toLowerCase()),
-        });
+        extraTags = extraTags.filter(
+            (t) => t.toLowerCase() !== tag.toLowerCase(),
+        );
+        const next = mergeSlugs(tags, extraTags).filter(
+            (t) => t.toLowerCase() !== tag.toLowerCase(),
+        );
+        if (!palette) {
+            navigate({ tags: next });
+        }
     }
 
     function removeVocab(v: string) {
@@ -985,6 +1069,7 @@
         if (next.length !== 1) {
             layerHits = [];
             artefactHits = [];
+        cellHits = [];
         } else if (value.trim().length >= 2 && !mentionOpen) {
             schedulePlacesFetch(value);
         }
@@ -1040,6 +1125,7 @@
         projectHits = [];
         layerHits = [];
         artefactHits = [];
+        cellHits = [];
         value = "";
         const geom = place.geom;
         if (geom.type === "bbox") {
@@ -1156,22 +1242,35 @@
             );
             return;
         }
+        if (item.kind === "cell") {
+            if (!scopedSlug) return;
+            void goto(
+                entityLayersHref(scopedSlug, {
+                    layer: item.cell.layer,
+                    highlight: item.cell.id,
+                    view: "map",
+                }),
+            );
+            return;
+        }
         if (item.mode === "tag") applyTag(item.label);
         else applyVocab(item.label);
     }
 
     /**
-     * Parse the trailing @token from the main input (Cursor-style).
-     * Forms: `@` | `@pot` | `@tag:` | `@tag:pot` | `@vocab:` | `@vocab:terra`
+     * Parse the trailing @token or #tag from the main input.
+     * Forms: `@` | `@pot` | `@tag:pot` | `#` | `#pot`
      */
     function syncMentionFromValue(raw: string) {
-        const m = /(^|\s)@([^\s]*)$/.exec(raw);
-        if (!m) {
+        const at = /(^|\s)@([^\s]*)$/.exec(raw);
+        const hash = /(^|\s)#([^\s]*)$/.exec(raw);
+        const atIdx = at?.index ?? -1;
+        const hashIdx = hash?.index ?? -1;
+        if (atIdx < 0 && hashIdx < 0) {
             if (mentionOpen) closeMention();
             return;
         }
 
-        const token = m[2] ?? "";
         if (!mentionOpen) {
             highlight = 0;
             placesReq += 1;
@@ -1179,6 +1278,16 @@
         }
         mentionOpen = true;
 
+        if (hashIdx > atIdx) {
+            hashMention = true;
+            mentionMode = "tag";
+            mentionQuery = hash![2] ?? "";
+            scheduleFetch();
+            return;
+        }
+
+        hashMention = false;
+        const token = at![2] ?? "";
         const lower = token.toLowerCase();
         if (lower.startsWith("tag:")) {
             mentionMode = "tag";
@@ -1227,6 +1336,7 @@
         const el = e.currentTarget as HTMLInputElement;
         value = el.value;
         chipCompletedProjectMentions();
+        chipCompletedHashTags();
         syncMentionFromValue(value);
         if (!mentionOpen) schedulePlacesFetch(value);
         else {
@@ -1289,28 +1399,36 @@
         }
 
         const listOpen = mentionOpen || placesMenuOpen;
-        if (!listOpen) {
-            if (e.key === "@" || (e.key === "2" && e.shiftKey)) {
-                // Let `@` insert, then sync on next input event
-                return;
-            }
+
+        if (e.key === "Tab" && !e.shiftKey) {
+            if (acceptGhost()) e.preventDefault();
             return;
         }
 
         if (e.key === "Escape") {
-            e.preventDefault();
-            e.stopPropagation();
+            if (ghostSuffix || listOpen) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
             if (mentionOpen) {
                 value = stripMention(value);
                 closeMention();
-            } else {
+                return;
+            }
+            if (listOpen) {
                 placeHits = [];
                 projectHits = [];
+                layerHits = [];
+                artefactHits = [];
+        cellHits = [];
+                entityHits = [];
                 highlight = -1;
                 placesReq += 1;
             }
             return;
         }
+
+        if (!listOpen) return;
 
         if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -1334,11 +1452,6 @@
                 highlight =
                     (highlight - 1 + menuItems.length) % menuItems.length;
             }
-            return;
-        }
-
-        if (e.key === "Tab") {
-            if (acceptGhost()) e.preventDefault();
             return;
         }
 
@@ -1369,6 +1482,7 @@
             projectHits = [];
             layerHits = [];
             artefactHits = [];
+        cellHits = [];
             loadingPlaces = false;
             return;
         }
@@ -1384,7 +1498,7 @@
                 searchOmnibox(prefix, { accessToken }),
                 slug
                     ? searchProjectScope(slug, prefix, { accessToken })
-                    : Promise.resolve({ layers: [], artefacts: [] }),
+                    : Promise.resolve({ layers: [], artefacts: [], values: [] }),
             ]);
             if (req !== placesReq) return;
             placeHits = omnibox.places;
@@ -1395,12 +1509,14 @@
                 : omnibox.projects;
             layerHits = scoped.layers;
             artefactHits = scoped.artefacts;
+            cellHits = scoped.values;
         } catch {
             if (req !== placesReq) return;
             placeHits = [];
             projectHits = [];
             layerHits = [];
             artefactHits = [];
+            cellHits = [];
         } finally {
             if (req === placesReq) loadingPlaces = false;
         }
@@ -1759,7 +1875,7 @@
                     {:else if mentionMode === "entity" && mentionOpen}
                         Entity
                     {:else if scopedSlug}
-                        Layers, artefacts & places
+                        Layers, values & places
                     {:else}
                         Projects & places
                     {/if}
@@ -1806,7 +1922,9 @@
                                   ? `artefact:${item.artefact.hash}`
                                   : item.kind === "entity"
                                     ? `entity:${item.entity.layer}:${item.entity.id}`
-                                    : `${item.kind}:${item.id}`)}
+                                    : item.kind === "cell"
+                                      ? `cell:${item.cell.layer}:${item.cell.id}:${item.cell.column}`
+                                      : `${item.kind}:${item.id}`)}
                             <button
                                 type="button"
                                 role="option"
@@ -1906,6 +2024,19 @@
                                         <span
                                             class="mt-0.5 block truncate text-[11px] text-muted-foreground"
                                             >{item.artefact.detail}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "cell"}
+                                    <Table2Icon
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.cell.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{item.cell.detail}</span
                                         >
                                     </span>
                                 {:else if item.kind === "entity"}

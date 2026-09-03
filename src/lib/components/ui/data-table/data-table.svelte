@@ -16,6 +16,7 @@
     import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronRight from "@lucide/svelte/icons/chevron-right";
+    import EditableCell from "$lib/components/ui/data-table/editable-cell.svelte";
 
     type Props<TData> = {
         columns: ColumnDef<TData>[];
@@ -26,6 +27,11 @@
         onPageChange?: (index: number) => void;
         onRowClick?: (row: TData, event: MouseEvent) => void;
         onRowDblClick?: (row: TData, event: MouseEvent) => void;
+        editRowId?: string | null;
+        getRowId?: (row: TData) => string;
+        isEditableColumn?: (columnId: string) => boolean;
+        onCommitCell?: (row: TData, columnId: string, value: string) => void;
+        onCancelEdit?: () => void;
     };
 
     type TData = Record<string, unknown>;
@@ -38,6 +44,11 @@
         onPageChange,
         onRowClick,
         onRowDblClick,
+        editRowId = null,
+        getRowId,
+        isEditableColumn,
+        onCommitCell,
+        onCancelEdit,
     }: Props<TData> = $props();
 
     let sorting = $state<SortingState>([]);
@@ -134,16 +145,40 @@
                         ondblclick={(e) => onRowDblClick?.(row.original, e)}
                     >
                         {#each row.getVisibleCells() as cell}
-                            <Table.Cell class="max-w-56 px-3 py-2">
-                                <span
-                                    class="block truncate"
-                                    title={String(cell.getValue() ?? "")}
-                                >
-                                    <FlexRender
-                                        content={cell.column.columnDef.cell}
-                                        context={cell.getContext()}
+                            {@const editing =
+                                Boolean(editRowId) &&
+                                Boolean(getRowId) &&
+                                getRowId(row.original) === editRowId &&
+                                Boolean(isEditableColumn?.(cell.column.id))}
+                            <Table.Cell
+                                class="max-w-56 px-3 {editing
+                                    ? 'py-1'
+                                    : 'py-2'}"
+                            >
+                                {#if editing}
+                                    <EditableCell
+                                        value={cell.getValue() == null
+                                            ? ""
+                                            : String(cell.getValue())}
+                                        onCommit={(v) =>
+                                            onCommitCell?.(
+                                                row.original,
+                                                cell.column.id,
+                                                v,
+                                            )}
+                                        onCancel={onCancelEdit}
                                     />
-                                </span>
+                                {:else}
+                                    <span
+                                        class="block truncate"
+                                        title={String(cell.getValue() ?? "")}
+                                    >
+                                        <FlexRender
+                                            content={cell.column.columnDef.cell}
+                                            context={cell.getContext()}
+                                        />
+                                    </span>
+                                {/if}
                             </Table.Cell>
                         {/each}
                     </Table.Row>

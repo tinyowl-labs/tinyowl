@@ -79,8 +79,7 @@
 		>
 			<Dialog.Title class="sr-only">Search</Dialog.Title>
 			<Dialog.Description class="sr-only">
-				Search projects, places, and — when inside a project — layers and artefacts. Escape closes. Tab completes a suggestion
-				when the search field is focused.
+				Search projects, places, and — when inside a project — layers, artefacts, and entity ids. Escape dismisses typeahead then closes. Tab completes ghost text when the search field is focused. # chips a project tag.
 			</Dialog.Description>
 			<div class="flex items-start gap-1">
 				<div class="min-w-0 flex-1">
@@ -94,9 +93,9 @@
 							projectLabels={scopeSlug && scopeTitle
 								? { [scopeSlug]: scopeTitle }
 								: {}}
-							placeholder={scopeSlug
-								? `Search in ${scopeTitle}…  Type @ for filters`
-								: "Search projects or places…  Type @ for filters"}
+                            placeholder={scopeSlug
+								? `Search in ${scopeTitle}…  @ filters · # tag`
+								: "Search projects or places…  @ filters · # tag"}
 							class="shadow-none"
 						/>
 					{/if}

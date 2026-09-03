@@ -11,7 +11,7 @@
     import { marked } from "marked";
     import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
-    import { buildSearchParams } from "$lib/search/params";
+    import { searchHref } from "$lib/search/params";
 
     let { data, form } = $props();
 
@@ -121,7 +121,7 @@
     });
 
     function tagHref(tag: string) {
-        return `/search?${buildSearchParams({ tags: [tag] }).toString()}`;
+        return searchHref({ tags: [tag] });
     }
 
     // Drop leading H1 when it duplicates the project title.

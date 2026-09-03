@@ -64,7 +64,7 @@
             .replace(/>/g, "&gt;");
     }
 
-    function hasCoord(c: Centroid): boolean {
+    function hasCoord(c: Centroid): c is Centroid & { lat: number; lng: number } {
         return Number.isFinite(c.lat) && Number.isFinite(c.lng);
     }
 

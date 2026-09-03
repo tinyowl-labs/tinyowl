@@ -1,14 +1,8 @@
 import type { PageServerLoad } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
+import type { DiscoveryProject } from "$lib/search/discovery";
 
-export type Centroid = {
-  slug: string;
-  title: string;
-  entity_count: number;
-  table_count: number;
-  lat: number;
-  lng: number;
-};
+export type Centroid = DiscoveryProject;
 
 export const load: PageServerLoad = async ({ locals, fetch }) => {
   const accessToken = await locals.getAccessToken();

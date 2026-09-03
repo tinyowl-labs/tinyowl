@@ -5,6 +5,7 @@
     import HexagonIcon from "@lucide/svelte/icons/hexagon";
     import MinusIcon from "@lucide/svelte/icons/minus";
     import PencilIcon from "@lucide/svelte/icons/pencil";
+    import Trash2Icon from "@lucide/svelte/icons/trash-2";
     import {
         DRAW_GEOM_MODES,
         SNAP_MODES,
@@ -17,6 +18,7 @@
         mode?: DrawGeomMode;
         canFinish?: boolean;
         canAddPart?: boolean;
+        canDelete?: boolean;
         useHeight?: boolean;
         snap?: SnapMode;
         vertexEditing?: boolean;
@@ -27,6 +29,7 @@
         onSnap?: (mode: SnapMode) => void;
         onFinish?: () => void;
         onAddPart?: () => void;
+        onDelete?: () => void;
     };
 
     let {
@@ -34,6 +37,7 @@
         mode = $bindable<DrawGeomMode>("Polygon"),
         canFinish = false,
         canAddPart = false,
+        canDelete = false,
         useHeight = true,
         snap = "mesh",
         vertexEditing = false,
@@ -44,6 +48,7 @@
         onSnap,
         onFinish,
         onAddPart,
+        onDelete,
     }: Props = $props();
 
     let geomOpen = $state(false);
@@ -225,6 +230,17 @@
                 onclick={() => onAddPart?.()}
             >
                 Add part
+            </button>
+        {/if}
+        {#if canDelete && onDelete}
+            <button
+                type="button"
+                class="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-foreground hover:bg-secondary"
+                title="Delete selected (Del)"
+                onclick={() => onDelete()}
+            >
+                <Trash2Icon class="size-3.5" />
+                Delete
             </button>
         {/if}
         {#if canFinish}

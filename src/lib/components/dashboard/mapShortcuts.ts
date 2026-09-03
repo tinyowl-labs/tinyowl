@@ -16,7 +16,8 @@ export type MapShortcutAction =
 	| { type: "measure-toggle" }
 	| { type: "measure-mode"; mode: MeasureMode }
 	| { type: "comments-toggle" }
-	| { type: "edit-toggle" };
+	| { type: "edit-toggle" }
+	| { type: "delete-feature" };
 
 export function isTypingTarget(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
@@ -48,6 +49,9 @@ export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
 	if (ev.key === "Tab") {
 		if (ev.shiftKey) return null;
 		return { type: "edit-toggle" };
+	}
+	if (ev.key === "Delete" || ev.key === "Backspace") {
+		return { type: "delete-feature" };
 	}
 
 	const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;

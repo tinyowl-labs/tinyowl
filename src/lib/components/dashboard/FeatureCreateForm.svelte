@@ -9,6 +9,9 @@
         layer: string;
         geomType: DrawGeomMode;
         fields?: string[];
+        mode?: "create" | "edit";
+        entityId?: string;
+        initial?: Record<string, string>;
         onConfirm?: (attrs: Record<string, string>) => void;
         onCancel?: () => void;
     };
@@ -17,15 +20,22 @@
         layer,
         geomType,
         fields = [],
+        mode = "create",
+        entityId = "",
+        initial = {},
         onConfirm,
         onCancel,
     }: Props = $props();
 
     let values = $state<Record<string, string>>({});
+    let lastSeed = "";
 
     $effect(() => {
+        const seed = `${fields.join("|")}\0${JSON.stringify(initial)}`;
+        if (seed === lastSeed) return;
+        lastSeed = seed;
         const next: Record<string, string> = {};
-        for (const f of fields) next[f] = "";
+        for (const f of fields) next[f] = initial[f] ?? "";
         values = next;
     });
 
@@ -55,9 +65,15 @@
 >
     <div class="flex shrink-0 items-start justify-between gap-2 border-b border-border px-2 py-1.5">
         <div class="min-w-0">
-            <p class="font-medium text-foreground">New feature</p>
+            <p class="font-medium text-foreground">
+                {mode === "edit" ? "Edit attributes" : "New feature"}
+            </p>
             <p class="mt-0.5 truncate text-[11px] text-muted-foreground">
-                {geomType} on {layer}
+                {#if mode === "edit"}
+                    {layer}{entityId ? ` · ${entityId}` : ""}
+                {:else}
+                    {geomType} on {layer}
+                {/if}
             </p>
         </div>
         <button
@@ -73,8 +89,9 @@
     <div class="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {#if fields.length === 0}
             <p class="text-[11px] text-muted-foreground">
-                No attribute columns. Save to keep geometry in the session
-                buffer.
+                {mode === "edit"
+                    ? "No editable attribute columns on this table."
+                    : "No attribute columns. Save to keep geometry in the session buffer."}
             </p>
         {:else}
             {#each fields as name}
@@ -97,8 +114,10 @@
 
     <div class="flex shrink-0 justify-end gap-1.5 border-t border-border p-2">
         <Button variant="ghost" size="sm" type="button" onclick={cancel}
-            >Discard</Button
+            >{mode === "edit" ? "Cancel" : "Discard"}</Button
         >
-        <Button size="sm" type="submit">Add to buffer</Button>
+        <Button size="sm" type="submit"
+            >{mode === "edit" ? "Save to buffer" : "Add to buffer"}</Button
+        >
     </div>
 </form>

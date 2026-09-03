@@ -2,6 +2,7 @@
     import LayersIcon from "@lucide/svelte/icons/layers";
     import TableIcon from "@lucide/svelte/icons/table";
     import PanelRightIcon from "@lucide/svelte/icons/panel-right";
+    import PencilIcon from "@lucide/svelte/icons/pencil";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
@@ -33,8 +34,9 @@
         joinHint,
         relatedSelectionKeys,
     } from "$lib/project/schemaJoin";
-    import { editBuffer } from "$lib/stores/editBuffer.svelte";
+    import { editBuffer, attrFieldsForTable } from "$lib/stores/editBuffer.svelte";
     import { fromEditBuffer } from "$lib/geoDiff";
+    import { isTypingTarget } from "$lib/components/dashboard/mapShortcuts";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
     import {
         DEFAULT_SEARCH_RADIUS,
@@ -217,6 +219,9 @@
     }
 
     function handleTabChange(value: string) {
+        if (tableAttrEdit && value !== tableAttrEdit.table) {
+            tableAttrEdit = null;
+        }
         if (value === SCHEMA_TAB) {
             setViewMode("schema");
             return;
@@ -308,6 +313,10 @@
     });
 
     let schemaToolsOpen = $state(false);
+    let tableEditEnabled = $state(false);
+    let tableAttrEdit = $state<{ table: string; entityId: string } | null>(
+        null,
+    );
 
     type LazyCmp = any;
     let LayerSceneCmp = $state<LazyCmp>(null);
@@ -385,6 +394,8 @@
     });
 
     function setViewMode(mode: ViewMode) {
+        if (mode !== "table") tableAttrEdit = null;
+        if (mode === "map") tableEditEnabled = false;
         viewMode = mode;
         goto(
             `/${$page.params.project}/layers${layersSearch({
@@ -397,6 +408,145 @@
     }
 
     const inTables = $derived(viewMode === "table" || viewMode === "schema");
+
+    function toggleTableEdit() {
+        if (!canWrite) return;
+        if (tableEditEnabled) {
+            tableEditEnabled = false;
+            tableAttrEdit = null;
+            return;
+        }
+        tableEditEnabled = true;
+        if (viewMode === "schema") {
+            const layer = activeTab || tableNames[0] || "";
+            if (layer) {
+                activeTab = layer;
+                setViewMode("table");
+            }
+        }
+    }
+
+    function openTableAttrEdit(table: string, entityId: string) {
+        if (!canWrite || !tableEditEnabled || !entityId) return;
+        if (
+            tableAttrEdit?.table === table &&
+            tableAttrEdit.entityId === entityId
+        ) {
+            return;
+        }
+        tableAttrEdit = { table, entityId };
+    }
+
+    function tableRowsWithBuffer(
+        table: string,
+        tableRows: Record<string, unknown>[],
+    ): Record<string, unknown>[] {
+        const deleted = new Set(
+            editBuffer.entries
+                .filter((e) => e.table === table && e.op === "delete")
+                .map((e) => e.entityId),
+        );
+        const bufs = editBuffer.entries.filter(
+            (e) => e.table === table && e.op !== "delete" && e.attributes,
+        );
+        const visible = deleted.size
+            ? tableRows.filter((row) => {
+                  const id = String(row.source_id ?? row.SOURCE_ID ?? "");
+                  return id && !deleted.has(id);
+              })
+            : tableRows;
+        if (bufs.length === 0) return visible;
+        const byId = new Map(
+            bufs.map((e) => [e.entityId, e.attributes] as const),
+        );
+        return visible.map((row) => {
+            const id = String(row.source_id ?? row.SOURCE_ID ?? "");
+            const attrs = id ? byId.get(id) : undefined;
+            return attrs ? { ...row, ...attrs } : row;
+        });
+    }
+
+    function deleteSelectedTableRows() {
+        if (!canWrite || !tableEditEnabled) return;
+        const table = activeTab;
+        if (!table) return;
+        const ids: string[] = [];
+        for (const key of layerSelection.keys()) {
+            const { layer, id } = parseSelectionKey(key);
+            if (layer === table && id) ids.push(id);
+        }
+        if (
+            ids.length === 0 &&
+            tableAttrEdit?.table === table &&
+            tableAttrEdit.entityId
+        ) {
+            ids.push(tableAttrEdit.entityId);
+        }
+        for (const id of ids) {
+            editBuffer.markDelete(table, id);
+            layerSelection.removeSelection(table, id);
+        }
+        if (ids.length > 0) tableAttrEdit = null;
+    }
+
+    function isTableEditableColumn(table: string, columnId: string): boolean {
+        if (!columnId || columnId.startsWith("_")) return false;
+        const nk = columnId.toLowerCase();
+        if (nk === "source_id" || nk === "entity_type") return false;
+        return attrFieldsForTable(tables[table] ?? []).includes(columnId);
+    }
+
+    function commitTableCell(
+        table: string,
+        row: Record<string, unknown>,
+        columnId: string,
+        value: string,
+    ) {
+        const id = String(row.source_id ?? row.SOURCE_ID ?? "");
+        if (!id) return;
+        editBuffer.upsertAttributes(table, id, { [columnId]: value });
+    }
+
+    $effect(() => {
+        if (!browser || !canWrite) return;
+        const onKey = (ev: KeyboardEvent) => {
+            if (!inTables) return;
+            if (isTypingTarget(ev.target)) return;
+            if (
+                ev.key === "Tab" &&
+                !ev.shiftKey &&
+                !ev.metaKey &&
+                !ev.ctrlKey &&
+                !ev.altKey
+            ) {
+                if (tableAttrEdit) return;
+                ev.preventDefault();
+                toggleTableEdit();
+                return;
+            }
+            if (ev.key === "Escape") {
+                if (tableAttrEdit) {
+                    ev.preventDefault();
+                    tableAttrEdit = null;
+                    return;
+                }
+                if (tableEditEnabled) {
+                    ev.preventDefault();
+                    tableEditEnabled = false;
+                }
+                return;
+            }
+            if (
+                tableEditEnabled &&
+                (ev.key === "Delete" || ev.key === "Backspace")
+            ) {
+                ev.preventDefault();
+                deleteSelectedTableRows();
+            }
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+    });
 
     // Default 3D — matches the working terrain-sampled load path.
     let mapDim = $state<MapDim>(
@@ -510,6 +660,13 @@
         const id = String(row.source_id ?? row.SOURCE_ID ?? "");
         if (!id) return "";
         const key = toSelectionKey(activeTab, id);
+        if (
+            tableAttrEdit &&
+            tableAttrEdit.table === activeTab &&
+            tableAttrEdit.entityId === id
+        ) {
+            return "bg-accent ring-1 ring-inset ring-primary/20";
+        }
         if (layerSelection.selected.has(key)) {
             if (layerSelection.primaryKey === key) {
                 return "bg-accent ring-1 ring-inset ring-primary/20";
@@ -887,6 +1044,28 @@
                             contentClass="mt-5 flex flex-1 min-h-0 flex-col overflow-hidden"
                             lazy
                         >
+                            {#snippet afterSeparator()}
+                                {#if canWrite}
+                                    <button
+                                        type="button"
+                                        onclick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            toggleTableEdit();
+                                        }}
+                                        class="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 transition-colors {tableEditEnabled
+                                            ? 'bg-background text-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:text-foreground'}"
+                                        title={tableEditEnabled
+                                            ? "Stop editing (Tab)"
+                                            : "Edit attributes (Tab)"}
+                                        aria-label="Edit attributes"
+                                        aria-pressed={tableEditEnabled}
+                                    >
+                                        <PencilIcon class="size-4" />
+                                    </button>
+                                {/if}
+                            {/snippet}
                             {#snippet trailing()}
                                 {#if viewMode === "schema"}
                                     <button
@@ -915,7 +1094,10 @@
                                         {/if}
                                     </div>
                                 {:else}
-                                    {@const tableRows = rows[tabValue] ?? []}
+                                    {@const tableRows = tableRowsWithBuffer(
+                                        tabValue,
+                                        rows[tabValue] ?? [],
+                                    )}
                                     {@const tableCols =
                                         columnsByTable[tabValue] ?? []}
                                     <div
@@ -932,6 +1114,29 @@
                                             {/if}
                                         </p>
                                     {/if}
+                                    {#if canWrite && tableEditEnabled && viewMode === "table"}
+                                        <p
+                                            class="shrink-0 pb-2 text-[11px] text-muted-foreground"
+                                        >
+                                            Edit mode · click a row to edit ·
+                                            Delete to remove
+                                        </p>
+                                    {/if}
+                                    {#if canWrite && editBuffer.size > 0}
+                                        <p
+                                            class="shrink-0 pb-2 text-[11px] text-muted-foreground"
+                                        >
+                                            {editBuffer.size} in session buffer
+                                            ·
+                                            <button
+                                                type="button"
+                                                class="font-medium text-foreground underline-offset-2 hover:underline"
+                                                onclick={() => setViewMode("map")}
+                                            >
+                                                Commit from the map
+                                            </button>
+                                        </p>
+                                    {/if}
                                     {#if tableRows.length > 0}
                                         <div
                                             bind:this={tableContainer}
@@ -943,6 +1148,42 @@
                                                 data={tableRows}
                                                 {rowClassName}
                                                 pageIndex={currentPage}
+                                                editRowId={tableAttrEdit?.table ===
+                                                    tabValue
+                                                    ? tableAttrEdit.entityId
+                                                    : null}
+                                                getRowId={(
+                                                    row: Record<
+                                                        string,
+                                                        unknown
+                                                    >,
+                                                ) =>
+                                                    String(
+                                                        row.source_id ??
+                                                            row.SOURCE_ID ??
+                                                            "",
+                                                    )}
+                                                isEditableColumn={(colId: string) =>
+                                                    isTableEditableColumn(
+                                                        tabValue,
+                                                        colId,
+                                                    )}
+                                                onCommitCell={(
+                                                    row: Record<
+                                                        string,
+                                                        unknown
+                                                    >,
+                                                    colId: string,
+                                                    value: string,
+                                                ) =>
+                                                    commitTableCell(
+                                                        tabValue,
+                                                        row,
+                                                        colId,
+                                                        value,
+                                                    )}
+                                                onCancelEdit={() =>
+                                                    (tableAttrEdit = null)}
                                                 onRowClick={(
                                                     row: Record<
                                                         string,
@@ -977,25 +1218,33 @@
                                                         tabValue,
                                                         id,
                                                     );
+                                                    if (tableEditEnabled) {
+                                                        openTableAttrEdit(
+                                                            tabValue,
+                                                            id,
+                                                        );
+                                                    }
                                                 }}
-                                                onRowDblClick={(
-                                                    row: Record<
-                                                        string,
-                                                        unknown
-                                                    >,
-                                                ) => {
-                                                    const id = String(
-                                                        row.source_id ??
-                                                            row.SOURCE_ID ??
-                                                            "",
-                                                    );
-                                                    if (!id) return;
-                                                    layerSelection.selectSingle(
-                                                        tabValue,
-                                                        id,
-                                                    );
-                                                    setViewMode("map");
-                                                }}
+                                                onRowDblClick={tableEditEnabled
+                                                    ? undefined
+                                                    : (
+                                                          row: Record<
+                                                              string,
+                                                              unknown
+                                                          >,
+                                                      ) => {
+                                                          const id = String(
+                                                              row.source_id ??
+                                                                  row.SOURCE_ID ??
+                                                                  "",
+                                                          );
+                                                          if (!id) return;
+                                                          layerSelection.selectSingle(
+                                                              tabValue,
+                                                              id,
+                                                          );
+                                                          setViewMode("map");
+                                                      }}
                                             />
                                         {/if}
                                         </div>

@@ -20,6 +20,7 @@
         type SelectionToolMode,
     } from "$lib/stores/layerSelection.svelte";
     import MapToolsRail from "./MapToolsRail.svelte";
+    import MapViewChrome from "./MapViewChrome.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
     import LayerStylePanel from "./LayerStylePanel.svelte";
@@ -37,6 +38,7 @@
         dedupePickCandidates,
         pickCandidateLabel,
         attrsFromEntity,
+        attrsFromRecord,
         type PickCandidate,
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
@@ -312,7 +314,9 @@
     let drawDsEpoch = 0;
     let drawHandler: any;
     let createFormOpen = $state(false);
+    let attrEdit = $state<{ table: string; entityId: string } | null>(null);
     let pendingGeometry = $state<GeoJsonGeometry | null>(null);
+    const anyFormOpen = $derived(createFormOpen || attrEdit != null);
     const canFinish = $derived(
         measureEnabled &&
             measureMode !== "point" &&
@@ -336,6 +340,22 @@
     const createFields = $derived(
         attrFieldsForTable(tables[editLayer ?? ""] ?? []),
     );
+    const attrEditFields = $derived(
+        attrFieldsForTable(tables[attrEdit?.table ?? ""] ?? []).filter(
+            (c) => c !== "source_id" && c !== "entity_type",
+        ),
+    );
+    const attrEditInitial = $derived.by(() => {
+        if (!attrEdit) return {} as Record<string, string>;
+        const row = rowByEntityId(rows[attrEdit.table], attrEdit.entityId);
+        const buf = editBuffer.entries.find(
+            (e) => e.table === attrEdit!.table && e.entityId === attrEdit!.entityId,
+        );
+        return {
+            ...attrsFromRecord(row),
+            ...attrsFromRecord(buf?.attributes),
+        };
+    });
     const drawNeed = $derived(minVerticesForMode(drawMode));
     const drawCanAddPart = $derived(
         editEnabled && isMultipartMode(drawMode) && drawVertexCount >= drawNeed,
@@ -350,6 +370,7 @@
         editBuffer.entries.map((e) => ({
             entityId: e.entityId,
             table: e.table,
+            op: e.op,
         })),
     );
 
@@ -1066,7 +1087,12 @@
         const bufHide = new Set<string>();
         if (bufferOverlayVisible) {
             for (const e of editBuffer.entries) {
-                if (e.op === "update" || e.op === "delete") {
+                // Hide canonical only when the overlay will paint a
+                // replacement (geom update / delete). Attr-only updates
+                // have no overlay geom — hiding would make the feature vanish.
+                if (e.op === "delete") {
+                    bufHide.add(toSelectionKey(e.table, e.entityId));
+                } else if (e.op === "update" && asGeometry(e.geometry)) {
                     bufHide.add(toSelectionKey(e.table, e.entityId));
                 }
             }
@@ -1887,6 +1913,95 @@
         bumpRender();
     }
 
+    function openAttrEdit(table: string, entityId: string) {
+        if (!canWrite || !table || !entityId) return;
+        createFormOpen = false;
+        pendingGeometry = null;
+        attrEdit = { table, entityId };
+        editBuffer.setTargetLayer(table);
+        closePickPager({ suppressClick: true });
+        closeContextMenu();
+        bumpRender();
+    }
+
+    function confirmAttrEdit(attrs: Record<string, string>) {
+        if (!attrEdit) return;
+        editBuffer.upsertAttributes(attrEdit.table, attrEdit.entityId, attrs);
+        attrEdit = null;
+        applyHiddenVisibility();
+        bumpRender();
+    }
+
+    function cancelAttrEdit() {
+        attrEdit = null;
+        bumpRender();
+    }
+
+    function geometryForDelete(
+        table: string,
+        entityId: string,
+    ): GeoJsonGeometry | null {
+        const buf = editBuffer.entries.find(
+            (e) => e.table === table && e.entityId === entityId,
+        );
+        const fromBuf =
+            asGeometry(buf?.geometry) ?? asGeometry(buf?.oldGeometry);
+        if (fromBuf) return fromBuf;
+        if (vertexSession?.table === table && vertexSession.entityId === entityId) {
+            return (
+                snapshotPendingGeometry() ??
+                asGeometry(vertexSession.oldGeometry)
+            );
+        }
+        const entity = findEntityByKey(toSelectionKey(table, entityId));
+        return geometryFromCesiumEntity(entity);
+    }
+
+    function deleteBufferedFeature(table: string, entityId: string) {
+        if (!canWrite || !table || !entityId) return;
+        const geom = geometryForDelete(table, entityId);
+        if (
+            vertexSession?.table === table &&
+            vertexSession.entityId === entityId
+        ) {
+            cancelVertexEdit();
+        }
+        editBuffer.markDelete(table, entityId, geom);
+        if (attrEdit?.table === table && attrEdit.entityId === entityId) {
+            attrEdit = null;
+        }
+        layerSelection.removeSelection(table, entityId);
+        closePickPager({ suppressClick: true });
+        applyHiddenVisibility();
+        bumpRender();
+    }
+
+    function deleteSelectedFeatures() {
+        if (!canWrite) return;
+        const targets: { table: string; entityId: string }[] = [];
+        const add = (table: string, entityId: string) => {
+            if (!table || !entityId) return;
+            if (targets.some((t) => t.table === table && t.entityId === entityId))
+                return;
+            targets.push({ table, entityId });
+        };
+        if (vertexSession) {
+            add(vertexSession.table, vertexSession.entityId);
+        }
+        const layer = editLayer ?? layerFromSelection();
+        for (const key of layerSelection.keys()) {
+            const { layer: l, id } = parseSelectionKey(key);
+            if (layer && l !== layer) continue;
+            add(l, id);
+        }
+        if (targets.length === 0 && ctxOpen && ctxKind === "entity") {
+            add(ctxLayerName, ctxEntityId);
+        }
+        for (const t of targets) deleteBufferedFeature(t.table, t.entityId);
+        closeContextMenu();
+        closePickPager({ suppressClick: true });
+    }
+
     function addDrawPart() {
         if (!isMultipartMode(drawMode)) return;
         if (drawVertices.length < drawNeed) return;
@@ -1958,6 +2073,10 @@
     }
 
     function undoDrawOrMeasure() {
+        if (attrEdit) {
+            cancelAttrEdit();
+            return;
+        }
         if (createFormOpen) {
             pendingGeometry = null;
             createFormOpen = false;
@@ -2095,7 +2214,7 @@
     }
 
     function beginVertexEdit(table: string, entityId: string): boolean {
-        if (createFormOpen) return false;
+        if (anyFormOpen) return false;
         const buf = editBuffer.entries.find(
             (e) => e.table === table && e.entityId === entityId,
         );
@@ -2105,6 +2224,7 @@
         if (buf) {
             geom = asGeometry(buf.geometry);
             oldGeometry = asGeometry(buf.oldGeometry);
+            if (buf.op === "delete") return false;
             bufferOp = buf.op === "insert" ? "insert" : "update";
         }
         if (!geom) {
@@ -2191,6 +2311,7 @@
                         e.table === info.table && e.entityId === info.entityId,
                 );
                 if (buf) {
+                    if (buf.op === "delete") continue;
                     return { table: buf.table, entityId: buf.entityId };
                 }
             }
@@ -2284,7 +2405,7 @@
     }
 
     function onDrawPick(screenPos: any) {
-        if (createFormOpen) return;
+        if (anyFormOpen) return;
         if (vertexSuppressClick) {
             vertexSuppressClick = false;
             return;
@@ -2416,7 +2537,7 @@
     }
 
     function setDrawMode(next: DrawGeomMode) {
-        if (drawMode === next || createFormOpen) return;
+        if (drawMode === next || anyFormOpen) return;
         if (vertexSession) cancelVertexEdit();
         drawMode = next;
         clearDraftDraw();
@@ -2487,6 +2608,7 @@
         dismissEntityPopup();
         editEnabled = false;
         createFormOpen = false;
+        attrEdit = null;
         pendingGeometry = null;
         settleVertexSessionOnExit();
         clearDraftDraw();
@@ -2712,27 +2834,6 @@
             label: pickCandidateLabel(entityId, attributes),
             attributes,
         };
-    }
-
-    function attrsFromRecord(
-        src: Record<string, unknown> | undefined | null,
-    ): Record<string, string> {
-        if (!src) return {};
-        const out: Record<string, string> = {};
-        for (const [k, v] of Object.entries(src)) {
-            if (
-                !k ||
-                k.startsWith("_") ||
-                k.startsWith("tinyowl") ||
-                k === "geom" ||
-                k === "geometry"
-            ) {
-                continue;
-            }
-            if (v == null || v === "") continue;
-            out[k] = String(v);
-        }
-        return out;
     }
 
     /** Show pick pager for an entity (store selection already updated). */
@@ -4109,6 +4210,7 @@
         diffFeatures;
         vertexSession;
         bufferOverlayVisible;
+        editBuffer.entries;
         if (!ready || !started || !viewer || !Cesium) return;
         const features = !bufferOverlayVisible
             ? []
@@ -4714,7 +4816,7 @@
         if (!action) return;
 
         if (action.type === "enter") {
-            if (createFormOpen) return;
+            if (anyFormOpen) return;
             if (editEnabled) {
                 ev.preventDefault();
                 onEnterInEdit();
@@ -4736,7 +4838,28 @@
             undoDrawOrMeasure();
             return;
         }
+        if (action.type === "delete-feature") {
+            if (!canWrite || !active) return;
+            ev.preventDefault();
+            if (anyFormOpen) return;
+            if (!editEnabled) return;
+            if (
+                !vertexSession &&
+                (drawVertexCount > 0 || drawPartCount > 0)
+            ) {
+                popLastDrawVertex();
+                if (drawVertexCount === 0) restoreLastDrawPart();
+                return;
+            }
+            deleteSelectedFeatures();
+            return;
+        }
         if (action.type === "escape") {
+            if (attrEdit) {
+                ev.preventDefault();
+                cancelAttrEdit();
+                return;
+            }
             if (createFormOpen) {
                 ev.preventDefault();
                 cancelCreate();
@@ -4826,22 +4949,23 @@
             return;
         }
         if (action.type === "measure-toggle") {
-            if (editEnabled) return;
             ev.preventDefault();
+            if (editEnabled) exitEditMode();
             measureEnabled = !measureEnabled;
             if (measureEnabled) commentsEnabled = false;
             return;
         }
         if (action.type === "comments-toggle") {
-            if (!presenceMember || editEnabled) return;
+            if (!presenceMember) return;
             ev.preventDefault();
+            if (editEnabled) exitEditMode();
             commentsEnabled = !commentsEnabled;
             if (commentsEnabled) measureEnabled = false;
             else stopCommentAdd();
             return;
         }
         if (action.type === "edit-toggle") {
-            if (createFormOpen) return;
+            if (anyFormOpen) return;
             if (editEnabled) {
                 ev.preventDefault();
                 exitEditMode();
@@ -5175,18 +5299,20 @@
             bind:mode={measureMode}
             bind:selectionTool={selectionToolLocal}
             bind:commentsEnabled
+            bind:editEnabled
             showComments={presenceMember}
+            showEdit={canWrite}
+            canEnterEdit={canEdit}
+            onEnterEdit={enterEditMode}
+            onExitEdit={exitEditMode}
             status={measureStatus}
             records={measureRecords}
             {canFinish}
             {dim}
-            {fullscreen}
             {selectionCount}
             {isolating}
             onZoomIn={zoomIn3d}
             onZoomOut={zoomOut3d}
-            onSetDim={onDimChange}
-            onToggleFullscreen={onToggleFullscreen}
             onFlyToSelection={() => flyToSelection(true)}
             onFlyHome={() => {
                 void flyHome();
@@ -5255,8 +5381,9 @@
             <EditModeBar
                 layer={editLayer}
                 mode={drawMode}
-                canFinish={drawCanFinish && !createFormOpen}
-                canAddPart={drawCanAddPart && !createFormOpen && !vertexSession}
+                canFinish={drawCanFinish && !anyFormOpen}
+                canAddPart={drawCanAddPart && !anyFormOpen && !vertexSession}
+                canDelete={!anyFormOpen}
                 useHeight={drawUseHeight}
                 snap={snapMode}
                 vertexEditing={Boolean(vertexSession)}
@@ -5265,6 +5392,7 @@
                 onSnap={(m) => (snapMode = m)}
                 onFinish={finishDrawDraft}
                 onAddPart={addDrawPart}
+                onDelete={deleteSelectedFeatures}
             />
         </div>
     {:else if canWrite && commentAdding && !pendingComment}
@@ -5352,6 +5480,12 @@
         onComment={presenceMember && canWrite && ctxKind === "entity"
             ? () => startFeatureComment(ctxLayerName, ctxEntityId)
             : undefined}
+        onEditAttributes={canWrite && ctxKind === "entity"
+            ? () => openAttrEdit(ctxLayerName, ctxEntityId)
+            : undefined}
+        onDelete={canWrite && ctxKind === "entity"
+            ? () => deleteBufferedFeature(ctxLayerName, ctxEntityId)
+            : undefined}
         onClose={closeContextMenu}
     />
 
@@ -5371,9 +5505,18 @@
         <CesiumLoading />
     {/if}
 
+    <div class="absolute top-2 right-2 z-20">
+        <MapViewChrome
+            {dim}
+            {fullscreen}
+            onSetDim={onDimChange}
+            {onToggleFullscreen}
+        />
+    </div>
+
     {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
         <div
-            class="pointer-events-none absolute top-2 right-2 bottom-2 z-10 flex items-start gap-2"
+            class="pointer-events-none absolute top-2 right-12 bottom-2 z-10 flex items-start gap-2"
         >
             {#if styleLayerIdx !== null && layers[styleLayerIdx]}
                 {@const styleLayer = layers[styleLayerIdx]}
@@ -5437,6 +5580,19 @@
                         onConfirm={confirmCreate}
                         onCancel={cancelCreate}
                     />
+                {:else if canWrite && attrEdit}
+                    {#key `${attrEdit.table}:${attrEdit.entityId}`}
+                        <FeatureCreateForm
+                            mode="edit"
+                            layer={attrEdit.table}
+                            entityId={attrEdit.entityId}
+                            geomType="Point"
+                            fields={attrEditFields}
+                            initial={attrEditInitial}
+                            onConfirm={confirmAttrEdit}
+                            onCancel={cancelAttrEdit}
+                        />
+                    {/key}
                 {/if}
                 {#if canWrite && (bufferEntries.length > 0 || commitDoneId)}
                     <div
@@ -5489,8 +5645,11 @@
                                     <button
                                         type="button"
                                         class="min-w-0 flex-1 truncate text-left"
-                                        title="Edit {rec.table} · {rec.entityId}"
+                                        title={rec.op === "delete"
+                                            ? `Deleted · ${rec.table} · ${rec.entityId}`
+                                            : `Edit ${rec.table} · ${rec.entityId}`}
                                         onclick={() => {
+                                            if (rec.op === "delete") return;
                                             if (!editEnabled) enterEditMode();
                                             queueMicrotask(() =>
                                                 beginVertexEdit(
@@ -5500,6 +5659,11 @@
                                             );
                                         }}
                                     >
+                                        {#if rec.op === "delete"}
+                                            <span class="text-red-400/90"
+                                                >delete ·</span
+                                            >
+                                        {/if}
                                         <span class="text-muted-foreground"
                                             >{rec.table} ·</span
                                         >
@@ -5676,6 +5840,8 @@
             y={pickPanelY}
             flipBelow={pickFlipBelow}
             onIndexChange={applyPickIndex}
+            canEdit={canWrite}
+            onEdit={(c) => openAttrEdit(c.layerName, c.entityId)}
             onClose={() => {
                 closePickPager({ suppressClick: true });
             }}

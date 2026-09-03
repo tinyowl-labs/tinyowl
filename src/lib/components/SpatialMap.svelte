@@ -6,12 +6,23 @@
     import {
         DEFAULT_SEARCH_RADIUS,
         formatRadius,
+        bboxFromGeoJSON,
         type SearchBBox,
     } from "$lib/search/params";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import MapIcon from "@lucide/svelte/icons/map";
     import XIcon from "@lucide/svelte/icons/x";
-    import type { LayerGroup, Map as LeafletMap, MarkerClusterGroup } from "leaflet";
+    import type {
+        CircleMarker,
+        CircleMarkerOptions,
+        FeatureGroup,
+        GeoJSON as LeafletGeoJSON,
+        Layer,
+        LayerGroup,
+        Map as LeafletMap,
+        MarkerClusterGroup,
+        PathOptions,
+    } from "leaflet";
     import {
         createClusterGroup,
         createLeafletMap,
@@ -35,6 +46,7 @@
     };
 
     type SpatialMode = "none" | "area" | "point";
+    type DisplayMode = "area" | "point";
     /** Point-mode gesture: wait for centre, then radius edge. */
     type PointStep = "idle" | "centre" | "radius";
 
@@ -48,6 +60,22 @@
         /** Fit the map to result markers when no spatial filter is set. */
         fitResults?: boolean;
         class?: string;
+        /** How result geometry is drawn. */
+        displayMode?: DisplayMode;
+        hoveredSlug?: string | null;
+        selectedSlug?: string | null;
+        onResultClick?: (slug: string) => void;
+        onResultHover?: (slug: string | null) => void;
+        onCursor?: (lat: number | null, lng: number | null, zoom: number | null) => void;
+        onViewBounds?: (bounds: SearchBBox) => void;
+        /** Skip camera fit when the user is driving the view (search-as-I-move). */
+        lockView?: boolean;
+        /** Hide the built-in Area/Point chrome (sidebar owns those controls). */
+        chrome?: boolean;
+        fullBleed?: boolean;
+        showAttribution?: boolean;
+        /** Extra left padding so fly-to clears a floating sidebar. */
+        flyPaddingLeft?: number;
     };
 
     let {
@@ -59,6 +87,18 @@
         onChange,
         fitResults = false,
         class: klass = "",
+        displayMode = "area",
+        hoveredSlug = null,
+        selectedSlug = null,
+        onResultClick,
+        onResultHover,
+        onCursor,
+        onViewBounds,
+        lockView = false,
+        chrome = true,
+        fullBleed = false,
+        showAttribution = true,
+        flyPaddingLeft = 0,
     }: Props = $props();
 
     const MIN_RADIUS_M = 200;
@@ -70,9 +110,12 @@
     let Lref: LeafletNS | null = null;
     let overlay: LayerGroup | null = null;
     let resultsCluster: MarkerClusterGroup | null = null;
+    let resultsPolygons: FeatureGroup | null = null;
     let pointStep = $state<PointStep>("idle");
     /** Live radius while dragging/moving before second click. */
     let previewRadius = $state<number | null>(null);
+    const markerBySlug = new Map<string, CircleMarker>();
+    const polygonBySlug = new Map<string, LeafletGeoJSON>();
 
     const mode = $derived<SpatialMode>(
         pointStep !== "idle"
@@ -120,6 +163,104 @@
 
     function clampRadius(m: number): number {
         return Math.max(MIN_RADIUS_M, Math.round(m));
+    }
+
+    function resultPoint(r: ResultMarker): { lat: number; lng: number } | null {
+        let lat = r.lat ?? null;
+        let lng = r.lng ?? null;
+        if ((lat == null || lng == null) && r.bbox) {
+            const c = bboxCentroid(r.bbox);
+            if (c) {
+                lat = c.lat;
+                lng = c.lng;
+            }
+        }
+        if (
+            lat == null ||
+            lng == null ||
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lng)
+        )
+            return null;
+        return { lat, lng };
+    }
+
+    function accentStyle(kind: "idle" | "hover" | "selected"): PathOptions {
+        const colors = mapColors();
+        const fill = colors.marker || "#3b82f6";
+        const stroke = colors.stroke || "#1d4ed8";
+        if (kind === "selected") {
+            return {
+                color: "#f8fafc",
+                weight: 3,
+                fillColor: fill,
+                fillOpacity: 0.45,
+                opacity: 1,
+            };
+        }
+        if (kind === "hover") {
+            return {
+                color: "#fff",
+                weight: 2.5,
+                fillColor: fill,
+                fillOpacity: 0.38,
+                opacity: 1,
+            };
+        }
+        return {
+            color: stroke,
+            weight: 1.5,
+            fillColor: fill,
+            fillOpacity: 0.16,
+            opacity: 0.9,
+        };
+    }
+
+    function markerStyle(kind: "idle" | "hover" | "selected"): CircleMarkerOptions {
+        const colors = mapColors();
+        const fill = colors.marker || "#3b82f6";
+        if (kind === "selected") {
+            return {
+                radius: 9,
+                color: "#fff",
+                weight: 3,
+                fillColor: fill,
+                fillOpacity: 1,
+            };
+        }
+        if (kind === "hover") {
+            return {
+                radius: 8,
+                color: "#fff",
+                weight: 2,
+                fillColor: fill,
+                fillOpacity: 1,
+            };
+        }
+        return {
+            radius: 6,
+            color: "#fff",
+            weight: 2,
+            fillColor: fill,
+            fillOpacity: 1,
+        };
+    }
+
+    function emphasis(slug: string): "idle" | "hover" | "selected" {
+        if (selectedSlug && slug === selectedSlug) return "selected";
+        if (hoveredSlug && slug === hoveredSlug) return "hover";
+        return "idle";
+    }
+
+    function applyEmphasis() {
+        for (const [slug, marker] of markerBySlug) {
+            marker.setStyle(markerStyle(emphasis(slug)));
+            if (emphasis(slug) !== "idle") marker.bringToFront();
+        }
+        for (const [slug, layer] of polygonBySlug) {
+            layer.setStyle(accentStyle(emphasis(slug)));
+            if (emphasis(slug) !== "idle") layer.bringToFront();
+        }
     }
 
     function syncSpatialGraphics() {
@@ -178,60 +319,81 @@
         );
     }
 
+    function bindResultLayer(slug: string, layer: Layer) {
+        layer.on("click", (e) => {
+            Lref?.DomEvent.stopPropagation(e);
+            if (pointStep !== "idle") return;
+            if (onResultClick) onResultClick(slug);
+            else goto(`/${slug}`);
+        });
+        layer.on("mouseover", () => onResultHover?.(slug));
+        layer.on("mouseout", () => onResultHover?.(null));
+    }
+
     function syncResultMarkers() {
         const L = Lref;
-        if (!map || !L || !resultsCluster) return;
+        if (!map || !L || !resultsCluster || !resultsPolygons) return;
         resultsCluster.clearLayers();
-        const colors = mapColors();
-        const fill = colors.marker || "#3b82f6";
-        const stroke = colors.stroke || "#1d4ed8";
+        resultsPolygons.clearLayers();
+        markerBySlug.clear();
+        polygonBySlug.clear();
+
+        const showArea = displayMode === "area";
 
         for (const r of results) {
-            let lat = r.lat ?? null;
-            let lng = r.lng ?? null;
-            if ((lat == null || lng == null) && r.bbox) {
-                const c = bboxCentroid(r.bbox);
-                if (c) {
-                    lat = c.lat;
-                    lng = c.lng;
+            const pt = resultPoint(r);
+            let drewPolygon = false;
+            if (showArea && r.bbox) {
+                try {
+                    const geom = JSON.parse(r.bbox);
+                    if (geom?.type && geom?.coordinates) {
+                        const poly = L.geoJSON(geom, {
+                            style: () => accentStyle(emphasis(r.slug)),
+                            interactive: true,
+                        });
+                        bindResultLayer(r.slug, poly);
+                        poly.bindTooltip(
+                            `<div class="text-[13px]"><strong>${escapeHTML(r.title)}</strong></div>`,
+                            {
+                                direction: "top",
+                                offset: [0, -8],
+                                className: "leaflet-map-label",
+                                opacity: 1,
+                                sticky: true,
+                            },
+                        );
+                        resultsPolygons.addLayer(poly);
+                        polygonBySlug.set(r.slug, poly);
+                        drewPolygon = true;
+                    }
+                } catch {
+                    /* fall through to pin */
                 }
             }
-            if (
-                lat == null ||
-                lng == null ||
-                !Number.isFinite(lat) ||
-                !Number.isFinite(lng)
-            )
-                continue;
-            const marker = L.circleMarker([lat, lng], {
-                radius: 6,
-                color: "#fff",
-                weight: 2,
-                fillColor: fill,
-                fillOpacity: 1,
-            });
-            marker.bindTooltip(
-                `<div class="text-[13px]"><strong>${escapeHTML(r.title)}</strong></div>`,
-                {
-                    direction: "top",
-                    offset: [0, -8],
-                    className: "leaflet-map-label",
-                    opacity: 1,
-                },
-            );
-            const slug = r.slug;
-            marker.on("click", (e) => {
-                L.DomEvent.stopPropagation(e);
-                if (pointStep !== "idle") return;
-                goto(`/${slug}`);
-            });
-            resultsCluster.addLayer(marker);
+
+            if (!showArea || !drewPolygon) {
+                if (!pt) continue;
+                const marker = L.circleMarker([pt.lat, pt.lng], markerStyle(emphasis(r.slug)));
+                marker.bindTooltip(
+                    `<div class="text-[13px]"><strong>${escapeHTML(r.title)}</strong></div>`,
+                    {
+                        direction: "top",
+                        offset: [0, -8],
+                        className: "leaflet-map-label",
+                        opacity: 1,
+                    },
+                );
+                bindResultLayer(r.slug, marker);
+                resultsCluster.addLayer(marker);
+                markerBySlug.set(r.slug, marker);
+            }
         }
+        applyEmphasis();
     }
 
     function fitSpatialFilter(animate = false) {
         const L = Lref;
-        if (!map || !L) return;
+        if (!map || !L || lockView) return;
         if (searchBBox) {
             map.fitBounds(
                 [
@@ -243,8 +405,6 @@
             return;
         }
         if (centerLat != null && centerLng != null) {
-            // Don't use L.circle().getBounds() — an unattached Circle has no
-            // `_map` and throws layerPointToLatLng in Leaflet 1.x.
             const r = radius > 0 ? radius : DEFAULT_SEARCH_RADIUS;
             const dLat = (r / 6371000) * (180 / Math.PI);
             const cos = Math.cos((centerLat * Math.PI) / 180);
@@ -270,8 +430,17 @@
         }
         if (fitResults) {
             const rb = resultsCluster?.getBounds();
-            if (rb?.isValid()) {
-                map.fitBounds(rb, {
+            const pb = resultsPolygons?.getBounds();
+            const bounds =
+                rb?.isValid() && pb?.isValid()
+                    ? rb.extend(pb)
+                    : rb?.isValid()
+                      ? rb
+                      : pb?.isValid()
+                        ? pb
+                        : null;
+            if (bounds?.isValid()) {
+                map.fitBounds(bounds, {
                     padding: [40, 40],
                     maxZoom: 8,
                     animate,
@@ -280,7 +449,39 @@
         }
     }
 
-    function useMapArea() {
+    function flyPadding() {
+        return {
+            paddingTopLeft: [Math.max(24, flyPaddingLeft), 56] as [number, number],
+            paddingBottomRight: [28, 56] as [number, number],
+        };
+    }
+
+    export function flyToSlug(slug: string) {
+        const r = results.find((x) => x.slug === slug);
+        if (!r || !map) return;
+        const pad = flyPadding();
+        if (r.bbox) {
+            const env = bboxFromGeoJSON(r.bbox);
+            if (env) {
+                map.flyToBounds(
+                    [
+                        [env.south, env.west],
+                        [env.north, env.east],
+                    ],
+                    { ...pad, maxZoom: 14, duration: 0.7 },
+                );
+                return;
+            }
+        }
+        const pt = resultPoint(r);
+        if (pt) {
+            map.flyTo([pt.lat, pt.lng], Math.max(map.getZoom(), 11), {
+                duration: 0.7,
+            });
+        }
+    }
+
+    export function useMapArea() {
         if (!map) return;
         pointStep = "idle";
         previewRadius = null;
@@ -297,13 +498,13 @@
         onChange?.();
     }
 
-    function startPointMode() {
+    export function startPointMode() {
         previewRadius = null;
         pointStep = "centre";
         syncSpatialGraphics();
     }
 
-    function clearSpatial() {
+    export function clearSpatial() {
         centerLat = null;
         centerLng = null;
         searchBBox = null;
@@ -312,6 +513,25 @@
         previewRadius = null;
         syncSpatialGraphics();
         onChange?.();
+    }
+
+    export function zoomIn() {
+        map?.zoomIn();
+    }
+
+    export function zoomOut() {
+        map?.zoomOut();
+    }
+
+    export function currentBounds(): SearchBBox | null {
+        if (!map) return null;
+        const rect = viewBounds(map);
+        return {
+            west: parseFloat(rect.west.toFixed(6)),
+            south: parseFloat(rect.south.toFixed(6)),
+            east: parseFloat(rect.east.toFixed(6)),
+            north: parseFloat(rect.north.toFixed(6)),
+        };
     }
 
     function handleMapClick(lat: number, lng: number) {
@@ -345,6 +565,10 @@
         syncSpatialGraphics();
     }
 
+    function emitCursor(lat: number | null, lng: number | null) {
+        onCursor?.(lat, lng, map?.getZoom() ?? null);
+    }
+
     $effect(() => {
         if (!mounted || !container || !browser) return;
         let cancelled = false;
@@ -359,6 +583,7 @@
                 const m = createLeafletMap(L, container);
                 const stopResize = observeLeafletResize(m, container);
                 overlay = L.layerGroup().addTo(m);
+                resultsPolygons = L.featureGroup().addTo(m);
                 resultsCluster = createClusterGroup(L, {
                     disableClusteringAtZoom: 12,
                     maxClusterRadius: 48,
@@ -373,6 +598,21 @@
                 });
                 m.on("mousemove", (e) => {
                     handleMapMove(e.latlng.lat, e.latlng.lng);
+                    emitCursor(e.latlng.lat, e.latlng.lng);
+                });
+                m.on("mouseout", () => emitCursor(null, null));
+                m.on("zoomend", () => {
+                    emitCursor(null, null);
+                    onCursor?.(null, null, m.getZoom());
+                });
+                m.on("moveend", () => {
+                    const rect = viewBounds(m);
+                    onViewBounds?.({
+                        west: parseFloat(rect.west.toFixed(6)),
+                        south: parseFloat(rect.south.toFixed(6)),
+                        east: parseFloat(rect.east.toFixed(6)),
+                        north: parseFloat(rect.north.toFixed(6)),
+                    });
                 });
 
                 if (centerLat != null && centerLng != null) {
@@ -389,13 +629,14 @@
 
                 syncResultMarkers();
                 syncSpatialGraphics();
-                fitSpatialFilter();
+                if (!lockView) fitSpatialFilter();
                 if (!cancelled) mapReady = true;
 
                 cleanup = () => {
                     stopResize();
                     overlay = null;
                     resultsCluster = null;
+                    resultsPolygons = null;
                     Lref = null;
                     destroyLeafletMap(m);
                     map = null;
@@ -414,12 +655,19 @@
 
     $effect(() => {
         results;
+        displayMode;
         themePrefs.accentHue;
         themePrefs.bgBase;
         if (map && Lref) {
             tuneLeafletBasemap(map, isDark());
             syncResultMarkers();
         }
+    });
+
+    $effect(() => {
+        hoveredSlug;
+        selectedSlug;
+        if (map && Lref) applyEmphasis();
     });
 
     $effect(() => {
@@ -446,7 +694,7 @@
               ? `p:${centerLat},${centerLng},${radius}`
               : "";
         if (!key) lastFitKey = "";
-        if (!map || !Lref || pointStep !== "idle") return;
+        if (!map || !Lref || pointStep !== "idle" || lockView) return;
         if (key && key !== lastFitKey) {
             lastFitKey = key;
             fitSpatialFilter(true);
@@ -461,7 +709,9 @@
 
 <div class="relative min-h-0 {klass || 'h-full'}">
     <div
-        class="leaflet-locator relative h-full min-h-0 overflow-hidden rounded-lg border border-border bg-secondary/20 {drafting
+        class="leaflet-locator relative h-full min-h-0 overflow-hidden bg-secondary/20 {fullBleed
+            ? ''
+            : 'rounded-lg border border-border'} {drafting
             ? 'ring-2 ring-primary/40 cursor-crosshair'
             : ''}"
     >
@@ -469,68 +719,71 @@
         {#if !mapReady}
             <MapLoading />
         {/if}
-        {#if mapReady}
+        {#if mapReady && showAttribution}
             <MapAttribution />
         {/if}
 
-        <div
-            class="leaflet-map-chrome pointer-events-auto absolute inset-x-2 top-2 z-10 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-0.5 text-[11px] shadow-sm backdrop-blur-sm"
-        >
+        {#if chrome}
             <div
-                class="grid min-w-0 flex-1 grid-cols-2 gap-0.5 rounded-md bg-muted/50 p-0.5"
+                class="leaflet-map-chrome pointer-events-auto absolute inset-x-2 top-2 z-10 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-0.5 text-[11px] shadow-sm backdrop-blur-sm"
             >
-                <button
-                    type="button"
-                    onclick={useMapArea}
-                    class="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 font-medium transition-colors {mode ===
-                    'area'
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'}"
-                    title={mode === "area"
-                        ? "Update search to this view"
-                        : "Search the visible map rectangle"}
+                <div
+                    class="grid min-w-0 flex-1 grid-cols-2 gap-0.5 rounded-md bg-muted/50 p-0.5"
                 >
-                    <MapIcon class="size-3 shrink-0" />
-                    Area
-                </button>
-                <button
-                    type="button"
-                    onclick={startPointMode}
-                    class="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 font-medium transition-colors {mode ===
-                        'point' || drafting
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'}"
-                    title="Click once for the centre, again for the radius"
-                >
-                    <CrosshairIcon class="size-3 shrink-0" />
-                    Point
-                </button>
+                    <button
+                        type="button"
+                        onclick={useMapArea}
+                        class="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 font-medium transition-colors {mode ===
+                        'area'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'}"
+                        title={mode === "area"
+                            ? "Update search to this view"
+                            : "Search the visible map rectangle"}
+                    >
+                        <MapIcon class="size-3 shrink-0" />
+                        Area
+                    </button>
+                    <button
+                        type="button"
+                        onclick={startPointMode}
+                        class="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 font-medium transition-colors {mode ===
+                            'point' || drafting
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'}"
+                        title="Click once for the centre, again for the radius"
+                    >
+                        <CrosshairIcon class="size-3 shrink-0" />
+                        Point
+                    </button>
+                </div>
+                {#if pointStep === "centre"}
+                    <span
+                        class="hidden shrink-0 px-1.5 text-muted-foreground sm:inline"
+                        >Click centre</span
+                    >
+                {:else if pointStep === "radius"}
+                    <span
+                        class="hidden shrink-0 px-1.5 tabular-nums text-muted-foreground sm:inline"
+                        >{formatRadius(previewRadius ?? radius)}</span
+                    >
+                {:else if mode === "point"}
+                    <span
+                        class="hidden shrink-0 px-1.5 tabular-nums text-muted-foreground sm:inline"
+                        >{formatRadius(radius)}</span
+                    >
+                {/if}
+                {#if mode !== "none" || drafting}
+                    <button
+                        type="button"
+                        onclick={clearSpatial}
+                        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title="Clear spatial filter"
+                    >
+                        <XIcon class="size-3.5" />
+                    </button>
+                {/if}
             </div>
-            {#if pointStep === "centre"}
-                <span class="hidden shrink-0 px-1.5 text-muted-foreground sm:inline"
-                    >Click centre</span
-                >
-            {:else if pointStep === "radius"}
-                <span
-                    class="hidden shrink-0 px-1.5 tabular-nums text-muted-foreground sm:inline"
-                    >{formatRadius(previewRadius ?? radius)}</span
-                >
-            {:else if mode === "point"}
-                <span
-                    class="hidden shrink-0 px-1.5 tabular-nums text-muted-foreground sm:inline"
-                    >{formatRadius(radius)}</span
-                >
-            {/if}
-            {#if mode !== "none" || drafting}
-                <button
-                    type="button"
-                    onclick={clearSpatial}
-                    class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                    title="Clear spatial filter"
-                >
-                    <XIcon class="size-3.5" />
-                </button>
-            {/if}
-        </div>
+        {/if}
     </div>
 </div>

@@ -1,5 +1,7 @@
 <script lang="ts">
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
+    import PencilIcon from "@lucide/svelte/icons/pencil";
+    import Trash2Icon from "@lucide/svelte/icons/trash-2";
     import MessageCircleIcon from "@lucide/svelte/icons/message-circle";
     import CopyIcon from "@lucide/svelte/icons/copy";
     import EyeOffIcon from "@lucide/svelte/icons/eye-off";
@@ -32,6 +34,8 @@
         onClear?: () => void;
         onClose?: () => void;
         onComment?: () => void;
+        onEditAttributes?: () => void;
+        onDelete?: () => void;
     };
 
     let {
@@ -56,6 +60,8 @@
         onClear,
         onClose,
         onComment,
+        onEditAttributes,
+        onDelete,
     }: Props = $props();
 
     let rootEl = $state<HTMLDivElement>();
@@ -144,6 +150,20 @@
                 <CrosshairIcon class="size-3.5 shrink-0 text-muted-foreground" />
                 Fly to
             </button>
+            {#if !isTileset && onEditAttributes}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => {
+                        onEditAttributes();
+                        onClose?.();
+                    }}
+                >
+                    <PencilIcon class="size-3.5 shrink-0 text-muted-foreground" />
+                    Edit attributes
+                </button>
+            {/if}
             {#if !isTileset && onComment}
                 <button
                     type="button"
@@ -250,6 +270,20 @@
                 >
                     <FocusIcon class="size-3.5 shrink-0 text-muted-foreground" />
                     Exit isolate
+                </button>
+            {/if}
+            {#if !isTileset && onDelete}
+                <button
+                    type="button"
+                    class={itemCls}
+                    role="menuitem"
+                    onclick={() => {
+                        onDelete();
+                        onClose?.();
+                    }}
+                >
+                    <Trash2Icon class="size-3.5 shrink-0 text-muted-foreground" />
+                    Delete
                 </button>
             {/if}
             {#if !isTileset && onClear}

@@ -87,9 +87,60 @@ export const editBuffer = {
 			...entry,
 			op,
 			oldGeometry,
+			geometry:
+				entry.geometry !== undefined ? entry.geometry : prev.geometry,
 			attributes: entry.attributes ?? prev.attributes,
 		};
 		entries = next;
+	},
+
+	/** Attribute-only upsert (keeps existing geometry / insert vs update). */
+	upsertAttributes(
+		table: string,
+		entityId: string,
+		attributes: Record<string, unknown>,
+	): void {
+		const prev = entries.find(
+			(e) => e.table === table && e.entityId === entityId,
+		);
+		if (prev?.op === "delete") return;
+		editBuffer.upsert({
+			op: prev?.op === "insert" ? "insert" : "update",
+			table,
+			entityId,
+			attributes: { ...(prev?.attributes ?? {}), ...attributes },
+		});
+	},
+
+	/**
+	 * Mark a canonical row deleted. A session insert is dropped instead
+	 * (it never existed on the server).
+	 */
+	markDelete(
+		table: string,
+		entityId: string,
+		geometry?: unknown | null,
+	): void {
+		const prev = entries.find(
+			(e) => e.table === table && e.entityId === entityId,
+		);
+		if (prev?.op === "insert") {
+			entries = entries.filter(
+				(e) => !(e.table === table && e.entityId === entityId),
+			);
+			return;
+		}
+		const geom =
+			geometry !== undefined && geometry !== null
+				? geometry
+				: (prev?.geometry ?? prev?.oldGeometry ?? null);
+		editBuffer.upsert({
+			op: "delete",
+			table,
+			entityId,
+			geometry: geom,
+			oldGeometry: prev?.oldGeometry ?? geom,
+		});
 	},
 };
 

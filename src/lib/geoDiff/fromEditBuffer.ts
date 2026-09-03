@@ -6,19 +6,36 @@ import type { DiffFeature, EditBufferEntry } from "./types";
  * Draw/buffer tickets own the buffer; this is the only adapter they need.
  */
 export function fromEditBuffer(entries: EditBufferEntry[]): DiffFeature[] {
-    return entries.map((e, i) => {
+    return entries.flatMap((e, i) => {
+        if (e.op === "delete") {
+            const g =
+                asGeometry(e.geometry) ?? asGeometry(e.oldGeometry) ?? null;
+            if (!g) return [];
+            return [
+                {
+                    id: e.entityId || String(i),
+                    table: e.table,
+                    entityId: e.entityId || String(i),
+                    op: "delete",
+                    geometry: g,
+                },
+            ];
+        }
         const geometry = asGeometry(e.geometry) ?? null;
         let oldGeometry = asGeometry(e.oldGeometry) ?? null;
         if (e.op !== "update" || geometriesEqual(oldGeometry, geometry)) {
             oldGeometry = null;
         }
-        return {
-            id: e.entityId || String(i),
-            table: e.table,
-            entityId: e.entityId || String(i),
-            op: e.op,
-            geometry,
-            ...(oldGeometry ? { oldGeometry } : {}),
-        };
+        if (!geometry && !oldGeometry) return [];
+        return [
+            {
+                id: e.entityId || String(i),
+                table: e.table,
+                entityId: e.entityId || String(i),
+                op: e.op,
+                geometry,
+                ...(oldGeometry ? { oldGeometry } : {}),
+            },
+        ];
     });
 }

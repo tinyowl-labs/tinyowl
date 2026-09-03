@@ -3,15 +3,13 @@
     import MinusIcon from "@lucide/svelte/icons/minus";
     import RulerIcon from "@lucide/svelte/icons/ruler";
     import MessageCircleIcon from "@lucide/svelte/icons/message-circle";
-    import MaximizeIcon from "@lucide/svelte/icons/maximize-2";
-    import MinimizeIcon from "@lucide/svelte/icons/minimize-2";
+    import PencilIcon from "@lucide/svelte/icons/pencil";
     import CheckIcon from "@lucide/svelte/icons/check";
     import XIcon from "@lucide/svelte/icons/x";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import HomeIcon from "@lucide/svelte/icons/home";
     import ArrowDownToLineIcon from "@lucide/svelte/icons/arrow-down-to-line";
     import CompassIcon from "@lucide/svelte/icons/compass";
-    import VideoIcon from "@lucide/svelte/icons/video";
     import MousePointer2Icon from "@lucide/svelte/icons/mouse-pointer-2";
     import SquareDashedIcon from "@lucide/svelte/icons/square-dashed";
     import LassoIcon from "@lucide/svelte/icons/lasso";
@@ -19,8 +17,6 @@
     import EyeIcon from "@lucide/svelte/icons/eye";
     import FocusIcon from "@lucide/svelte/icons/focus";
     import CopyIcon from "@lucide/svelte/icons/copy";
-    import BoxIcon from "@lucide/svelte/icons/box";
-    import MapIcon from "@lucide/svelte/icons/map";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
     import { measureHint } from "$lib/measure";
     import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
@@ -32,15 +28,11 @@
         records?: MeasureRecord[];
         canFinish?: boolean;
         dim?: "2d" | "3d";
-        fullscreen?: boolean;
         selectionCount?: number;
         selectionTool?: SelectionToolMode;
         isolating?: boolean;
-        /** When set, shows 2D/3D toggle above fullscreen. */
-        onSetDim?: (dim: "2d" | "3d") => void;
         onZoomIn?: () => void;
         onZoomOut?: () => void;
-        onToggleFullscreen?: () => void;
         onFlyToSelection?: () => void;
         onFlyHome?: () => void;
         onFlyTopDown?: () => void;
@@ -56,6 +48,12 @@
         /** Members-only comments toggle. */
         showComments?: boolean;
         commentsEnabled?: boolean;
+        /** Writers: draw / edit mode on the tools rail. */
+        showEdit?: boolean;
+        editEnabled?: boolean;
+        canEnterEdit?: boolean;
+        onEnterEdit?: () => void;
+        onExitEdit?: () => void;
     };
 
     let {
@@ -65,14 +63,11 @@
         records = [],
         canFinish = false,
         dim = "2d",
-        fullscreen = false,
         selectionCount = 0,
         selectionTool = $bindable<SelectionToolMode>("click"),
         isolating = false,
-        onSetDim,
         onZoomIn,
         onZoomOut,
-        onToggleFullscreen,
         onFlyToSelection,
         onFlyHome,
         onFlyTopDown,
@@ -87,17 +82,22 @@
         onRemove,
         showComments = false,
         commentsEnabled = $bindable(false),
+        showEdit = false,
+        editEnabled = $bindable(false),
+        canEnterEdit = false,
+        onEnterEdit,
+        onExitEdit,
     }: Props = $props();
 
-    let cameraOpen = $state(false);
     let selectionOpen = $state(false);
     let copiedId = $state<string | null>(null);
 
-    const measureModes: { id: MeasureMode; label: string }[] = [
-        { id: "point", label: "Point" },
-        { id: "length", label: "Length" },
-        { id: "area", label: "Area" },
-    ];
+    const measureModes: { id: MeasureMode; label: string; shortcut: string }[] =
+        [
+            { id: "point", label: "Point", shortcut: "P" },
+            { id: "length", label: "Length", shortcut: "L" },
+            { id: "area", label: "Area", shortcut: "A" },
+        ];
 
     const modeLabel: Record<MeasureMode, string> = {
         point: "Point",
@@ -109,42 +109,64 @@
         id: SelectionToolMode;
         label: string;
         hint: string;
+        shortcut: string;
         icon: typeof MousePointer2Icon;
     }[] = [
         {
             id: "click",
             label: "Click",
             hint: "Click · Shift add · Ctrl remove",
+            shortcut: "1",
             icon: MousePointer2Icon,
         },
         {
             id: "box",
             label: "Box",
             hint: "Shift+drag add · Ctrl+drag remove",
+            shortcut: "2",
             icon: SquareDashedIcon,
         },
         {
             id: "lasso",
             label: "Lasso",
             hint: "Shift+drag add · Ctrl+drag remove",
+            shortcut: "3",
             icon: LassoIcon,
         },
     ];
 
-    const hasCamera = Boolean(
-        onFlyHome || onFlyTopDown || onLockNorth || onFlyToSelection,
-    );
     const hasSelection = $derived(selectionCount > 0);
+    const inSelectMode = $derived(
+        !enabled && !commentsEnabled && !editEnabled,
+    );
+    const editTitle = $derived(
+        editEnabled
+            ? "Stop drawing (Tab)"
+            : canEnterEdit
+              ? "Draw (Tab)"
+              : "Select a layer to draw (Tab)",
+    );
 
     const activeSelect = $derived(
         selectTools.find((t) => t.id === selectionTool) ?? selectTools[0]!,
     );
 
     function closePanels() {
-        cameraOpen = false;
         selectionOpen = false;
         enabled = false;
         commentsEnabled = false;
+        if (editEnabled) {
+            editEnabled = false;
+            onExitEdit?.();
+        }
+    }
+
+    function toggleSelection() {
+        if (!inSelectMode) {
+            closePanels();
+            return;
+        }
+        selectionOpen = !selectionOpen;
     }
 
     function toggleMeasure() {
@@ -159,21 +181,18 @@
         commentsEnabled = next;
     }
 
-    function toggleCamera() {
-        const next = !cameraOpen;
+    function toggleEdit() {
+        if (editEnabled) {
+            closePanels();
+            return;
+        }
+        if (!canEnterEdit) return;
         closePanels();
-        cameraOpen = next;
-    }
-
-    function toggleSelection() {
-        const next = !selectionOpen;
-        closePanels();
-        selectionOpen = next;
+        onEnterEdit?.();
     }
 
     function setMeasureMode(next: MeasureMode) {
         mode = next;
-        cameraOpen = false;
         selectionOpen = false;
         if (!enabled) enabled = true;
     }
@@ -203,129 +222,135 @@
 
     const menuItem =
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-secondary disabled:pointer-events-none disabled:opacity-40";
+
+    const kbd =
+        "text-[10px] tabular-nums text-muted-foreground";
 </script>
 
 <div class="pointer-events-auto flex items-start gap-2">
-    <div
-        class="flex flex-col overflow-hidden rounded-lg border border-border bg-background/95 shadow-lg backdrop-blur-sm"
-    >
-        <!-- 1. Selection -->
-        <button
-            type="button"
-            class="{railBtn} border-b border-border {selectionOpen
-                ? 'bg-primary/15 text-foreground'
-                : ''}"
-            title="Selection ({activeSelect.label})"
-            aria-label="Selection"
-            aria-pressed={selectionOpen}
-            onclick={toggleSelection}
+    <div class="flex flex-col gap-2">
+        <div
+            class="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/95 shadow-lg backdrop-blur-sm"
         >
-            <activeSelect.icon class="size-3.5" />
-        </button>
-
-        <!-- 2. Camera -->
-        {#if hasCamera}
             <button
                 type="button"
-                class="{railBtn} border-b border-border {cameraOpen
+                class="{railBtn} {inSelectMode
                     ? 'bg-primary/15 text-foreground'
                     : ''}"
-                title="Camera"
-                aria-label="Camera"
-                aria-pressed={cameraOpen}
-                onclick={toggleCamera}
+                title="Select ({activeSelect.label}, {activeSelect.shortcut})"
+                aria-label="Select"
+                aria-pressed={inSelectMode}
+                onclick={toggleSelection}
             >
-                <VideoIcon class="size-3.5" />
+                <activeSelect.icon class="size-3.5" />
             </button>
-        {/if}
 
-        <!-- 3. Measure -->
-        <button
-            type="button"
-            class="{railBtn} border-b border-border {enabled
-                ? 'bg-primary/15 text-foreground'
-                : ''}"
-            title={enabled ? "Stop measuring" : "Measure"}
-            aria-label="Measure"
-            aria-pressed={enabled}
-            onclick={toggleMeasure}
-        >
-            <RulerIcon class="size-3.5" />
-        </button>
-
-        {#if showComments}
             <button
                 type="button"
-                class="{railBtn} border-b border-border {commentsEnabled
+                class="{railBtn} {enabled
                     ? 'bg-primary/15 text-foreground'
                     : ''}"
-                title={commentsEnabled ? "Hide comments" : "Comments"}
-                aria-label="Comments"
-                aria-pressed={commentsEnabled}
-                onclick={toggleComments}
+                title={enabled ? "Stop measuring (M)" : "Measure (M)"}
+                aria-label="Measure"
+                aria-pressed={enabled}
+                onclick={toggleMeasure}
             >
-                <MessageCircleIcon class="size-3.5" />
+                <RulerIcon class="size-3.5" />
             </button>
-        {/if}
 
-        <!-- 4–5. Zoom -->
-        <button
-            type="button"
-            class="{railBtn} border-b border-border"
-            title="Zoom in"
-            aria-label="Zoom in"
-            disabled={!onZoomIn}
-            onclick={() => onZoomIn?.()}
-        >
-            <PlusIcon class="size-3.5" />
-        </button>
-        <button
-            type="button"
-            class="{railBtn} border-b border-border"
-            title="Zoom out"
-            aria-label="Zoom out"
-            disabled={!onZoomOut}
-            onclick={() => onZoomOut?.()}
-        >
-            <MinusIcon class="size-3.5" />
-        </button>
-
-        {#if onSetDim}
-            <button
-                type="button"
-                class="{railBtn} border-b border-border bg-secondary text-foreground"
-                title={dim === "3d" ? "Switch to 2D" : "Switch to 3D"}
-                aria-label={dim === "3d"
-                    ? "3D view, switch to 2D"
-                    : "2D map, switch to 3D"}
-                onclick={() => onSetDim(dim === "3d" ? "2d" : "3d")}
-            >
-                {#if dim === "3d"}
-                    <BoxIcon class="size-3.5" />
-                {:else}
-                    <MapIcon class="size-3.5" />
-                {/if}
-            </button>
-        {/if}
-
-        <!-- Fullscreen -->
-        <button
-            type="button"
-            class={railBtn}
-            title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-            aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-            disabled={!onToggleFullscreen}
-            onclick={() => onToggleFullscreen?.()}
-        >
-            {#if fullscreen}
-                <MinimizeIcon class="size-3.5" />
-            {:else}
-                <MaximizeIcon class="size-3.5" />
+            {#if showEdit}
+                <button
+                    type="button"
+                    class="{railBtn} {editEnabled
+                        ? 'bg-primary/15 text-foreground'
+                        : ''}"
+                    title={editTitle}
+                    aria-label="Draw"
+                    aria-pressed={editEnabled}
+                    disabled={!editEnabled && !canEnterEdit}
+                    onclick={toggleEdit}
+                >
+                    <PencilIcon class="size-3.5" />
+                </button>
             {/if}
-        </button>
+
+            {#if showComments}
+                <button
+                    type="button"
+                    class="{railBtn} {commentsEnabled
+                        ? 'bg-primary/15 text-foreground'
+                        : ''}"
+                    title={commentsEnabled
+                        ? "Hide comments (C)"
+                        : "Comments (C)"}
+                    aria-label="Comments"
+                    aria-pressed={commentsEnabled}
+                    onclick={toggleComments}
+                >
+                    <MessageCircleIcon class="size-3.5" />
+                </button>
+            {/if}
+        </div>
+
+        <div
+            class="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/95 shadow-lg backdrop-blur-sm"
+        >
+            {#if onFlyHome}
+                <button
+                    type="button"
+                    class={railBtn}
+                    title="Home (H)"
+                    aria-label="Home"
+                    onclick={() => onFlyHome()}
+                >
+                    <HomeIcon class="size-3.5" />
+                </button>
+            {/if}
+            <button
+                type="button"
+                class={railBtn}
+                title="Zoom in"
+                aria-label="Zoom in"
+                disabled={!onZoomIn}
+                onclick={() => onZoomIn?.()}
+            >
+                <PlusIcon class="size-3.5" />
+            </button>
+            <button
+                type="button"
+                class={railBtn}
+                title="Zoom out"
+                aria-label="Zoom out"
+                disabled={!onZoomOut}
+                onclick={() => onZoomOut?.()}
+            >
+                <MinusIcon class="size-3.5" />
+            </button>
+            {#if onFlyTopDown}
+                <button
+                    type="button"
+                    class={railBtn}
+                    title="Top-down"
+                    aria-label="Top-down"
+                    onclick={() => onFlyTopDown()}
+                >
+                    <ArrowDownToLineIcon class="size-3.5" />
+                </button>
+            {/if}
+            {#if onLockNorth}
+                <button
+                    type="button"
+                    class={railBtn}
+                    title="North up"
+                    aria-label="North up"
+                    onclick={() => onLockNorth()}
+                >
+                    <CompassIcon class="size-3.5" />
+                </button>
+            {/if}
+        </div>
     </div>
 
-    <!-- Selection panel (Blender-style tool list, like Camera) -->
     {#if selectionOpen}
         <div
             class="flex w-48 flex-col gap-0.5 rounded-lg border border-border bg-background/95 p-1 text-xs shadow-lg backdrop-blur-sm"
@@ -345,6 +370,7 @@
                 >
                     <tool.icon class="size-3.5 shrink-0 text-muted-foreground" />
                     <span class="flex-1">{tool.label}</span>
+                    <span class={kbd}>{tool.shortcut}</span>
                     {#if selectionTool === tool.id}
                         <CheckIcon class="size-3 shrink-0 text-foreground" />
                     {/if}
@@ -362,6 +388,19 @@
                             ? `${selectionCount} isolated`
                             : `${selectionCount} selected`}
                     </div>
+                    {#if onFlyToSelection}
+                        <button
+                            type="button"
+                            class={menuItem}
+                            onclick={() => onFlyToSelection()}
+                        >
+                            <CrosshairIcon
+                                class="size-3.5 shrink-0 text-muted-foreground"
+                            />
+                            <span class="flex-1">Fly to</span>
+                            <span class={kbd}>F</span>
+                        </button>
+                    {/if}
                     <button
                         type="button"
                         class={menuItem}
@@ -403,7 +442,8 @@
                             <FocusIcon
                                 class="size-3.5 shrink-0 text-muted-foreground"
                             />
-                            Isolate selected
+                            <span class="flex-1">Isolate selected</span>
+                            <span class={kbd}>I</span>
                         </button>
                     {/if}
                 </div>
@@ -418,7 +458,8 @@
                         <XIcon
                             class="size-3.5 shrink-0 text-muted-foreground"
                         />
-                        Clear isolate
+                        <span class="flex-1">Clear isolate</span>
+                        <span class={kbd}>U</span>
                     </button>
                 </div>
             {/if}
@@ -448,7 +489,7 @@
                 <button
                     type="button"
                     class="border-l border-primary/20 px-1.5 text-primary/70 hover:bg-primary/15 hover:text-primary"
-                    title="Clear isolate and search"
+                    title="Clear isolate and search (U)"
                     aria-label="Clear isolate and search"
                     onclick={() => onExitIsolate()}
                 >
@@ -458,67 +499,6 @@
         </div>
     {/if}
 
-    <!-- Camera panel -->
-    {#if cameraOpen && hasCamera}
-        <div
-            class="flex w-44 flex-col gap-0.5 rounded-lg border border-border bg-background/95 p-1 text-xs shadow-lg backdrop-blur-sm"
-        >
-            <div
-                class="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-            >
-                Camera
-            </div>
-            {#if onFlyToSelection}
-                <button
-                    type="button"
-                    class={menuItem}
-                    disabled={!hasSelection}
-                    onclick={() => onFlyToSelection()}
-                >
-                    <CrosshairIcon
-                        class="size-3.5 shrink-0 text-muted-foreground"
-                    />
-                    Fly to selection
-                </button>
-            {/if}
-            {#if onFlyHome}
-                <button
-                    type="button"
-                    class={menuItem}
-                    onclick={() => onFlyHome()}
-                >
-                    <HomeIcon class="size-3.5 shrink-0 text-muted-foreground" />
-                    Home
-                </button>
-            {/if}
-            {#if onFlyTopDown}
-                <button
-                    type="button"
-                    class={menuItem}
-                    onclick={() => onFlyTopDown()}
-                >
-                    <ArrowDownToLineIcon
-                        class="size-3.5 shrink-0 text-muted-foreground"
-                    />
-                    Top-down
-                </button>
-            {/if}
-            {#if onLockNorth}
-                <button
-                    type="button"
-                    class={menuItem}
-                    onclick={() => onLockNorth()}
-                >
-                    <CompassIcon
-                        class="size-3.5 shrink-0 text-muted-foreground"
-                    />
-                    North up
-                </button>
-            {/if}
-        </div>
-    {/if}
-
-    <!-- Measure panel -->
     {#if enabled}
         <div
             class="flex w-56 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-2 text-xs shadow-lg backdrop-blur-sm"
@@ -534,6 +514,7 @@
                             : ''} {mode === m.id
                             ? 'bg-secondary text-foreground font-medium'
                             : 'text-muted-foreground hover:text-foreground'}"
+                        title="{m.label} ({m.shortcut})"
                         onclick={() => setMeasureMode(m.id)}
                     >
                         {m.label}
@@ -615,7 +596,7 @@
                 </div>
             {/if}
         </div>
-    {:else if records.length > 0 && !cameraOpen && !selectionOpen}
+    {:else if records.length > 0 && !selectionOpen && !editEnabled && !commentsEnabled}
         <button
             type="button"
             class="rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"

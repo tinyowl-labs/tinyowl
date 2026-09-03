@@ -21,6 +21,15 @@ export type EntityHit = {
 	detail: string;
 };
 
+export type ValueHit = {
+	layer: string;
+	id: string;
+	column: string;
+	match: string;
+	label: string;
+	detail: string;
+};
+
 type MediaEntity = { entity_type?: string; entity_id?: string };
 type MediaRow = {
 	hash?: string;
@@ -32,6 +41,7 @@ type MediaRow = {
 const LAYER_LIMIT = 4;
 const ARTEFACT_LIMIT = 4;
 const ENTITY_LIMIT = 8;
+const VALUE_LIMIT = 6;
 
 type CachedEntityIndex = { layer: string; id: string }[];
 const entityIndexCache = new Map<
@@ -145,12 +155,82 @@ export async function searchProjectScope(
 	slug: string,
 	q: string,
 	opts?: { accessToken?: string | null },
-): Promise<{ layers: LayerHit[]; artefacts: ArtefactHit[] }> {
-	const [layers, artefacts] = await Promise.all([
+): Promise<{
+	layers: LayerHit[];
+	artefacts: ArtefactHit[];
+	values: ValueHit[];
+}> {
+	const [layers, artefacts, values] = await Promise.all([
 		searchProjectLayers(slug, q, opts),
 		searchProjectArtefacts(slug, q, opts),
+		searchProjectValues(slug, q, opts),
 	]);
-	return { layers, artefacts };
+	return { layers, artefacts, values };
+}
+
+type EntitySearchRow = {
+	entity_type?: string;
+	entity_id?: string;
+	column_name?: string;
+	match_value?: string;
+};
+
+function clipMatch(raw: string, max = 72): string {
+	const s = raw.replace(/\s+/g, " ").trim();
+	if (s.length <= max) return s;
+	return `${s.slice(0, max - 1)}…`;
+}
+
+function displayColumnName(name: string): string {
+	return name.replace(/_/g, " ");
+}
+
+/** Cell/attribute hits via `GET …/search-entities` (text-ish columns). */
+export async function searchProjectValues(
+	slug: string,
+	q: string,
+	opts?: { accessToken?: string | null; limit?: number },
+): Promise<ValueHit[]> {
+	const prefix = q.trim();
+	if (!slug || prefix.length < 2) return [];
+	const qs = new URLSearchParams({
+		q: prefix,
+		limit: "40",
+	});
+	const res = await fetch(
+		`/api/v1/projects/${encodeURIComponent(slug)}/search-entities?${qs}`,
+		{ headers: authHeaders(opts?.accessToken) },
+	);
+	if (!res.ok) return [];
+	const rows = (await res.json()) as EntitySearchRow[];
+	if (!Array.isArray(rows)) return [];
+	const lower = prefix.toLowerCase();
+	const seen = new Set<string>();
+	const prefixed: ValueHit[] = [];
+	const rest: ValueHit[] = [];
+	const limit = opts?.limit ?? VALUE_LIMIT;
+	for (const row of rows) {
+		const layer = (row.entity_type ?? "").trim();
+		const id = (row.entity_id ?? "").trim();
+		const column = (row.column_name ?? "").trim();
+		const match = (row.match_value ?? "").trim();
+		if (!layer || !id || !match) continue;
+		const key = `${layer}:${id}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const hit: ValueHit = {
+			layer,
+			id,
+			column,
+			match,
+			label: clipMatch(match),
+			detail: `${displayLayerName(layer)} · ${displayColumnName(column) || "value"} · ${id}`,
+		};
+		if (match.toLowerCase().startsWith(lower)) prefixed.push(hit);
+		else rest.push(hit);
+		if (prefixed.length >= limit) break;
+	}
+	return [...prefixed, ...rest].slice(0, limit);
 }
 
 async function loadEntityIndex(

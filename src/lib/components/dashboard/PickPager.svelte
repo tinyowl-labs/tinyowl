@@ -1,8 +1,11 @@
 <script lang="ts">
+    import CheckIcon from "@lucide/svelte/icons/check";
     import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
     import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+    import CopyIcon from "@lucide/svelte/icons/copy";
+    import PencilIcon from "@lucide/svelte/icons/pencil";
     import XIcon from "@lucide/svelte/icons/x";
-    import type { PickCandidate } from "./pickCandidates";
+    import { popupAttrFields, type PickCandidate } from "./pickCandidates";
 
     type Props = {
         open?: boolean;
@@ -20,6 +23,9 @@
         flipBelow?: boolean;
         onIndexChange?: (index: number) => void;
         onClose?: () => void;
+        /** Writers: open attribute editor into the session buffer. */
+        canEdit?: boolean;
+        onEdit?: (candidate: PickCandidate) => void;
     };
 
     let {
@@ -32,7 +38,12 @@
         flipBelow = false,
         onIndexChange,
         onClose,
+        canEdit = false,
+        onEdit,
     }: Props = $props();
+
+    let copied = $state(false);
+    let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
     const current = $derived(
         candidates.length > 0
@@ -40,13 +51,47 @@
             : null,
     );
 
-    const fields = $derived.by(() => {
-        if (!current?.attributes) return [] as Array<{ key: string; value: string }>;
-        return Object.entries(current.attributes).map(([key, value]) => ({
-            key: key.replace(/_/g, " "),
-            value,
-        }));
+    const fields = $derived(
+        popupAttrFields(current?.attributes, {
+            label: current?.label ?? "",
+            entityId: current?.entityId ?? "",
+        }),
+    );
+
+    const idDistinct = $derived(
+        Boolean(
+            current?.entityId &&
+                current.entityId.trim() !== (current.label ?? "").trim(),
+        ),
+    );
+
+    let lastCopyId = "";
+    $effect(() => {
+        const id = current?.entityId ?? "";
+        if (id === lastCopyId) return;
+        lastCopyId = id;
+        copied = false;
+        if (copyTimer) {
+            clearTimeout(copyTimer);
+            copyTimer = undefined;
+        }
     });
+
+    async function copyId() {
+        const id = current?.entityId?.trim();
+        if (!id) return;
+        try {
+            await navigator.clipboard.writeText(id);
+            copied = true;
+            if (copyTimer) clearTimeout(copyTimer);
+            copyTimer = setTimeout(() => {
+                copied = false;
+                copyTimer = undefined;
+            }, 1500);
+        } catch {
+            /* ignore */
+        }
+    }
 
     function setIndex(next: number) {
         if (candidates.length === 0) return;
@@ -109,35 +154,78 @@
         onclick={(e) => e.stopPropagation()}
     >
         <div
-            class="flex items-start gap-2 border-b border-border px-2.5 py-2"
+            class="flex items-start gap-1 border-b border-border px-2.5 py-2"
         >
             <div class="min-w-0 flex-1">
-                <div class="truncate text-[11px] font-medium text-foreground">
-                    {current.label}
+                <div class="flex min-w-0 items-center gap-1">
+                    <div
+                        class="min-w-0 truncate text-[11px] font-medium text-foreground"
+                    >
+                        {current.label}
+                    </div>
+                    {#if !idDistinct && current.entityId}
+                        <button
+                            type="button"
+                            class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                            title={copied ? "Copied" : "Copy id"}
+                            onclick={copyId}
+                        >
+                            {#if copied}
+                                <CheckIcon class="size-3" />
+                            {:else}
+                                <CopyIcon class="size-3" />
+                            {/if}
+                        </button>
+                    {/if}
                 </div>
                 <div
                     class="truncate text-[10px] uppercase tracking-wide text-muted-foreground"
                 >
                     {current.layerName.replace(/_/g, " ")}
                 </div>
-                <div class="truncate font-mono text-[10px] text-muted-foreground">
-                    {current.entityId}
-                </div>
+                {#if idDistinct}
+                    <button
+                        type="button"
+                        class="-ml-1 mt-0.5 flex max-w-full items-center gap-1 rounded px-1 py-0.5 text-left text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        title={copied ? "Copied" : "Copy id"}
+                        onclick={copyId}
+                    >
+                        <span
+                            class="truncate font-mono text-[10px]"
+                            >{current.entityId}</span
+                        >
+                        {#if copied}
+                            <CheckIcon class="size-3 shrink-0" />
+                        {:else}
+                            <CopyIcon class="size-3 shrink-0" />
+                        {/if}
+                    </button>
+                {/if}
             </div>
-            <button
-                type="button"
-                class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                title="Close"
-                onclick={() => onClose?.()}
-            >
-                <XIcon class="size-3.5" />
-            </button>
+            <div class="flex shrink-0 items-center gap-0.5">
+                {#if canEdit && onEdit}
+                    <button
+                        type="button"
+                        class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        title="Edit attributes"
+                        onclick={() => onEdit(current)}
+                    >
+                        <PencilIcon class="size-3.5" />
+                    </button>
+                {/if}
+                <button
+                    type="button"
+                    class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    title="Close"
+                    onclick={() => onClose?.()}
+                >
+                    <XIcon class="size-3.5" />
+                </button>
+            </div>
         </div>
 
-        <div class="max-h-52 space-y-1.5 overflow-y-auto px-2.5 py-2">
-            {#if fields.length === 0}
-                <p class="text-[11px] text-muted-foreground">No attributes</p>
-            {:else}
+        {#if fields.length > 0}
+            <div class="max-h-52 space-y-1.5 overflow-y-auto px-2.5 py-2">
                 {#each fields as field}
                     <div>
                         <div
@@ -146,18 +234,12 @@
                             {field.key}
                         </div>
                         <div class="break-words text-[11px] text-foreground">
-                            {#if field.value}
-                                {field.value}
-                            {:else}
-                                <span class="italic text-muted-foreground"
-                                    >—</span
-                                >
-                            {/if}
+                            {field.value}
                         </div>
                     </div>
                 {/each}
-            {/if}
-        </div>
+            </div>
+        {/if}
 
         {#if candidates.length > 1}
             <div

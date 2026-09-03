@@ -1,4 +1,5 @@
 import type { PageServerLoad } from "./$types";
+import { redirect } from "@sveltejs/kit";
 import { TINYOWL_CORE_URL } from "$env/static/private";
 import {
   formatBBox,
@@ -109,28 +110,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch }) => {
   const active = hasActiveSearch(parsed);
 
   if (!active) {
-    const accessToken = await locals.getAccessToken();
-    return {
-      query: parsed.q,
-      lat: null,
-      lng: null,
-      radius: null,
-      bbox: null,
-      dateFrom: null,
-      dateTo: null,
-      tags: [] as string[],
-      vocabularies: [] as string[],
-      projectSlugs: [] as string[],
-      semantic: parsed.semantic,
-      mediaHash: null as string | null,
-      imageQuery: false,
-      similarItems: [] as SimilarMediaItem[],
-      similarStatus: "" as string,
-      projects: [] as SearchProject[],
-      entityHits: {} as Record<string, SearchEntityHit[]>,
-      placeName: null as string | null,
-      accessToken,
-    };
+    throw redirect(302, "/");
   }
 
   const accessToken = await locals.getAccessToken();

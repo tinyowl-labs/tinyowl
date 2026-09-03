@@ -228,7 +228,7 @@ export function buildSearchParams(input: {
 export function searchHref(input: Parameters<typeof buildSearchParams>[0]): string {
   const params = buildSearchParams(input);
   const qs = params.toString();
-  return qs ? `/search?${qs}` : "/search";
+  return qs ? `/?${qs}` : "/";
 }
 
 export function hasActiveSearch(p: SearchParams): boolean {

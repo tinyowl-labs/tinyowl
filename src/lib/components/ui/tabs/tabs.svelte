@@ -13,6 +13,7 @@
         lazy = false,
         leading,
         trailing,
+        afterSeparator,
         children,
         onValueChange,
         orientation = "horizontal",
@@ -27,6 +28,8 @@
         leading?: Snippet;
         /** Rendered to the right of the tab list (horizontal only). */
         trailing?: Snippet;
+        /** Rendered after a tab with `separatorAfter` (inside the list). */
+        afterSeparator?: Snippet;
         children: Snippet<[string]>;
         onValueChange?: (value: string) => void;
         orientation?: "horizontal" | "vertical";
@@ -83,6 +86,9 @@
                         class="mx-0.5 h-4 w-px shrink-0 bg-border"
                         aria-hidden="true"
                     ></span>
+                    {#if afterSeparator}
+                        {@render afterSeparator()}
+                    {/if}
                 {/if}
             {/each}
         </BitsTabs.List>
