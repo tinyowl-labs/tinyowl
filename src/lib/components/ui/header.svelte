@@ -10,9 +10,10 @@
     import SunIcon from "@lucide/svelte/icons/sun";
     import MoonIcon from "@lucide/svelte/icons/moon";
     import UserIcon from "@lucide/svelte/icons/user";
+    import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
+    import Building2Icon from "@lucide/svelte/icons/building-2";
     import SettingsIcon from "@lucide/svelte/icons/settings";
     import LogOutIcon from "@lucide/svelte/icons/log-out";
-    import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import { cn } from "$lib/utils.js";
@@ -141,16 +142,16 @@
         {#if hasSession}
             <div class="group/profile relative">
                 <a
-                    href={userId ? `/users/${userId}` : "/profile"}
-                    class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground group-hover/profile:bg-accent group-hover/profile:text-foreground group-focus-within/profile:bg-accent group-focus-within/profile:text-foreground"
+                    href="/profile"
+                    class="inline-flex size-7 items-center justify-center rounded-full text-muted-foreground no-underline transition-colors hover:bg-accent group-hover/profile:bg-accent group-focus-within/profile:bg-accent"
+                    aria-label="Projects"
+                    aria-haspopup="menu"
                 >
                     {#if userId}
                         <UserAvatar userId={userId} class="size-6" />
                     {:else}
-                        <UserIcon class="size-3.5" />
+                        <UserIcon class="size-4" />
                     {/if}
-                    Profile
-                    <ChevronDownIcon class="size-3 opacity-60" />
                 </a>
                 <div
                     class="invisible absolute right-0 top-full z-50 min-w-48 pt-2 opacity-0 transition-none group-hover/profile:visible group-hover/profile:opacity-100 group-focus-within/profile:visible group-focus-within/profile:opacity-100"
@@ -176,13 +177,14 @@
                             href="/profile"
                             class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
                         >
-                            <UserIcon class="size-3.5 shrink-0" />
+                            <FolderKanbanIcon class="size-3.5 shrink-0" />
                             Projects
                         </a>
                         <a
                             href="/orgs"
                             class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
                         >
+                            <Building2Icon class="size-3.5 shrink-0" />
                             Organisations
                         </a>
                         <a

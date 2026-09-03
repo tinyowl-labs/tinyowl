@@ -20,12 +20,9 @@
     import CopyIcon from "@lucide/svelte/icons/copy";
     import BoxIcon from "@lucide/svelte/icons/box";
     import MapIcon from "@lucide/svelte/icons/map";
-    import PencilIcon from "@lucide/svelte/icons/pencil";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
     import { measureHint } from "$lib/measure";
     import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
-
-    type BufferRow = { entityId: string; table: string };
 
     type Props = {
         enabled?: boolean;
@@ -38,10 +35,6 @@
         selectionCount?: number;
         selectionTool?: SelectionToolMode;
         isolating?: boolean;
-        drawEnabled?: boolean;
-        drawStatus?: string;
-        drawCanFinish?: boolean;
-        bufferEntries?: BufferRow[];
         /** When set, shows 2D/3D toggle above fullscreen. */
         onSetDim?: (dim: "2d" | "3d") => void;
         onZoomIn?: () => void;
@@ -59,9 +52,6 @@
         onClear?: () => void;
         onFinish?: () => void;
         onRemove?: (id: string) => void;
-        onDrawFinish?: () => void;
-        onBufferRemove?: (entityId: string) => void;
-        onBufferClear?: () => void;
     };
 
     let {
@@ -75,10 +65,6 @@
         selectionCount = 0,
         selectionTool = $bindable<SelectionToolMode>("click"),
         isolating = false,
-        drawEnabled = $bindable(false),
-        drawStatus = "",
-        drawCanFinish = false,
-        bufferEntries = [],
         onSetDim,
         onZoomIn,
         onZoomOut,
@@ -95,9 +81,6 @@
         onClear,
         onFinish,
         onRemove,
-        onDrawFinish,
-        onBufferRemove,
-        onBufferClear,
     }: Props = $props();
 
     let cameraOpen = $state(false);
@@ -155,19 +138,12 @@
         cameraOpen = false;
         selectionOpen = false;
         enabled = false;
-        drawEnabled = false;
     }
 
     function toggleMeasure() {
         const next = !enabled;
         closePanels();
         enabled = next;
-    }
-
-    function toggleDraw() {
-        const next = !drawEnabled;
-        closePanels();
-        drawEnabled = next;
     }
 
     function toggleCamera() {
@@ -264,21 +240,7 @@
             <RulerIcon class="size-3.5" />
         </button>
 
-        <!-- 4. Draw polygon -->
-        <button
-            type="button"
-            class="{railBtn} border-b border-border {drawEnabled
-                ? 'bg-primary/15 text-foreground'
-                : ''}"
-            title={drawEnabled ? "Stop drawing" : "Draw polygon (d)"}
-            aria-label="Draw polygon"
-            aria-pressed={drawEnabled}
-            onclick={toggleDraw}
-        >
-            <PencilIcon class="size-3.5" />
-        </button>
-
-        <!-- 5–6. Zoom -->
+        <!-- 4–5. Zoom -->
         <button
             type="button"
             class="{railBtn} border-b border-border"
@@ -602,7 +564,7 @@
                 </div>
             {/if}
         </div>
-    {:else if records.length > 0 && !cameraOpen && !selectionOpen && !drawEnabled}
+    {:else if records.length > 0 && !cameraOpen && !selectionOpen}
         <button
             type="button"
             class="rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
@@ -613,96 +575,6 @@
             }}
         >
             {records.length} measure{records.length === 1 ? "" : "s"}
-        </button>
-    {/if}
-
-    <!-- Draw polygon panel -->
-    {#if drawEnabled}
-        <div
-            class="flex w-56 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-2 text-xs shadow-lg backdrop-blur-sm"
-        >
-            <div
-                class="px-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-            >
-                Draw polygon
-            </div>
-
-            {#if drawCanFinish}
-                <button
-                    type="button"
-                    class="inline-flex items-center justify-center gap-1 rounded-md bg-primary/15 px-2 py-1.5 font-medium text-foreground hover:bg-primary/20"
-                    title="Finish polygon (Enter)"
-                    onclick={() => onDrawFinish?.()}
-                >
-                    <CheckIcon class="size-3.5" />
-                    Finish
-                </button>
-            {/if}
-
-            <p class="px-0.5 text-[11px] leading-snug text-muted-foreground">
-                {drawStatus ||
-                    "Click vertices · Finish, double-click, or Enter at 3+"}
-            </p>
-
-            {#if bufferEntries.length > 0}
-                <div class="border-t border-border pt-1.5">
-                    <div
-                        class="mb-1 flex items-center justify-between gap-2 px-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                    >
-                        <span>Buffer · {bufferEntries.length}</span>
-                        <button
-                            type="button"
-                            class="inline-flex items-center gap-0.5 normal-case tracking-normal hover:text-foreground"
-                            title="Clear session buffer"
-                            onclick={() => onBufferClear?.()}
-                        >
-                            <XIcon class="size-3" />
-                            Clear
-                        </button>
-                    </div>
-                    <ul class="max-h-40 space-y-0.5 overflow-y-auto">
-                        {#each bufferEntries as rec, i (rec.entityId)}
-                            <li
-                                class="flex items-center gap-1.5 rounded-md px-1 py-1 hover:bg-secondary/80"
-                            >
-                                <span
-                                    class="w-3.5 shrink-0 tabular-nums text-[10px] text-muted-foreground"
-                                    >{i + 1}</span
-                                >
-                                <span class="min-w-0 flex-1 truncate">
-                                    <span class="text-muted-foreground"
-                                        >{rec.table} ·</span
-                                    >
-                                    <span class="font-medium text-foreground"
-                                        >{rec.entityId}</span
-                                    >
-                                </span>
-                                <button
-                                    type="button"
-                                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
-                                    title="Remove"
-                                    onclick={() =>
-                                        onBufferRemove?.(rec.entityId)}
-                                >
-                                    <XIcon class="size-3" />
-                                </button>
-                            </li>
-                        {/each}
-                    </ul>
-                </div>
-            {/if}
-        </div>
-    {:else if bufferEntries.length > 0 && !cameraOpen && !selectionOpen && !enabled}
-        <button
-            type="button"
-            class="rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
-            title="Show edit buffer"
-            onclick={() => {
-                closePanels();
-                drawEnabled = true;
-            }}
-        >
-            {bufferEntries.length} in buffer
         </button>
     {/if}
 </div>

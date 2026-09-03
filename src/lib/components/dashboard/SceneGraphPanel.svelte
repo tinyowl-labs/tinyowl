@@ -16,6 +16,7 @@
         layerSelection,
         toSelectionKey,
     } from "$lib/stores/layerSelection.svelte";
+    import { editBuffer } from "$lib/stores/editBuffer.svelte";
     import type { LayerData } from "./layerTypes";
     import type { ProjectTileset } from "./tilesetTypes";
     import { isLocalTileset } from "./tilesetTypes";
@@ -55,6 +56,8 @@
         filterToView?: boolean;
         /** FK-joined keys (not in layerSelection) — secondary highlight. */
         joinedKeys?: string[];
+        /** Writers see layer-select + Tab hint for Cesium edit mode. */
+        canWrite?: boolean;
     };
 
     let {
@@ -81,10 +84,11 @@
         inViewModelHashes = [],
         filterToView = $bindable(false),
         joinedKeys = [],
+        canWrite = false,
     }: Props = $props();
 
     let query = $state("");
-    let modelsOpen = $state(true);
+    let modelsOpen = $state(false);
     let coveragesOpen = $state(true);
     let layerOpen = $state<Record<string, boolean>>({});
     let rangeAnchorKey = $state<string | null>(null);
@@ -245,13 +249,20 @@
         }
         layerSelection.selectSingle(layerName, entityId);
         rangeAnchorKey = key;
+        if (canWrite) editBuffer.setTargetLayer(layerName);
     }
 
     function onEntityDblClick(layerName: string, entityId: string) {
         if (!layerSelection.isSelected(layerName, entityId)) {
             layerSelection.selectSingle(layerName, entityId);
         }
+        if (canWrite) editBuffer.setTargetLayer(layerName);
         onFlyTo?.();
+    }
+
+    function selectEditLayer(name: string) {
+        if (!canWrite) return;
+        editBuffer.setTargetLayer(name);
     }
 
     function toggleEntityHidden(layerName: string, entityId: string) {
@@ -464,7 +475,8 @@
             >
                 <button
                     type="button"
-                    class="flex min-w-0 flex-1 items-center gap-1 rounded-md px-0.5 py-0.5 text-left hover:bg-secondary"
+                    class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
+                    title={modelsOpen ? "Collapse" : "Expand"}
                     onclick={() => (modelsOpen = !modelsOpen)}
                 >
                     <ChevronDownIcon
@@ -472,12 +484,16 @@
                             ? ''
                             : '-rotate-90'}"
                     />
+                </button>
+                <div
+                    class="flex min-w-0 flex-1 items-center gap-1 px-0.5 py-0.5"
+                >
                     <BoxIcon class="size-3.5 shrink-0" />
                     <span class="truncate">3D models</span>
                     <span class="ml-auto tabular-nums opacity-60"
                         >{filteredModels.length}</span
                     >
-                </button>
+                </div>
                 <button
                     type="button"
                     class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
@@ -564,22 +580,31 @@
         {/if}
 
         {#if coverages.length > 0}
-            <button
-                type="button"
-                class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-secondary"
-                onclick={() => (coveragesOpen = !coveragesOpen)}
+            <div
+                class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
             >
-                <ChevronDownIcon
-                    class="size-3.5 shrink-0 transition-transform {coveragesOpen
-                        ? ''
-                        : '-rotate-90'}"
-                />
-                <LayersIcon class="size-3.5 shrink-0" />
-                <span class="truncate">Coverage</span>
-                <span class="ml-auto tabular-nums opacity-60"
-                    >{filteredCoverages.length}</span
+                <button
+                    type="button"
+                    class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
+                    title={coveragesOpen ? "Collapse" : "Expand"}
+                    onclick={() => (coveragesOpen = !coveragesOpen)}
                 >
-            </button>
+                    <ChevronDownIcon
+                        class="size-3.5 shrink-0 transition-transform {coveragesOpen
+                            ? ''
+                            : '-rotate-90'}"
+                    />
+                </button>
+                <div
+                    class="flex min-w-0 flex-1 items-center gap-1 px-0.5 py-0.5"
+                >
+                    <LayersIcon class="size-3.5 shrink-0" />
+                    <span class="truncate">Coverage</span>
+                    <span class="ml-auto tabular-nums opacity-60"
+                        >{filteredCoverages.length}</span
+                    >
+                </div>
+            </div>
             {#if coveragesOpen}
                 <div class="mb-1 space-y-0.5 {childIndent}">
                     {#each filteredCoverages as c, idx}
@@ -672,10 +697,12 @@
             )}
             {#if ents.length > 0 || (!filterToView && !query.trim()) || matchesQuery(layer.name)}
                 <div
-                    class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {styleLayerName ===
+                    class="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {editBuffer.targetLayer ===
                     layer.name
-                        ? 'bg-secondary text-foreground'
-                        : 'text-muted-foreground'}"
+                        ? 'text-foreground'
+                        : styleLayerName === layer.name
+                          ? 'text-foreground'
+                          : 'text-muted-foreground'}"
                     oncontextmenu={(e) =>
                         openLayerMenu(
                             e,
@@ -686,7 +713,10 @@
                 >
                     <button
                         type="button"
-                        class="flex min-w-0 flex-1 items-center gap-1 rounded-md px-0.5 py-0.5 text-left hover:bg-secondary"
+                        class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
+                        title={isLayerExpanded(layer.name)
+                            ? "Collapse"
+                            : "Expand"}
                         onclick={() => toggleLayerExpanded(layer.name)}
                     >
                         <ChevronDownIcon
@@ -696,16 +726,30 @@
                                 ? ''
                                 : '-rotate-90'}"
                         />
+                    </button>
+                    <button
+                        type="button"
+                        class="flex min-w-0 flex-1 items-center gap-1 px-0.5 py-0.5 text-left hover:text-foreground"
+                        title={canWrite
+                            ? "Select layer, then Tab to edit"
+                            : layerDisplayName(layer.name)}
+                        onclick={() => selectEditLayer(layer.name)}
+                    >
                         <span
                             class="size-3.5 shrink-0 rounded-sm border"
                             style="background: {rgbaToHex(legend)}; border-color: {rgbaToHex(
                                 contrastColor(legend),
                             )}"
-                            title={layerDisplayName(layer.name)}
                         ></span>
                         <span class="truncate"
                             >{layerDisplayName(layer.name)}</span
                         >
+                        {#if canWrite && editBuffer.targetLayer === layer.name}
+                            <span
+                                class="ml-1 rounded border border-border px-1 py-px text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                >Tab</span
+                            >
+                        {/if}
                         <span class="ml-auto tabular-nums opacity-60"
                             >{ents.length}</span
                         >

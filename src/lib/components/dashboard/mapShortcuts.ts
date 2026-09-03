@@ -13,9 +13,9 @@ export type MapShortcutAction =
 	| { type: "select-tool"; mode: SelectionToolMode }
 	| { type: "measure-toggle" }
 	| { type: "measure-mode"; mode: MeasureMode }
-	| { type: "draw-toggle" };
+	| { type: "edit-toggle" };
 
-function isTypingTarget(target: EventTarget | null): boolean {
+export function isTypingTarget(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
 	if (!el) return false;
 	if (el.isContentEditable) return true;
@@ -34,6 +34,10 @@ export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
 
 	if (ev.key === "Escape") return { type: "escape" };
 	if (ev.key === "Enter") return { type: "enter" };
+	if (ev.key === "Tab") {
+		if (ev.shiftKey) return null;
+		return { type: "edit-toggle" };
+	}
 
 	const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
 	switch (k) {
@@ -53,8 +57,6 @@ export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
 			return { type: "select-tool", mode: "lasso" };
 		case "m":
 			return { type: "measure-toggle" };
-		case "d":
-			return { type: "draw-toggle" };
 		case "p":
 			return { type: "measure-mode", mode: "point" };
 		case "l":

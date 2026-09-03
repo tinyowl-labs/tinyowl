@@ -17,6 +17,17 @@ function findDiffDataSource(viewer: any): any | null {
     return null;
 }
 
+function firstPosition(coords: unknown): number[] | null {
+    if (!Array.isArray(coords) || coords.length === 0) return null;
+    if (typeof coords[0] === "number") return coords as number[];
+    return firstPosition(coords[0]);
+}
+
+function coordsHaveZ(coords: unknown): boolean {
+    const p = firstPosition(coords);
+    return Boolean(p && p.length > 2);
+}
+
 function asRings(raw: unknown): unknown[] {
     return Array.isArray(raw) ? raw : [];
 }
@@ -86,7 +97,9 @@ function addPoint(
                 role === "before" ? 0.55 : 0.9,
             ),
             outlineWidth: 1,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: coordsHaveZ(coords)
+                ? Cesium.HeightReference.NONE
+                : Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
         allowPicking: false,
@@ -116,7 +129,7 @@ function addLine(
             positions,
             width: role === "before" ? 2 : 3,
             material,
-            clampToGround: true,
+            clampToGround: !coordsHaveZ(coords),
         },
         allowPicking: false,
     });
@@ -151,7 +164,10 @@ function addPolygon(
             outline: true,
             outlineColor: outline,
             outlineWidth: 2,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            perPositionHeight: coordsHaveZ(coords),
+            heightReference: coordsHaveZ(coords)
+                ? Cesium.HeightReference.NONE
+                : Cesium.HeightReference.CLAMP_TO_GROUND,
         },
         allowPicking: false,
     });
@@ -165,7 +181,7 @@ function addPolygon(
                     color: outline,
                     dashLength: 14,
                 }),
-                clampToGround: true,
+                clampToGround: !coordsHaveZ(coords),
             },
             allowPicking: false,
         });

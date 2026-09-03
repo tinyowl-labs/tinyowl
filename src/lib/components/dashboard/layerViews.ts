@@ -1,4 +1,4 @@
-/** Product-owned named map views (czml.Style JSON + optional filter). */
+import { DEFAULT_COLOR_RAMP, sampleRamp } from "./colorRamps";
 
 export type LayerViewFilter = {
 	field: string;
@@ -6,7 +6,7 @@ export type LayerViewFilter = {
 	value: string;
 };
 
-export type StyleRenderer = "single" | "categorized";
+export type StyleRenderer = "single" | "categorized" | "continuous";
 
 export type LayerStyle = {
 	fillColor: number[];
@@ -19,6 +19,17 @@ export type LayerStyle = {
 	categoryField?: string;
 	/** Omit / unknown treated as single, unless categoryField is set. */
 	renderer?: StyleRenderer | "none";
+	/** Numeric field for continuous colour. */
+	colorField?: string;
+	colorRamp?: string;
+	colorRampReverse?: boolean;
+	/** Optional numeric field → height (points Z / polygon extrusion, metres). */
+	heightField?: string;
+	heightFrom?: number;
+	heightTo?: number;
+	/** Cesium EntityCluster for point / billboard layers (MapLibre-like). */
+	cluster?: boolean;
+	clusterPixelRange?: number;
 };
 
 export type LayerView = {
@@ -33,6 +44,7 @@ export type LayerView = {
 export const DEFAULT_LAYER_OPACITY = 0.7;
 export const DEFAULT_POINT_OPACITY = 1;
 export const POINT_OUTLINE_WIDTH = 1;
+export const DEFAULT_CLUSTER_PIXEL_RANGE = 64;
 
 export const DEFAULT_FILL = [230, 80, 80, 255];
 export const DEFAULT_STROKE = [80, 160, 230, 255];
@@ -75,7 +87,9 @@ function isPlaceholderNoneColor(c: number[] | undefined): boolean {
 
 export function styleRenderer(style: LayerStyle | undefined | null): StyleRenderer {
 	if (!style) return "single";
+	if (style.renderer === "continuous") return "continuous";
 	if (style.renderer === "categorized" || style.categoryField) return "categorized";
+	if (style.colorField) return "continuous";
 	return "single";
 }
 
@@ -88,6 +102,12 @@ export function isPointLayer(packets: Record<string, unknown>[] | undefined): bo
 		else if (p.point) points += 1;
 	}
 	return points > 0 && other === 0;
+}
+
+export function layerHasPoints(
+	packets: Record<string, unknown>[] | undefined,
+): boolean {
+	return (packets ?? []).some((p) => Boolean(p.point));
 }
 
 export function defaultOpacityForPackets(
@@ -113,6 +133,13 @@ export function layerLegendColor(
 ): number[] {
 	const view = activeView(views, activeId);
 	if (!view) return [...DEFAULT_FILL];
+	if (styleRenderer(view.style) === "continuous") {
+		return sampleRamp(
+			view.style.colorRamp,
+			0.55,
+			Boolean(view.style.colorRampReverse),
+		);
+	}
 	if (styleRenderer(view.style) === "categorized") {
 		const cats = Object.values(view.style.categories ?? {});
 		const first = cats.find((c) => c?.length);
@@ -250,6 +277,14 @@ export function cloneStyle(s: LayerStyle | undefined | null, layerName = ""): La
 		labelField: base.labelField || undefined,
 		categoryField: base.categoryField || undefined,
 		renderer: base.renderer,
+		colorField: base.colorField || undefined,
+		colorRamp: base.colorRamp || undefined,
+		colorRampReverse: base.colorRampReverse || undefined,
+		heightField: base.heightField || undefined,
+		heightFrom: base.heightFrom,
+		heightTo: base.heightTo,
+		cluster: Boolean(base.cluster) || undefined,
+		clusterPixelRange: base.clusterPixelRange,
 		categories: base.categories
 			? Object.fromEntries(
 					Object.entries(base.categories).map(([k, v]) => [k, [...v]]),
@@ -336,6 +371,78 @@ export function rowField(row: Record<string, unknown> | undefined, field: string
 	return "";
 }
 
+export function rowNumeric(
+	row: Record<string, unknown> | undefined,
+	field: string,
+): number | null {
+	if (!row || !field) return null;
+	const raw = row[field];
+	let v: unknown = raw;
+	if (v == null) {
+		const lower = field.toLowerCase();
+		for (const [k, val] of Object.entries(row)) {
+			if (k.toLowerCase() === lower) {
+				v = val;
+				break;
+			}
+		}
+	}
+	if (typeof v === "number" && Number.isFinite(v)) return v;
+	if (typeof v === "string" && v.trim() !== "") {
+		const n = Number(v);
+		if (Number.isFinite(n)) return n;
+	}
+	return null;
+}
+
+export function numericFields(rows: Record<string, unknown>[] | undefined): string[] {
+	const counts = new Map<string, number>();
+	for (const row of rows ?? []) {
+		for (const k of Object.keys(row)) {
+			if (/^_/.test(k) || /^_?geom/i.test(k) || /^source_id$/i.test(k)) continue;
+			if (rowNumeric(row, k) != null) counts.set(k, (counts.get(k) ?? 0) + 1);
+		}
+	}
+	return [...counts.entries()]
+		.filter(([, n]) => n >= 2)
+		.map(([k]) => k)
+		.sort((a, b) => a.localeCompare(b));
+}
+
+export function numericRange(
+	rows: Record<string, unknown>[] | undefined,
+	field: string,
+): { min: number; max: number } | null {
+	let min = Infinity;
+	let max = -Infinity;
+	for (const row of rows ?? []) {
+		const n = rowNumeric(row, field);
+		if (n == null) continue;
+		if (n < min) min = n;
+		if (n > max) max = n;
+	}
+	if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+	return { min, max };
+}
+
+export const DEFAULT_HEIGHT_FROM = 0;
+export const DEFAULT_HEIGHT_TO = 20;
+
+export function resolveHeight(
+	style: LayerStyle,
+	row: Record<string, unknown> | undefined,
+	range?: { min: number; max: number } | null,
+): number | null {
+	const field = style.heightField;
+	if (!field) return null;
+	const from = style.heightFrom ?? DEFAULT_HEIGHT_FROM;
+	const to = style.heightTo ?? DEFAULT_HEIGHT_TO;
+	const n = rowNumeric(row, field);
+	if (n == null || !range || range.max === range.min) return from;
+	const t = (n - range.min) / (range.max - range.min);
+	return from + Math.max(0, Math.min(1, t)) * (to - from);
+}
+
 export function rowMatchesFilter(
 	row: Record<string, unknown> | undefined,
 	filter: LayerViewFilter | null | undefined,
@@ -349,7 +456,24 @@ export function rowMatchesFilter(
 	return got === want;
 }
 
-export function resolveFill(style: LayerStyle, row: Record<string, unknown> | undefined): number[] {
+export function resolveFill(
+	style: LayerStyle,
+	row: Record<string, unknown> | undefined,
+	range?: { min: number; max: number } | null,
+): number[] {
+	if (styleRenderer(style) === "continuous" && style.colorField) {
+		const n = rowNumeric(row, style.colorField);
+		const t =
+			n == null || !range || range.max === range.min
+				? 0.5
+				: (n - range.min) / (range.max - range.min);
+		return sampleRamp(
+			style.colorRamp ?? DEFAULT_COLOR_RAMP,
+			t,
+			Boolean(style.colorRampReverse),
+			rgbaAlpha(style.fillColor),
+		);
+	}
 	const base = style.fillColor?.length ? style.fillColor : DEFAULT_FILL;
 	const field = style.categoryField;
 	if (!field || !style.categories) return [...base];
@@ -398,6 +522,23 @@ export function categorizedStyle(style: LayerStyle, field: string, values: strin
 			? [...prevNone]
 			: unusedCategoryColor(used, `${field}:none`);
 	next.categories = cats;
+	next.colorField = undefined;
+	next.colorRamp = undefined;
+	next.colorRampReverse = undefined;
+	return next;
+}
+
+export function continuousStyle(
+	style: LayerStyle,
+	field: string,
+	ramp: string = DEFAULT_COLOR_RAMP,
+): LayerStyle {
+	const next = cloneStyle(style);
+	next.renderer = "continuous";
+	next.colorField = field;
+	next.colorRamp = ramp;
+	next.categoryField = undefined;
+	next.categories = undefined;
 	return next;
 }
 
@@ -406,6 +547,9 @@ export function singleSymbolStyle(style: LayerStyle, layerName = ""): LayerStyle
 	next.renderer = "single";
 	next.categoryField = undefined;
 	next.categories = undefined;
+	next.colorField = undefined;
+	next.colorRamp = undefined;
+	next.colorRampReverse = undefined;
 	if (!next.fillColor?.length) {
 		const named = layerName.trim() || "layer";
 		next.fillColor = randomLayerColor(named);

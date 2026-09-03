@@ -48,4 +48,6 @@ export type EditBufferEntry = {
     entityId: string;
     geometry?: unknown | null;
     oldGeometry?: unknown | null;
+    /** Attribute columns for insert/update (not painted on the overlay). */
+    attributes?: Record<string, unknown>;
 };

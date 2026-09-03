@@ -807,6 +807,7 @@
                                                     id="first_name"
                                                     bind:value={firstName}
                                                     autocomplete="given-name"
+                                                    maxlength={100}
                                                 />
                                             </Field>
                                             <Field>
@@ -817,6 +818,7 @@
                                                     id="last_name"
                                                     bind:value={lastName}
                                                     autocomplete="family-name"
+                                                    maxlength={100}
                                                 />
                                             </Field>
                                         </div>

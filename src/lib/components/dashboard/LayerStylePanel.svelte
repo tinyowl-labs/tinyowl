@@ -4,12 +4,16 @@
     import PlusIcon from "@lucide/svelte/icons/plus";
     import XIcon from "@lucide/svelte/icons/x";
     import PaletteIcon from "@lucide/svelte/icons/palette";
+    import { Button } from "$lib/components/ui/button/index.js";
+    import { Separator } from "$lib/components/ui/separator/index.js";
     import type { LayerData } from "./layerTypes";
+    import { COLOR_RAMPS, DEFAULT_COLOR_RAMP, rampCss } from "./colorRamps";
     import {
         activeView,
         categorizedStyle,
         cloneStyle,
         cloneView,
+        continuousStyle,
         defaultStyle,
         defaultOpacityForPackets,
         distinctValues,
@@ -18,12 +22,18 @@
         newViewId,
         unusedCategoryColor,
         noneCategoryKey,
+        numericFields,
+        numericRange,
         rgbaAlpha,
         rgbaToHex,
         contrastColor,
         singleSymbolStyle,
         styleRenderer,
         styleableFields,
+        DEFAULT_HEIGHT_FROM,
+        DEFAULT_HEIGHT_TO,
+        DEFAULT_CLUSTER_PIXEL_RANGE,
+        layerHasPoints,
         type LayerStyle,
         type LayerView,
         type LayerViewFilter,
@@ -101,19 +111,35 @@
 
     const current = $derived(activeView(draftViews, draftActiveId));
     const fields = $derived(styleableFields(rows));
+    const numbers = $derived(numericFields(rows));
     const renderer = $derived(styleRenderer(current?.style));
     const catValues = $derived(
         current?.style.categoryField
             ? distinctValues(rows, current.style.categoryField)
             : [],
     );
+    const colorRange = $derived(
+        current?.style.colorField
+            ? numericRange(rows, current.style.colorField)
+            : null,
+    );
+    const heightRange = $derived(
+        current?.style.heightField
+            ? numericRange(rows, current.style.heightField)
+            : null,
+    );
+    const pointsOnly = $derived(isPointLayer(layer.packets));
+    const hasPoints = $derived(layerHasPoints(layer.packets));
+    const canHeight = $derived(
+        (layer.packets ?? []).some((p) => p.point || p.polygon),
+    );
     const dirty = $derived(
         draftActiveId !== (layer.activeViewId ?? "") ||
             JSON.stringify(draftViews) !== JSON.stringify(layer.views ?? []),
     );
 
-    const inputCls =
-        "h-7 rounded-md border border-border bg-background px-1.5 text-[11px] text-foreground";
+    const fieldCls =
+        "h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none dark:bg-input/30 disabled:opacity-50";
 
     function patchCurrent(mut: (v: LayerView) => LayerView) {
         if (!current || !canEdit) return;
@@ -125,9 +151,9 @@
         patchCurrent((v) => ({ ...v, style: mut(cloneStyle(v.style)) }));
     }
 
-    function addView() {
+    function addView(blank: boolean) {
         if (!canEdit) return;
-        const src = current
+        const src = !blank && current
             ? cloneView(current)
             : {
                   id: "",
@@ -136,7 +162,7 @@
                   filter: null,
               };
         src.id = newViewId();
-        src.name = nextCopyName(src.name);
+        src.name = nextCopyName(blank ? "View" : src.name);
         src.source = undefined;
         draftViews = [...draftViews, src];
         draftActiveId = src.id;
@@ -159,6 +185,14 @@
         if (!current) return;
         if (mode === "single") {
             patchStyle((s) => singleSymbolStyle(s, layer.name));
+            return;
+        }
+        if (mode === "continuous") {
+            const field = current.style.colorField || numbers[0] || "";
+            if (!field) return;
+            patchStyle((s) =>
+                continuousStyle(s, field, s.colorRamp || DEFAULT_COLOR_RAMP),
+            );
             return;
         }
         const field = current.style.categoryField || fields[0] || "";
@@ -242,35 +276,47 @@
     function layerDisplayName(name: string): string {
         return name.replace(/_/g, " ");
     }
+
+    const renderModes = $derived([
+            { id: "single" as const, label: "Single", disabled: !canEdit },
+            {
+                id: "categorized" as const,
+                label: "Categories",
+                disabled: !canEdit || fields.length === 0,
+            },
+            {
+                id: "continuous" as const,
+                label: "Gradient",
+                disabled: !canEdit || numbers.length === 0,
+            },
+        ]);
 </script>
 
 <div
-    class="flex max-h-[min(70vh,32rem)] w-72 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
+    class="flex max-h-[min(78vh,40rem)] w-[22rem] flex-col overflow-hidden rounded-xl border border-border bg-background text-sm shadow-lg"
 >
-    <div class="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
-        <PaletteIcon class="size-3.5 shrink-0 text-muted-foreground" />
+    <div class="flex items-center gap-2 border-b border-border px-3 py-2.5">
+        <PaletteIcon class="size-4 shrink-0 text-muted-foreground" />
         <div class="min-w-0 flex-1">
-            <p
-                class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
-            >
-                Style
+            <p class="text-sm font-medium leading-none">Style</p>
+            <p class="mt-0.5 truncate text-xs text-muted-foreground">
+                {layerDisplayName(layer.name)}
             </p>
-            <p class="truncate font-medium">{layerDisplayName(layer.name)}</p>
         </div>
-        <button
-            type="button"
-            class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+        <Button
+            variant="ghost"
+            size="icon-xs"
             title="Close"
             onclick={() => onClose?.()}
         >
-            <XIcon class="size-3.5" />
-        </button>
+            <XIcon />
+        </Button>
     </div>
 
-    <div class="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-        <div class="flex items-center gap-1">
+    <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+        <div class="flex items-center gap-1.5">
             <select
-                class="{inputCls} min-w-0 flex-1"
+                class="{fieldCls} min-w-0 flex-1"
                 value={draftActiveId}
                 onchange={(e) =>
                     (draftActiveId = (e.currentTarget as HTMLSelectElement).value)}
@@ -280,144 +326,141 @@
                 {/each}
             </select>
             {#if canEdit}
-                <button
-                    type="button"
-                    class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                <Button
+                    variant="outline"
+                    size="icon-xs"
                     title="New view"
-                    onclick={addView}
+                    onclick={() => addView(true)}
                 >
-                    <PlusIcon class="size-3.5" />
-                </button>
-                <button
-                    type="button"
-                    class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    <PlusIcon />
+                </Button>
+                <Button
+                    variant="outline"
+                    size="icon-xs"
                     title="Duplicate view"
-                    onclick={addView}
+                    onclick={() => addView(false)}
                     disabled={!current}
                 >
-                    <CopyIcon class="size-3.5" />
-                </button>
+                    <CopyIcon />
+                </Button>
             {/if}
         </div>
 
         {#if current}
-            {#if current.source}
-                <p class="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Seed {current.source === "sld" ? "SLD" : "Default"}
-                </p>
-            {/if}
-
             {#if canEdit}
-                <label class="block">
-                    <span
-                        class="text-[10px] uppercase tracking-wide text-muted-foreground"
-                        >Name</span
-                    >
+                <label class="block space-y-1.5">
+                    <span class="text-xs text-muted-foreground">Name</span>
                     <input
-                        class="{inputCls} mt-0.5 w-full"
+                        class={fieldCls}
                         value={current.name}
                         onchange={(e) =>
                             rename((e.currentTarget as HTMLInputElement).value)}
                     />
                 </label>
             {/if}
+            {#if current.source}
+                <p class="text-xs text-muted-foreground">
+                    Seeded from {current.source === "sld" ? "SLD" : "defaults"}
+                </p>
+            {/if}
 
-            <div class="flex gap-1">
-                <button
-                    type="button"
-                    class="flex-1 rounded-md border px-1.5 py-1.5 {renderer === 'single'
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border'}"
-                    onclick={() => canEdit && setRenderer("single")}
-                    disabled={!canEdit}
-                >
-                    Single
-                </button>
-                <button
-                    type="button"
-                    class="flex-1 rounded-md border px-1.5 py-1.5 {renderer ===
-                    'categorized'
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border'}"
-                    onclick={() => canEdit && setRenderer("categorized")}
-                    disabled={!canEdit || fields.length === 0}
-                >
-                    Categorized
-                </button>
+            <div class="flex rounded-lg bg-muted p-0.5">
+                {#each renderModes as mode}
+                    <button
+                        type="button"
+                        class="flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors {renderer ===
+                        mode.id
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'}"
+                        onclick={() => canEdit && setRenderer(mode.id)}
+                        disabled={mode.disabled}
+                    >
+                        {mode.label}
+                    </button>
+                {/each}
             </div>
 
             {#if renderer === "single"}
-                <div class="grid grid-cols-2 gap-1.5">
-                    <label class="flex items-center gap-1">
-                        <span class="text-muted-foreground">Fill</span>
+                <div class="space-y-3">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-muted-foreground">Fill</span>
                         <input
                             type="color"
-                            class="h-6 w-8 cursor-pointer rounded border border-border bg-transparent"
+                            class="h-8 w-12 cursor-pointer rounded-md border border-border bg-transparent"
                             value={rgbaToHex(current.style.fillColor)}
                             disabled={!canEdit}
                             oninput={(e) =>
                                 setFill((e.currentTarget as HTMLInputElement).value)}
                         />
-                    </label>
-                    <label class="flex items-center gap-1">
-                        <span class="text-muted-foreground">Outline</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-muted-foreground">Outline</span>
                         <span
-                            class="h-6 w-8 rounded border border-border"
+                            class="h-8 w-12 rounded-md border border-border"
                             style="background: {rgbaToHex(
                                 contrastColor(current.style.fillColor),
                             )}"
-                            title="Auto: most contrast to fill"
+                            title="Auto contrast"
                         ></span>
-                    </label>
-                    {#if !isPointLayer(layer.packets)}
-                    <label class="flex items-center gap-1">
-                        <span class="text-muted-foreground">Width</span>
-                        <input
-                            type="number"
-                            min="0.5"
-                            max="20"
-                            step="0.5"
-                            class="{inputCls} w-14"
-                            value={current.style.strokeWidth}
-                            disabled={!canEdit}
-                            onchange={(e) => {
-                                const n = Number(
-                                    (e.currentTarget as HTMLInputElement).value,
-                                );
-                                if (Number.isFinite(n)) {
-                                    patchStyle((s) => ({ ...s, strokeWidth: n }));
-                                }
-                            }}
-                        />
-                    </label>
+                    </div>
+                    {#if !pointsOnly}
+                        <label class="flex items-center justify-between gap-3">
+                            <span class="text-xs text-muted-foreground">Width</span>
+                            <input
+                                type="number"
+                                min="0.5"
+                                max="20"
+                                step="0.5"
+                                class="{fieldCls} w-20"
+                                value={current.style.strokeWidth}
+                                disabled={!canEdit}
+                                onchange={(e) => {
+                                    const n = Number(
+                                        (e.currentTarget as HTMLInputElement).value,
+                                    );
+                                    if (Number.isFinite(n)) {
+                                        patchStyle((s) => ({ ...s, strokeWidth: n }));
+                                    }
+                                }}
+                            />
+                        </label>
                     {/if}
-                    <label class="flex items-center gap-1">
-                        <span class="text-muted-foreground">Size</span>
-                        <input
-                            type="number"
-                            min="2"
-                            max="32"
-                            step="1"
-                            class="{inputCls} w-14"
-                            value={current.style.pointSize}
-                            disabled={!canEdit}
-                            onchange={(e) => {
-                                const n = Number(
-                                    (e.currentTarget as HTMLInputElement).value,
-                                );
-                                if (Number.isFinite(n)) {
-                                    patchStyle((s) => ({ ...s, pointSize: n }));
-                                }
-                            }}
-                        />
-                    </label>
-                    <label class="col-span-2 flex items-center gap-1">
-                        <span class="text-muted-foreground">Fill opacity</span>
+                    {#if pointsOnly}
+                        <label class="flex items-center justify-between gap-3">
+                            <span class="text-xs text-muted-foreground">Size</span>
+                            <input
+                                type="number"
+                                min="2"
+                                max="32"
+                                step="1"
+                                class="{fieldCls} w-20"
+                                value={current.style.pointSize}
+                                disabled={!canEdit}
+                                onchange={(e) => {
+                                    const n = Number(
+                                        (e.currentTarget as HTMLInputElement).value,
+                                    );
+                                    if (Number.isFinite(n)) {
+                                        patchStyle((s) => ({ ...s, pointSize: n }));
+                                    }
+                                }}
+                            />
+                        </label>
+                    {/if}
+                    <label class="block space-y-1.5">
+                        <div class="flex justify-between text-xs text-muted-foreground">
+                            <span>Fill opacity</span>
+                            <span class="tabular-nums"
+                                >{Math.round(
+                                    (rgbaAlpha(current.style.fillColor) / 255) * 100,
+                                )}%</span
+                            >
+                        </div>
                         <input
                             type="range"
                             min="0"
                             max="100"
-                            class="min-w-0 flex-1"
+                            class="w-full"
                             value={Math.round(
                                 (rgbaAlpha(current.style.fillColor) / 255) * 100,
                             )}
@@ -428,29 +471,30 @@
                                 )}
                         />
                     </label>
-                    <label class="col-span-2 flex items-center gap-1.5">
-                        <input
-                            type="checkbox"
-                            checked={current.style.dash}
-                            disabled={!canEdit}
-                            onchange={(e) =>
-                                patchStyle((s) => ({
-                                    ...s,
-                                    dash: (e.currentTarget as HTMLInputElement)
-                                        .checked,
-                                }))}
-                        />
-                        <span class="text-muted-foreground">Dashed lines</span>
-                    </label>
+                    {#if !pointsOnly}
+                        <label class="flex items-center gap-2 text-sm">
+                            <input
+                                type="checkbox"
+                                class="size-4 rounded border-input"
+                                checked={current.style.dash}
+                                disabled={!canEdit}
+                                onchange={(e) =>
+                                    patchStyle((s) => ({
+                                        ...s,
+                                        dash: (e.currentTarget as HTMLInputElement)
+                                            .checked,
+                                    }))}
+                            />
+                            Dashed lines
+                        </label>
+                    {/if}
                 </div>
-            {:else if current.style.categoryField}
-                <label class="block">
-                    <span
-                        class="text-[10px] uppercase tracking-wide text-muted-foreground"
-                        >Column</span
-                    >
+            {:else if renderer === "categorized" && current.style.categoryField}
+                {@const noneKey = noneCategoryKey(current.style.categoryField)}
+                <label class="block space-y-1.5">
+                    <span class="text-xs text-muted-foreground">Column</span>
                     <select
-                        class="{inputCls} mt-0.5 w-full"
+                        class={fieldCls}
                         value={current.style.categoryField}
                         disabled={!canEdit}
                         onchange={(e) =>
@@ -463,40 +507,35 @@
                         {/each}
                     </select>
                 </label>
-                <div class="max-h-28 space-y-0.5 overflow-y-auto">
-                    {#if current.style.categoryField}
-                        {@const noneKey = noneCategoryKey(current.style.categoryField)}
-                        <label class="flex items-center gap-1.5">
-                            <input
-                                type="color"
-                                class="h-5 w-6 cursor-pointer rounded border border-border bg-transparent"
-                                value={rgbaToHex(
-                                    current.style.categories?.[noneKey] ??
-                                        unusedCategoryColor(
-                                            Object.entries(
-                                                current.style.categories ?? {},
-                                            )
-                                                .filter(([k]) => k !== noneKey)
-                                                .map(([, c]) => c),
-                                            `${current.style.categoryField}:none`,
-                                        ),
+                <div class="max-h-36 space-y-1 overflow-y-auto">
+                    <label class="flex items-center gap-2">
+                        <input
+                            type="color"
+                            class="h-7 w-8 cursor-pointer rounded-md border border-border bg-transparent"
+                            value={rgbaToHex(
+                                current.style.categories?.[noneKey] ??
+                                    unusedCategoryColor(
+                                        Object.entries(current.style.categories ?? {})
+                                            .filter(([k]) => k !== noneKey)
+                                            .map(([, c]) => c),
+                                        `${current.style.categoryField}:none`,
+                                    ),
+                            )}
+                            disabled={!canEdit}
+                            oninput={(e) =>
+                                setCatColor(
+                                    noneKey,
+                                    (e.currentTarget as HTMLInputElement).value,
                                 )}
-                                disabled={!canEdit}
-                                oninput={(e) =>
-                                    setCatColor(
-                                        noneKey,
-                                        (e.currentTarget as HTMLInputElement).value,
-                                    )}
-                            />
-                            <span class="truncate text-muted-foreground">No value</span>
-                        </label>
-                    {/if}
+                        />
+                        <span class="truncate text-muted-foreground">No value</span>
+                    </label>
                     {#each catValues as val}
                         {@const key = `${current.style.categoryField}=${val}`}
-                        <label class="flex items-center gap-1.5">
+                        <label class="flex items-center gap-2">
                             <input
                                 type="color"
-                                class="h-5 w-6 cursor-pointer rounded border border-border bg-transparent"
+                                class="h-7 w-8 cursor-pointer rounded-md border border-border bg-transparent"
                                 value={rgbaToHex(current.style.categories?.[key])}
                                 disabled={!canEdit}
                                 oninput={(e) =>
@@ -508,18 +547,230 @@
                             <span class="truncate">{val}</span>
                         </label>
                     {:else}
-                        <p class="text-muted-foreground">No values</p>
+                        <p class="text-xs text-muted-foreground">No values</p>
                     {/each}
+                </div>
+            {:else if renderer === "continuous"}
+                <label class="block space-y-1.5">
+                    <span class="text-xs text-muted-foreground">Color by</span>
+                    <select
+                        class={fieldCls}
+                        value={current.style.colorField ?? ""}
+                        disabled={!canEdit}
+                        onchange={(e) => {
+                            const field = (e.currentTarget as HTMLSelectElement)
+                                .value;
+                            if (field) {
+                                patchStyle((s) =>
+                                    continuousStyle(
+                                        s,
+                                        field,
+                                        s.colorRamp || DEFAULT_COLOR_RAMP,
+                                    ),
+                                );
+                            }
+                        }}
+                    >
+                        {#each numbers as f}
+                            <option value={f}>{f}</option>
+                        {/each}
+                    </select>
+                </label>
+                <label class="block space-y-1.5">
+                    <span class="text-xs text-muted-foreground">Ramp</span>
+                    <select
+                        class={fieldCls}
+                        value={current.style.colorRamp ?? DEFAULT_COLOR_RAMP}
+                        disabled={!canEdit}
+                        onchange={(e) =>
+                            patchStyle((s) => ({
+                                ...s,
+                                colorRamp: (e.currentTarget as HTMLSelectElement)
+                                    .value,
+                            }))}
+                    >
+                        {#each COLOR_RAMPS as ramp}
+                            <option value={ramp.id}>{ramp.label}</option>
+                        {/each}
+                    </select>
+                    <div
+                        class="h-2.5 rounded-full border border-border/60"
+                        style="background: {rampCss(
+                            current.style.colorRamp,
+                            Boolean(current.style.colorRampReverse),
+                        )}"
+                    ></div>
+                    {#if colorRange}
+                        <p class="text-xs tabular-nums text-muted-foreground">
+                            {colorRange.min} – {colorRange.max}
+                        </p>
+                    {/if}
+                </label>
+                <label class="flex items-center gap-2 text-sm">
+                    <input
+                        type="checkbox"
+                        class="size-4 rounded border-input"
+                        checked={Boolean(current.style.colorRampReverse)}
+                        disabled={!canEdit}
+                        onchange={(e) =>
+                            patchStyle((s) => ({
+                                ...s,
+                                colorRampReverse: (e.currentTarget as HTMLInputElement)
+                                    .checked,
+                            }))}
+                    />
+                    Reverse ramp
+                </label>
+            {/if}
+
+            {#if canHeight && numbers.length > 0}
+                <Separator />
+                <div class="space-y-3">
+                    <p class="text-sm font-medium">Height</p>
+                    <label class="block space-y-1.5">
+                        <span class="text-xs text-muted-foreground">Field</span>
+                        <select
+                            class={fieldCls}
+                            value={current.style.heightField ?? ""}
+                            disabled={!canEdit}
+                            onchange={(e) => {
+                                const field = (
+                                    e.currentTarget as HTMLSelectElement
+                                ).value;
+                                patchStyle((s) => ({
+                                    ...s,
+                                    heightField: field || undefined,
+                                }));
+                            }}
+                        >
+                            <option value="">None</option>
+                            {#each numbers as f}
+                                <option value={f}>{f}</option>
+                            {/each}
+                        </select>
+                    </label>
+                    {#if current.style.heightField}
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="block space-y-1.5">
+                                <span class="text-xs text-muted-foreground"
+                                    >Low (m)</span
+                                >
+                                <input
+                                    type="number"
+                                    class={fieldCls}
+                                    value={current.style.heightFrom ??
+                                        DEFAULT_HEIGHT_FROM}
+                                    disabled={!canEdit}
+                                    onchange={(e) => {
+                                        const n = Number(
+                                            (e.currentTarget as HTMLInputElement)
+                                                .value,
+                                        );
+                                        if (Number.isFinite(n)) {
+                                            patchStyle((s) => ({
+                                                ...s,
+                                                heightFrom: n,
+                                            }));
+                                        }
+                                    }}
+                                />
+                            </label>
+                            <label class="block space-y-1.5">
+                                <span class="text-xs text-muted-foreground"
+                                    >High (m)</span
+                                >
+                                <input
+                                    type="number"
+                                    class={fieldCls}
+                                    value={current.style.heightTo ?? DEFAULT_HEIGHT_TO}
+                                    disabled={!canEdit}
+                                    onchange={(e) => {
+                                        const n = Number(
+                                            (e.currentTarget as HTMLInputElement)
+                                                .value,
+                                        );
+                                        if (Number.isFinite(n)) {
+                                            patchStyle((s) => ({
+                                                ...s,
+                                                heightTo: n,
+                                            }));
+                                        }
+                                    }}
+                                />
+                            </label>
+                        </div>
+                        {#if heightRange}
+                            <p class="text-xs text-muted-foreground">
+                                {pointsOnly
+                                    ? "Raises points by this range."
+                                    : "Extrudes polygons; raises points."}
+                                Data {heightRange.min} – {heightRange.max}
+                            </p>
+                        {/if}
+                    {/if}
                 </div>
             {/if}
 
-            <div class="space-y-1 border-t border-border/60 pt-1.5">
-                <p class="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Filter
-                </p>
-                <div class="flex gap-1">
+            {#if hasPoints}
+                <Separator />
+                <div class="space-y-3">
+                    <p class="text-sm font-medium">Cluster</p>
+                    <label class="flex items-center gap-2 text-sm">
+                        <input
+                            type="checkbox"
+                            class="size-4 rounded border-input"
+                            checked={Boolean(current.style.cluster)}
+                            disabled={!canEdit}
+                            onchange={(e) =>
+                                patchStyle((s) => ({
+                                    ...s,
+                                    cluster: (e.currentTarget as HTMLInputElement)
+                                        .checked
+                                        ? true
+                                        : undefined,
+                                }))}
+                        />
+                        Group nearby points
+                    </label>
+                    {#if current.style.cluster}
+                        <label class="block space-y-1.5">
+                            <div
+                                class="flex justify-between text-xs text-muted-foreground"
+                            >
+                                <span>Radius</span>
+                                <span class="tabular-nums"
+                                    >{current.style.clusterPixelRange ??
+                                        DEFAULT_CLUSTER_PIXEL_RANGE} px</span
+                                >
+                            </div>
+                            <input
+                                type="range"
+                                min="24"
+                                max="160"
+                                class="w-full"
+                                value={current.style.clusterPixelRange ??
+                                    DEFAULT_CLUSTER_PIXEL_RANGE}
+                                disabled={!canEdit}
+                                oninput={(e) =>
+                                    patchStyle((s) => ({
+                                        ...s,
+                                        clusterPixelRange: Number(
+                                            (e.currentTarget as HTMLInputElement)
+                                                .value,
+                                        ),
+                                    }))}
+                            />
+                        </label>
+                    {/if}
+                </div>
+            {/if}
+
+            <Separator />
+            <div class="space-y-3">
+                <p class="text-sm font-medium">Filter</p>
+                <div class="grid grid-cols-[1fr_auto] gap-2">
                     <select
-                        class="{inputCls} min-w-0 flex-1"
+                        class={fieldCls}
                         value={current.filter?.field ?? ""}
                         disabled={!canEdit}
                         onchange={(e) =>
@@ -533,7 +784,7 @@
                         {/each}
                     </select>
                     <select
-                        class="{inputCls} w-[5.5rem]"
+                        class="{fieldCls} w-[7.5rem]"
                         value={current.filter?.op ?? "contains"}
                         disabled={!canEdit || !current.filter}
                         onchange={(e) =>
@@ -542,57 +793,51 @@
                                     .value as LayerViewFilter["op"],
                             )}
                     >
-                        <option value="contains">contains</option>
-                        <option value="eq">equals</option>
+                        <option value="contains">Contains</option>
+                        <option value="eq">Equals</option>
                     </select>
                 </div>
                 <input
-                    class="{inputCls} w-full"
-                    placeholder="e.g. pottery"
+                    class={fieldCls}
+                    placeholder="Value"
                     value={current.filter?.value ?? ""}
                     disabled={!canEdit || !current.filter}
                     onchange={(e) =>
-                        setFilterValue(
-                            (e.currentTarget as HTMLInputElement).value,
-                        )}
+                        setFilterValue((e.currentTarget as HTMLInputElement).value)}
                 />
             </div>
         {/if}
 
-        <label class="flex items-center gap-1 border-t border-border/60 pt-1.5">
-            <span class="text-muted-foreground">Opacity</span>
+        <Separator />
+        <label class="block space-y-1.5">
+            <div class="flex justify-between text-xs text-muted-foreground">
+                <span>Layer opacity</span>
+                <span class="tabular-nums">{opacityPct()}%</span>
+            </div>
             <input
                 type="range"
                 min="0"
                 max="100"
-                class="min-w-0 flex-1"
+                class="w-full"
                 value={opacityPct()}
                 oninput={(e) =>
                     onSetOpacity?.(
                         Number((e.currentTarget as HTMLInputElement).value) / 100,
                     )}
             />
-            <span class="w-8 tabular-nums text-muted-foreground"
-                >{opacityPct()}%</span
-            >
         </label>
     </div>
 
-    <div class="flex gap-1 border-t border-border p-2">
-        <button
-            type="button"
-            class="flex-1 rounded-md border border-border px-2 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"
+    <div class="flex gap-2 border-t border-border p-3">
+        <Button
+            variant="outline"
+            size="sm"
+            class="flex-1"
             disabled={!dirty}
             onclick={loadFromLayer}
         >
             Discard
-        </button>
-        <button
-            type="button"
-            class="flex-1 rounded-md bg-primary px-2 py-1.5 text-[11px] font-medium text-primary-foreground"
-            onclick={apply}
-        >
-            Apply
-        </button>
+        </Button>
+        <Button size="sm" class="flex-1" onclick={apply}>Apply</Button>
     </div>
 </div>

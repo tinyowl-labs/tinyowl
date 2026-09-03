@@ -764,6 +764,8 @@
                         onToggleFullscreen={toggleMapFullscreen}
                         onDimChange={setMapDim}
                         canEditViews={canWrite}
+                        canWrite={canWrite}
+                        tables={tables}
                         onPersistViews={persistLayerViews}
                         {diffFeatures}
                         {joinedKeys}

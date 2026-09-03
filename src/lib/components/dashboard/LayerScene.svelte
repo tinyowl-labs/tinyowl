@@ -1,5 +1,6 @@
 <script lang="ts">
     import { browser } from "$app/environment";
+    import { page } from "$app/stores";
     import { env as publicEnv } from "$env/dynamic/public";
     import { onDestroy, onMount } from "svelte";
     import BoxIcon from "@lucide/svelte/icons/box";
@@ -19,6 +20,8 @@
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
     import LayerStylePanel from "./LayerStylePanel.svelte";
     import PickPager from "./PickPager.svelte";
+    import EditModeBar from "./EditModeBar.svelte";
+    import FeatureCreateForm from "./FeatureCreateForm.svelte";
     import { SELECTION_PRIMARY, SELECTION_SECONDARY } from "./selectionStyle";
     import {
         collectKeysInScreenPolygon,
@@ -38,7 +41,11 @@
         POINT_OUTLINE_WIDTH,
         contrastColor,
         defaultOpacityForPackets,
+        DEFAULT_CLUSTER_PIXEL_RANGE,
+        layerLegendColor,
+        numericRange,
         resolveFill,
+        resolveHeight,
         rowByEntityId,
         rowMatchesFilter,
         type LayerView,
@@ -82,14 +89,31 @@
         destroyDiffOverlay,
         syncDiffOverlay,
         type DiffFeature,
+        type GeoJsonGeometry,
         DIFF_OP_FILL,
     } from "$lib/geoDiff";
     import DiffLegend from "./DiffLegend.svelte";
     import {
         editBuffer,
-        PLACEHOLDER_TABLE,
-        polygonFromVertices,
+        attrFieldsForTable,
+        geometryFromDraft,
+        isMultipartMode,
+        minVerticesForMode,
+        type DrawGeomMode,
+        type LonLatVertex,
     } from "$lib/stores/editBuffer.svelte";
+    import PresenceDock from "./PresenceDock.svelte";
+    import PresenceCursors from "./PresenceCursors.svelte";
+    import {
+        connectMapPresence,
+        type MapPresenceHandle,
+        type PresencePeer,
+    } from "$lib/map-presence";
+    import {
+        createPresenceLayer,
+        type PresenceLayer,
+        type PresenceRosterCursor,
+    } from "./layerScenePresence";
 
     type EntityMeta = {
         layerName: string;
@@ -102,6 +126,9 @@
         baseOutline: any;
         baseAlpha: number;
         dash?: boolean;
+        baseLon?: number;
+        baseLat?: number;
+        baseAlt?: number;
     };
 
     type Props = {
@@ -131,6 +158,10 @@
         diffFeatures?: DiffFeature[];
         /** FK-joined keys to highlight as secondary (attribute tables → map). */
         joinedKeys?: string[];
+        /** owner / admin / collaborator — edit mode chrome. */
+        canWrite?: boolean;
+        /** Table name → column names (create form). */
+        tables?: Record<string, string[]>;
     };
 
     let {
@@ -152,6 +183,8 @@
         onPersistViews,
         diffFeatures = [],
         joinedKeys = [],
+        canWrite = false,
+        tables = {},
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -191,27 +224,47 @@
     let draftVertices: MeasureVertex[] = [];
     let draftCartesians: any[] = [];
     let measureDataSource: any = null;
+    let measureDsAdd: Promise<unknown> | null = null;
     let diffDataSource: any = null;
-    let measureClickTimer: ReturnType<typeof setTimeout> | null = null;
-    const MEASURE_CLICK_DELAY_MS = 280;
     const MEASURE_COLOR = "#ca8a04";
 
-    let drawEnabled = $state(false);
+    let editEnabled = $state(false);
+    let drawMode = $state<DrawGeomMode>("Polygon");
+    let drawUseHeight = $state(false);
     let drawStatus = $state("");
-    let drawVertices: MeasureVertex[] = [];
+    let drawVertices: LonLatVertex[] = [];
     let drawCartesians: any[] = [];
+    let drawParts: LonLatVertex[][] = [];
+    let drawPartCartesians: any[][] = [];
     let drawVertexCount = $state(0);
+    let drawPartCount = $state(0);
     let drawDataSource: any = null;
-    let drawClickTimer: ReturnType<typeof setTimeout> | null = null;
+    let drawDsAdd: Promise<unknown> | null = null;
     let drawHandler: any;
-    const DRAW_COLOR = DIFF_OP_FILL.insert;
-
+    let createFormOpen = $state(false);
+    let pendingGeometry = $state<GeoJsonGeometry | null>(null);
     const canFinish = $derived(
         measureEnabled &&
             measureMode !== "point" &&
             draftCartesians.length >= minVertices(measureMode),
     );
-    const drawCanFinish = $derived(drawEnabled && drawVertexCount >= 3);
+    const DRAW_COLOR = DIFF_OP_FILL.insert;
+
+    const editLayer = $derived(editBuffer.targetLayer);
+    const canEdit = $derived(Boolean(canWrite && editLayer && active));
+    const createFields = $derived(
+        attrFieldsForTable(tables[editLayer ?? ""] ?? []),
+    );
+    const drawNeed = $derived(minVerticesForMode(drawMode));
+    const drawCanAddPart = $derived(
+        editEnabled && isMultipartMode(drawMode) && drawVertexCount >= drawNeed,
+    );
+    const drawCanFinish = $derived(
+        editEnabled &&
+            (isMultipartMode(drawMode)
+                ? drawPartCount >= 1 || drawVertexCount >= drawNeed
+                : drawVertexCount >= drawNeed),
+    );
     const bufferEntries = $derived(
         editBuffer.entries.map((e) => ({
             entityId: e.entityId,
@@ -225,6 +278,19 @@
     let measureHandler: any;
     let postRenderRemover: (() => void) | null = null;
     let renderRequestRemovers: Array<() => void> = [];
+    let presencePeers = $state<PresencePeer[]>([]);
+    let presenceRoster = $state<PresenceRosterCursor[]>([]);
+    const presenceCursorNodes = new Map<string, HTMLElement>();
+    let presenceHidden = $state(false);
+    let presenceConnected = $state(false);
+    let presenceHandle: MapPresenceHandle | null = null;
+
+    const presenceMember = $derived(
+        Boolean(($page.data as { isMember?: boolean } | undefined)?.isMember),
+    );
+    const presenceUserId = $derived(
+        ($page.data?.user as { id?: string } | undefined)?.id ?? "",
+    );
 
     function bumpRender() {
         try {
@@ -237,6 +303,7 @@
     const coverageLayers = new Map<string, any[]>();
     const coverageCogDestroy = new Map<string, () => void>();
     const layerSources = new Map<string, any>();
+    const clusteredSources = new WeakSet<object>();
     const entityMeta = new WeakMap<object, EntityMeta>();
     let selectedEntity: any = null;
     let layerLoadGen = 0;
@@ -958,12 +1025,20 @@
         return Cesium.Color.fromCssColorString(MEASURE_COLOR);
     }
 
-    async function ensureMeasureDs() {
+    function getOrCreateMeasureDs() {
         if (!viewer || !Cesium) return null;
         if (measureDataSource) return measureDataSource;
         measureDataSource = new Cesium.CustomDataSource("tinyowl-measure");
-        await viewer.dataSources.add(measureDataSource);
+        measureDsAdd = viewer.dataSources.add(measureDataSource);
+        void measureDsAdd.then(() => bumpRender());
         return measureDataSource;
+    }
+
+    async function ensureMeasureDs() {
+        const ds = getOrCreateMeasureDs();
+        if (!ds) return null;
+        if (measureDsAdd) await measureDsAdd;
+        return ds;
     }
 
     function cartesianToVertex(cartesian: any): MeasureVertex {
@@ -1028,8 +1103,8 @@
         }
     }
 
-    async function redrawDraftMeasure() {
-        const ds = await ensureMeasureDs();
+    function paintDraftMeasure() {
+        const ds = getOrCreateMeasureDs();
         if (!ds || !Cesium) return;
         clearDraftEntitiesOnly();
         const color = measureColor();
@@ -1190,16 +1265,11 @@
         bumpRender();
     }
 
-    function queueMeasurePick(screenPos: any) {
-        if (measureClickTimer) clearTimeout(measureClickTimer);
-        if (measureMode === "point") {
-            void onMeasurePick(screenPos);
-            return;
-        }
-        measureClickTimer = setTimeout(() => {
-            measureClickTimer = null;
-            void onMeasurePick(screenPos);
-        }, MEASURE_CLICK_DELAY_MS);
+    function popLastMeasureVertex(repaint = true) {
+        if (draftCartesians.length === 0) return;
+        draftCartesians = draftCartesians.slice(0, -1);
+        draftVertices = draftVertices.slice(0, -1);
+        if (repaint) paintDraftMeasure();
     }
 
     async function onMeasurePick(screenPos: any) {
@@ -1211,11 +1281,11 @@
         draftCartesians = [...draftCartesians, cartesian];
         draftVertices = [...draftVertices, cartesianToVertex(cartesian)];
         if (measureMode === "point") {
-            await redrawDraftMeasure();
+            paintDraftMeasure();
             await commitMeasure3d();
             return;
         }
-        await redrawDraftMeasure();
+        paintDraftMeasure();
         const n = draftCartesians.length;
         measureStatus =
             n < minVertices(measureMode)
@@ -1230,10 +1300,6 @@
     }
 
     async function clearMeasurements() {
-        if (measureClickTimer) {
-            clearTimeout(measureClickTimer);
-            measureClickTimer = null;
-        }
         clearDraftMeasure();
         clearDraftEntitiesOnly();
         if (measureDataSource && viewer) {
@@ -1244,18 +1310,17 @@
             }
         }
         measureDataSource = null;
+        measureDsAdd = null;
         measureRecords = [];
         measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
     }
 
-    function finishDraft3d() {
-        if (measureClickTimer) {
-            clearTimeout(measureClickTimer);
-            measureClickTimer = null;
-        }
+    function finishDraft3d(): boolean {
         if (draftCartesians.length >= minVertices(measureMode)) {
             void commitMeasure3d();
+            return true;
         }
+        return false;
     }
 
     function zoomIn3d() {
@@ -1288,150 +1353,233 @@
         teardownMeasureHandler();
         measureHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         measureHandler.setInputAction((click: { position: unknown }) => {
-            queueMeasurePick(click.position);
+            void onMeasurePick(click.position);
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
         measureHandler.setInputAction(() => {
             if (measureMode === "point") return;
-            if (measureClickTimer) {
-                clearTimeout(measureClickTimer);
-                measureClickTimer = null;
-            }
-            finishDraft3d();
+            popLastMeasureVertex(false);
+            if (!finishDraft3d()) paintDraftMeasure();
         }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+        getOrCreateMeasureDs();
     }
 
-    function drawTargetTable(): string {
-        const sel = layerSelection.primaryLayer;
-        if (sel) return sel;
-        const visible = layers.find((l) => l.visible);
-        return visible?.name || PLACEHOLDER_TABLE;
+    function drawHint(): string {
+        const z = drawUseHeight ? " · 3D height" : " · draped";
+        if (drawMode === "Point") return `Click to place a point${z}`;
+        if (drawMode === "MultiPoint")
+            return `Click points · Finish when done${z}`;
+        if (isMultipartMode(drawMode)) {
+            return `Click vertices · Enter adds a part · Finish commits ${drawMode}${z}`;
+        }
+        return `Click vertices · Finish, double-click, or Enter at ${drawNeed}+${z}`;
     }
 
     function drawColor() {
         return Cesium.Color.fromCssColorString(DRAW_COLOR);
     }
 
-    async function ensureDrawDs() {
+    function getOrCreateDrawDs() {
         if (!viewer || !Cesium) return null;
         if (drawDataSource) return drawDataSource;
         drawDataSource = new Cesium.CustomDataSource("tinyowl-draw");
-        await viewer.dataSources.add(drawDataSource);
+        drawDsAdd = viewer.dataSources.add(drawDataSource);
+        void drawDsAdd.then(() => bumpRender());
         return drawDataSource;
     }
 
     function clearDraftDraw() {
         drawVertices = [];
         drawCartesians = [];
+        drawParts = [];
+        drawPartCartesians = [];
         drawVertexCount = 0;
+        drawPartCount = 0;
         clearDraftDrawEntitiesOnly();
     }
 
     function clearDraftDrawEntitiesOnly() {
         if (!drawDataSource) return;
-        const ids = [
-            "draw:line",
-            "draw:poly",
-            ...Array.from({ length: 64 }, (_, i) => `draw:pt:${i}`),
-        ];
-        for (const id of ids) {
-            try {
-                drawDataSource.entities.removeById(id);
-            } catch {
-                /* ignore */
-            }
+        try {
+            drawDataSource.entities.removeAll();
+        } catch {
+            /* ignore */
         }
     }
 
-    async function redrawDraftDraw() {
-        const ds = await ensureDrawDs();
-        if (!ds || !Cesium) return;
-        clearDraftDrawEntitiesOnly();
-        const color = drawColor();
-        for (let i = 0; i < drawCartesians.length; i++) {
+    function addDraftPoints(ds: any, color: any, cartesians: any[], prefix: string) {
+        for (let i = 0; i < cartesians.length; i++) {
             ds.entities.add({
-                id: `draw:pt:${i}`,
-                position: drawCartesians[i],
+                id: `${prefix}:pt:${i}`,
+                position: cartesians[i],
                 point: {
                     pixelSize: 8,
                     color,
                     outlineColor: Cesium.Color.BLACK,
                     outlineWidth: 1,
+                    heightReference: Cesium.HeightReference.NONE,
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 },
             });
         }
-        if (drawCartesians.length >= 2) {
-            ds.entities.add({
-                id: "draw:line",
-                polyline: {
-                    positions: drawCartesians,
-                    width: 3,
-                    material: new Cesium.PolylineDashMaterialProperty({
-                        color,
-                    }),
-                    clampToGround: false,
-                },
-            });
+    }
+
+    function addDraftLine(ds: any, color: any, cartesians: any[], id: string) {
+        if (cartesians.length < 2) return;
+        ds.entities.add({
+            id,
+            polyline: {
+                positions: cartesians,
+                width: 3,
+                material: new Cesium.PolylineDashMaterialProperty({ color }),
+                clampToGround: false,
+            },
+        });
+    }
+
+    function addDraftPoly(ds: any, color: any, cartesians: any[], id: string) {
+        if (cartesians.length < 3) return;
+        ds.entities.add({
+            id,
+            polygon: {
+                hierarchy: cartesians,
+                material: color.withAlpha(0.18),
+                outline: true,
+                outlineColor: color,
+                perPositionHeight: true,
+                heightReference: Cesium.HeightReference.NONE,
+            },
+        });
+    }
+
+    function vertsToCartesians(verts: LonLatVertex[]): any[] {
+        if (!Cesium) return [];
+        return verts.map((v) =>
+            Cesium.Cartesian3.fromDegrees(v.lon, v.lat, v.height ?? 0),
+        );
+    }
+
+    function rebuildDrawCartesians() {
+        drawCartesians = vertsToCartesians(drawVertices);
+        drawPartCartesians = drawParts.map((p) => vertsToCartesians(p));
+    }
+
+    function setDrawUseHeight(on: boolean) {
+        if (drawUseHeight === on) return;
+        drawUseHeight = on;
+        rebuildDrawCartesians();
+        void paintDraftDraw();
+        drawStatus = drawHint();
+    }
+
+    function paintDraftDraw() {
+        const ds = getOrCreateDrawDs();
+        if (!ds || !Cesium) return;
+        clearDraftDrawEntitiesOnly();
+        const color = drawColor();
+        const lineLike =
+            drawMode === "LineString" ||
+            drawMode === "MultiLineString" ||
+            drawMode === "Polygon" ||
+            drawMode === "MultiPolygon";
+        const polyLike = drawMode === "Polygon" || drawMode === "MultiPolygon";
+        for (let p = 0; p < drawPartCartesians.length; p++) {
+            const part = drawPartCartesians[p]!;
+            addDraftPoints(ds, color, part, `draw:part${p}`);
+            if (lineLike) addDraftLine(ds, color, part, `draw:part${p}:line`);
+            if (polyLike) addDraftPoly(ds, color, part, `draw:part${p}:poly`);
         }
-        if (drawCartesians.length >= 3) {
-            ds.entities.add({
-                id: "draw:poly",
-                polygon: {
-                    hierarchy: drawCartesians,
-                    material: color.withAlpha(0.18),
-                    outline: true,
-                    outlineColor: color,
-                    perPositionHeight: true,
-                },
-            });
-        }
+        addDraftPoints(ds, color, drawCartesians, "draw");
+        if (lineLike) addDraftLine(ds, color, drawCartesians, "draw:line");
+        if (polyLike) addDraftPoly(ds, color, drawCartesians, "draw:poly");
         bumpRender();
     }
 
-    function commitDrawPolygon() {
-        if (drawVertices.length < 3) return;
-        const geometry = polygonFromVertices(drawVertices);
+    function openCreateForm() {
+        const geom = geometryFromDraft(
+            drawMode,
+            drawVertices,
+            drawParts,
+            drawUseHeight,
+        );
+        if (!geom || !editLayer) return;
+        pendingGeometry = geom;
+        createFormOpen = true;
+        clearDraftDraw();
+        bumpRender();
+    }
+
+    function confirmCreate(attrs: Record<string, string>) {
+        if (!pendingGeometry || !editLayer) {
+            pendingGeometry = null;
+            return;
+        }
+        const sourceId = attrs.source_id?.trim();
         editBuffer.push({
             op: "insert",
-            table: drawTargetTable(),
-            entityId: editBuffer.nextEntityId(),
-            geometry,
+            table: editLayer,
+            entityId: sourceId || editBuffer.nextEntityId(),
+            geometry: pendingGeometry,
+            attributes: attrs,
         });
-        clearDraftDraw();
-        drawStatus = `${editBuffer.size} in buffer · click to draw another`;
+        pendingGeometry = null;
+        drawStatus = `${editBuffer.size} in buffer · ${drawHint()}`;
         bumpRender();
     }
 
-    function queueDrawPick(screenPos: any) {
-        if (drawClickTimer) clearTimeout(drawClickTimer);
-        drawClickTimer = setTimeout(() => {
-            drawClickTimer = null;
-            void onDrawPick(screenPos);
-        }, MEASURE_CLICK_DELAY_MS);
+    function cancelCreate() {
+        pendingGeometry = null;
+        drawStatus = drawHint();
     }
 
-    async function onDrawPick(screenPos: any) {
+    function addDrawPart() {
+        if (!isMultipartMode(drawMode)) return;
+        if (drawVertices.length < drawNeed) return;
+        drawParts = [...drawParts, drawVertices];
+        drawPartCartesians = [
+            ...drawPartCartesians,
+            vertsToCartesians(drawVertices),
+        ];
+        drawPartCount = drawParts.length;
+        drawVertices = [];
+        drawCartesians = [];
+        drawVertexCount = 0;
+        paintDraftDraw();
+        drawStatus = `${drawPartCount} part${drawPartCount === 1 ? "" : "s"} · click to start the next`;
+    }
+
+    function popLastDrawVertex(repaint = true) {
+        if (drawVertices.length === 0) return;
+        drawVertices = drawVertices.slice(0, -1);
+        drawCartesians = vertsToCartesians(drawVertices);
+        drawVertexCount = drawVertices.length;
+        if (repaint) paintDraftDraw();
+    }
+
+    function onDrawPick(screenPos: any) {
+        if (createFormOpen) return;
         const cartesian = pickMeasureCartesian(screenPos);
         if (!cartesian) {
             drawStatus = "Could not pick a point — try the mesh or terrain";
             return;
         }
-        drawCartesians = [...drawCartesians, cartesian];
         drawVertices = [...drawVertices, cartesianToVertex(cartesian)];
-        drawVertexCount = drawCartesians.length;
-        await redrawDraftDraw();
-        const n = drawCartesians.length;
+        drawCartesians = vertsToCartesians(drawVertices);
+        drawVertexCount = drawVertices.length;
+        paintDraftDraw();
+        if (drawMode === "Point") {
+            openCreateForm();
+            return;
+        }
+        const n = drawVertexCount;
         drawStatus =
-            n < 3
-                ? `${n} point${n === 1 ? "" : "s"} · need ${3 - n} more`
-                : `${n} points · Finish, double-click, or Enter`;
+            n < drawNeed
+                ? `${n} point${n === 1 ? "" : "s"} · need ${drawNeed - n} more`
+                : isMultipartMode(drawMode)
+                  ? `${n} in this part · Enter adds a part · Finish commits`
+                  : `${n} points · Finish, double-click, or Enter`;
     }
 
     async function clearDrawDraftAndDs() {
-        if (drawClickTimer) {
-            clearTimeout(drawClickTimer);
-            drawClickTimer = null;
-        }
         clearDraftDraw();
         if (drawDataSource && viewer) {
             try {
@@ -1441,16 +1589,21 @@
             }
         }
         drawDataSource = null;
+        drawDsAdd = null;
     }
 
-    function finishDrawDraft() {
-        if (drawClickTimer) {
-            clearTimeout(drawClickTimer);
-            drawClickTimer = null;
+    function finishDrawDraft(): boolean {
+        if (!drawCanFinish) return false;
+        openCreateForm();
+        return true;
+    }
+
+    function onEnterInEdit() {
+        if (isMultipartMode(drawMode) && drawVertexCount >= drawNeed) {
+            addDrawPart();
+            return;
         }
-        if (drawCartesians.length >= 3) {
-            commitDrawPolygon();
-        }
+        finishDrawDraft();
     }
 
     function teardownDrawHandler() {
@@ -1467,15 +1620,36 @@
         teardownDrawHandler();
         drawHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         drawHandler.setInputAction((click: { position: unknown }) => {
-            queueDrawPick(click.position);
+            onDrawPick(click.position);
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
         drawHandler.setInputAction(() => {
-            if (drawClickTimer) {
-                clearTimeout(drawClickTimer);
-                drawClickTimer = null;
-            }
-            finishDrawDraft();
+            if (drawMode === "Point") return;
+            popLastDrawVertex(false);
+            if (!finishDrawDraft()) paintDraftDraw();
         }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+        getOrCreateDrawDs();
+    }
+
+    function setDrawMode(next: DrawGeomMode) {
+        if (drawMode === next) return;
+        drawMode = next;
+        clearDraftDraw();
+        drawStatus = drawHint();
+        paintDraftDraw();
+    }
+
+    function enterEditMode() {
+        if (!canEdit) return;
+        editEnabled = true;
+        measureEnabled = false;
+        drawStatus = drawHint();
+    }
+
+    function exitEditMode() {
+        editEnabled = false;
+        createFormOpen = false;
+        pendingGeometry = null;
+        clearDraftDraw();
     }
 
     function arraysEqual(a: string[], b: string[]): boolean {
@@ -1913,6 +2087,7 @@
             baseOutline: extras.baseOutline ?? null,
             baseAlpha: extras.baseAlpha ?? 0.35,
             dash: extras.dash ?? false,
+            ...captureBasePosition(entity),
         });
         entity.name = toSelectionKey(layerName, entityId);
         if (layerSelection.isHidden(layerName, entityId)) {
@@ -1921,6 +2096,60 @@
             } catch {
                 /* ignore */
             }
+        }
+    }
+
+    function captureBasePosition(entity: any): {
+        baseLon?: number;
+        baseLat?: number;
+        baseAlt?: number;
+    } {
+        if (!Cesium || !entity?.position) return {};
+        try {
+            const time = Cesium.JulianDate?.now?.() ?? undefined;
+            const cart = cesiumPropValue(entity.position, time) ?? entity.position;
+            if (!cart) return {};
+            const c = Cesium.Cartographic.fromCartesian(cart);
+            if (!c) return {};
+            return {
+                baseLon: Cesium.Math.toDegrees(c.longitude),
+                baseLat: Cesium.Math.toDegrees(c.latitude),
+                baseAlt: c.height ?? 0,
+            };
+        } catch {
+            return {};
+        }
+    }
+
+    function applyEntityHeight(
+        entity: any,
+        meta: EntityMeta,
+        meters: number | null,
+    ) {
+        if (!Cesium) return;
+        if (meta.kind === "polygon" && entity.polygon) {
+            if (meters == null) {
+                entity.polygon.extrudedHeight = undefined;
+                entity.polygon.height = undefined;
+                return;
+            }
+            entity.polygon.height = 0;
+            entity.polygon.extrudedHeight = Math.max(0, meters);
+            if (Cesium.HeightReference) {
+                entity.polygon.heightReference =
+                    Cesium.HeightReference.CLAMP_TO_GROUND;
+                entity.polygon.extrudedHeightReference =
+                    Cesium.HeightReference.RELATIVE_TO_GROUND;
+            }
+            return;
+        }
+        if (meta.kind === "point" && entity.position && meta.baseLon != null && meta.baseLat != null) {
+            const alt = (meta.baseAlt ?? 0) + (meters ?? 0);
+            entity.position = Cesium.Cartesian3.fromDegrees(
+                meta.baseLon,
+                meta.baseLat,
+                alt,
+            );
         }
     }
 
@@ -2304,7 +2533,7 @@
                 suppressNextClick = false;
                 return;
             }
-            if (measureEnabled || drawEnabled) return;
+            if (measureEnabled || editEnabled) return;
             closeContextMenu();
             const { shift, ctrl, meta: cmd } = lastPointerMods;
             const candidates = collectDrillCandidates(click.position);
@@ -2340,7 +2569,7 @@
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         clickHandler.setInputAction((click: { position: { x: number; y: number } }) => {
-            if (measureEnabled || drawEnabled) return;
+            if (measureEnabled || editEnabled) return;
             const picked = viewer.scene.pick(click.position);
             const entity = resolvePickedEntity(picked);
             const meta = entity ? entityMeta.get(entity) : undefined;
@@ -2633,8 +2862,94 @@
         return key === layerSelection.primaryKey ? "primary" : "secondary";
     }
 
+    function applyLayerClustering(ds: any, layerName: string) {
+        if (!Cesium || !ds?.clustering) return;
+        const layer = layers.find((l) => l.name === layerName);
+        const view = activeView(layer?.views, layer?.activeViewId ?? "");
+        const on = Boolean(view?.style.cluster);
+        const range =
+            view?.style.clusterPixelRange && view.style.clusterPixelRange > 0
+                ? view.style.clusterPixelRange
+                : DEFAULT_CLUSTER_PIXEL_RANGE;
+        ds.clustering.pixelRange = range;
+        ds.clustering.minimumClusterSize = 2;
+        ds.clustering.clusterPoints = true;
+        ds.clustering.clusterBillboards = true;
+        ds.clustering.clusterLabels = true;
+        if (!clusteredSources.has(ds)) {
+            clusteredSources.add(ds);
+            ds.clustering.clusterEvent.addEventListener(
+                (clusteredEntities: unknown[], cluster: any) => {
+                    const n = clusteredEntities?.length ?? 0;
+                    const size = n < 10 ? 28 : n < 100 ? 36 : 44;
+                    const live = layers.find((l) => l.name === ds.name);
+                    const fill = layerLegendColor(
+                        live?.views,
+                        live?.activeViewId ?? "",
+                    );
+                    const color = colorFromRgba(fill, 1);
+                    try {
+                        if (cluster.billboard) cluster.billboard.show = false;
+                        if (cluster.point) {
+                            cluster.point.show = true;
+                            cluster.point.color = color;
+                            cluster.point.pixelSize = size;
+                            cluster.point.outlineColor =
+                                Cesium.Color.WHITE.withAlpha(0.9);
+                            cluster.point.outlineWidth = 2;
+                            cluster.point.disableDepthTestDistance =
+                                Number.POSITIVE_INFINITY;
+                        }
+                        if (cluster.label) {
+                            cluster.label.show = true;
+                            cluster.label.text = String(n);
+                            cluster.label.font =
+                                "650 12px ui-sans-serif, system-ui, sans-serif";
+                            cluster.label.fillColor = Cesium.Color.WHITE;
+                            cluster.label.outlineColor = Cesium.Color.BLACK;
+                            cluster.label.outlineWidth = 3;
+                            cluster.label.style =
+                                Cesium.LabelStyle?.FILL_AND_OUTLINE ??
+                                cluster.label.style;
+                            cluster.label.disableDepthTestDistance =
+                                Number.POSITIVE_INFINITY;
+                            cluster.label.pixelOffset = new Cesium.Cartesian2(
+                                0,
+                                0,
+                            );
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                },
+            );
+        }
+        ds.clustering.enabled = false;
+        ds.clustering.enabled = on;
+    }
+
     function applyLayerViews() {
         if (!viewer || !Cesium) return;
+        const ranges = new Map<
+            string,
+            {
+                color: { min: number; max: number } | null;
+                height: { min: number; max: number } | null;
+            }
+        >();
+        for (const layer of layers) {
+            const view = activeView(layer.views, layer.activeViewId ?? "");
+            if (!view) continue;
+            const tableRows = rows[layer.name];
+            ranges.set(layer.name, {
+                color: view.style.colorField
+                    ? numericRange(tableRows, view.style.colorField)
+                    : null,
+                height: view.style.heightField
+                    ? numericRange(tableRows, view.style.heightField)
+                    : null,
+            });
+        }
         for (const [, ds] of layerSources) {
             try {
                 for (const entity of ds.entities.values) {
@@ -2650,12 +2965,13 @@
                                 defaultOpacityForPackets(layer?.packets),
                         ),
                     );
+                    const span = ranges.get(meta.layerName);
                     if (view) {
                         const row = rowByEntityId(
                             rows[meta.layerName],
                             meta.entityId,
                         );
-                        const fill = resolveFill(view.style, row);
+                        const fill = resolveFill(view.style, row, span?.color);
                         const outline = contrastColor(fill);
                         meta.dash = Boolean(view.style.dash);
                         meta.basePixelSize = view.style.pointSize || meta.basePixelSize;
@@ -2680,6 +2996,13 @@
                             meta.baseOutline = colorFromRgba(outline, 1);
                             meta.baseAlpha = ((fill[3] ?? 255) / 255) * op;
                         }
+                        applyEntityHeight(
+                            entity,
+                            meta,
+                            resolveHeight(view.style, row, span?.height),
+                        );
+                    } else {
+                        applyEntityHeight(entity, meta, null);
                     }
                     applyEntitySelectionStyle(
                         entity,
@@ -2690,7 +3013,15 @@
                 /* ignore */
             }
         }
+        for (const [name, ds] of layerSources) {
+            try {
+                applyLayerClustering(ds, name);
+            } catch {
+                /* ignore */
+            }
+        }
         applyHiddenVisibility();
+        bumpRender();
     }
 
     function toggleLayer(idx: number) {
@@ -2857,6 +3188,85 @@
         computeInView();
     });
 
+    $effect(() => {
+        const member = presenceMember;
+        const uid = presenceUserId;
+        const slug = projectSlug;
+        if (!browser || !ready || !viewer || viewer.isDestroyed?.() || !Cesium || !member || !uid || !slug) {
+            return;
+        }
+
+        let stopped = false;
+        let mouse: any = null;
+        let layer: PresenceLayer | null = null;
+        let handle: MapPresenceHandle | null = null;
+
+        layer = createPresenceLayer(Cesium, viewer, {
+            onRoster: (list) => {
+                if (!stopped) presenceRoster = list;
+            },
+            node: (id) => presenceCursorNodes.get(id),
+        });
+        void connectMapPresence({
+            slug,
+            userId: uid,
+            onPeers: (peers) => {
+                if (stopped) return;
+                presencePeers = peers;
+                layer?.sync(peers);
+            },
+            onHidden: (hidden) => {
+                if (!stopped) presenceHidden = hidden;
+            },
+        }).then(async (next) => {
+            if (stopped) {
+                await next?.stop();
+                return;
+            }
+            if (!next) {
+                layer?.destroy();
+                layer = null;
+                return;
+            }
+            handle = next;
+            presenceHandle = next;
+            presenceConnected = true;
+            if (document.hidden) await next.setPageVisible(false);
+            mouse = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+            mouse.setInputAction(
+                (m: { endPosition?: unknown }) => {
+                    if (!active || handle?.hidden) return;
+                    const cart = pickMeasureCartesian(m.endPosition);
+                    if (!cart) return;
+                    const v = cartesianToVertex(cart);
+                    handle?.publishCursor(v.lon, v.lat, v.height);
+                },
+                Cesium.ScreenSpaceEventType.MOUSE_MOVE,
+            );
+        });
+
+        const onVis = () => {
+            void handle?.setPageVisible(document.visibilityState === "visible");
+        };
+        document.addEventListener("visibilitychange", onVis);
+
+        return () => {
+            stopped = true;
+            document.removeEventListener("visibilitychange", onVis);
+            try {
+                mouse?.destroy?.();
+            } catch {
+                /* ignore */
+            }
+            presenceHandle = null;
+            presenceConnected = false;
+            presencePeers = [];
+            presenceRoster = [];
+            layer?.destroy();
+            void handle?.stop();
+        };
+    });
+
     onDestroy(() => {
         teardownDrawHandler();
         teardownMeasureHandler();
@@ -2920,9 +3330,10 @@
         if (!action) return;
 
         if (action.type === "enter") {
-            if (drawEnabled) {
+            if (createFormOpen) return;
+            if (editEnabled) {
                 ev.preventDefault();
-                finishDrawDraft();
+                onEnterInEdit();
                 return;
             }
             if (measureEnabled) {
@@ -2932,10 +3343,15 @@
             return;
         }
         if (action.type === "escape") {
-            if (drawEnabled) {
-                clearDraftDraw();
-                drawStatus =
-                    "Click vertices · Finish, double-click, or Enter at 3+";
+            if (createFormOpen) return;
+            if (editEnabled) {
+                if (drawVertexCount > 0 || drawPartCount > 0) {
+                    clearDraftDraw();
+                    drawStatus = drawHint();
+                    paintDraftDraw();
+                    return;
+                }
+                exitEditMode();
                 return;
             }
             if (measureEnabled) {
@@ -2988,22 +3404,37 @@
             return;
         }
         if (action.type === "measure-toggle") {
+            if (editEnabled) return;
             ev.preventDefault();
             measureEnabled = !measureEnabled;
-            if (measureEnabled) drawEnabled = false;
             return;
         }
-        if (action.type === "draw-toggle") {
+        if (action.type === "edit-toggle") {
+            if (createFormOpen) return;
+            if (!canEdit && !editEnabled) return;
             ev.preventDefault();
-            drawEnabled = !drawEnabled;
-            if (drawEnabled) measureEnabled = false;
+            if (editEnabled) {
+                exitEditMode();
+            } else {
+                enterEditMode();
+            }
             return;
         }
         if (action.type === "measure-mode") {
             ev.preventDefault();
+            if (editEnabled) {
+                const mapped: Record<string, DrawGeomMode> = {
+                    point: "Point",
+                    length: "LineString",
+                    area: "Polygon",
+                };
+                const next = mapped[action.mode];
+                if (next) setDrawMode(next);
+                return;
+            }
             measureMode = action.mode;
             measureEnabled = true;
-            drawEnabled = false;
+            editEnabled = false;
         }
     }
 
@@ -3012,7 +3443,7 @@
     });
 
     $effect(() => {
-        if (!ready || !viewer || !Cesium || measureEnabled || drawEnabled) return;
+        if (!ready || !viewer || !Cesium || measureEnabled || editEnabled) return;
         if (selectionToolLocal !== "box" && selectionToolLocal !== "lasso") {
             return;
         }
@@ -3240,44 +3671,27 @@
         if (!ready || !viewer) return;
         if (measureEnabled) {
             measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
-            if (measureClickTimer) {
-                clearTimeout(measureClickTimer);
-                measureClickTimer = null;
-            }
             clearDraftMeasure();
             setupMeasureHandler();
             viewer.canvas.style.cursor = "crosshair";
             return;
         }
-        if (measureClickTimer) {
-            clearTimeout(measureClickTimer);
-            measureClickTimer = null;
-        }
         teardownMeasureHandler();
         clearDraftMeasure();
         measureStatus = "";
-        if (!drawEnabled && viewer?.canvas) {
+        if (!editEnabled && viewer?.canvas) {
             viewer.canvas.style.cursor = "";
         }
     });
 
     $effect(() => {
         if (!ready || !viewer) return;
-        if (drawEnabled) {
-            drawStatus =
-                "Click vertices · Finish, double-click, or Enter at 3+";
-            if (drawClickTimer) {
-                clearTimeout(drawClickTimer);
-                drawClickTimer = null;
-            }
+        if (editEnabled) {
+            drawStatus = drawHint();
             clearDraftDraw();
             setupDrawHandler();
             viewer.canvas.style.cursor = "crosshair";
             return;
-        }
-        if (drawClickTimer) {
-            clearTimeout(drawClickTimer);
-            drawClickTimer = null;
         }
         teardownDrawHandler();
         void clearDrawDraftAndDs();
@@ -3290,12 +3704,12 @@
     $effect(() => {
         measureMode;
         if (!measureEnabled || !ready) return;
-        if (measureClickTimer) {
-            clearTimeout(measureClickTimer);
-            measureClickTimer = null;
-        }
         clearDraftMeasure();
         measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
+    });
+
+    $effect(() => {
+        if (editEnabled && !canEdit) exitEditMode();
     });
 </script>
 
@@ -3305,7 +3719,6 @@
             bind:enabled={measureEnabled}
             bind:mode={measureMode}
             bind:selectionTool={selectionToolLocal}
-            bind:drawEnabled
             status={measureStatus}
             records={measureRecords}
             {canFinish}
@@ -3313,9 +3726,6 @@
             {fullscreen}
             {selectionCount}
             {isolating}
-            {drawStatus}
-            {drawCanFinish}
-            {bufferEntries}
             onZoomIn={zoomIn3d}
             onZoomOut={zoomOut3d}
             onSetDim={onDimChange}
@@ -3346,11 +3756,48 @@
             onClear={() => void clearMeasurements()}
             onFinish={finishDraft3d}
             onRemove={(id) => void removeMeasurement(id)}
-            onDrawFinish={finishDrawDraft}
-            onBufferRemove={(id) => editBuffer.remove(id)}
-            onBufferClear={() => editBuffer.clear()}
         />
     </div>
+
+    {#if canWrite && editLayer && !editEnabled && active}
+        <div
+            class="pointer-events-none absolute top-2 left-14 z-20 rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm"
+        >
+            {editLayer} · Tab to edit
+        </div>
+    {/if}
+
+    {#if canWrite && editEnabled && editLayer}
+        <div class="absolute top-2 left-1/2 z-20 -translate-x-1/2">
+            <EditModeBar
+                layer={editLayer}
+                mode={drawMode}
+                status={drawStatus}
+                canFinish={drawCanFinish}
+                canAddPart={drawCanAddPart}
+                useHeight={drawUseHeight}
+                {bufferEntries}
+                onMode={setDrawMode}
+                onUseHeight={setDrawUseHeight}
+                onFinish={finishDrawDraft}
+                onAddPart={addDrawPart}
+                onExit={exitEditMode}
+                onBufferRemove={(id) => editBuffer.remove(id)}
+                onBufferClear={() => editBuffer.clear()}
+            />
+        </div>
+    {/if}
+
+    {#if canWrite}
+        <FeatureCreateForm
+            bind:open={createFormOpen}
+            layer={editLayer ?? ""}
+            geomType={drawMode}
+            fields={createFields}
+            onConfirm={confirmCreate}
+            onCancel={cancelCreate}
+        />
+    {/if}
 
     <EntityContextMenu
         open={ctxOpen}
@@ -3495,6 +3942,7 @@
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
+                {canWrite}
             />
         </div>
     {/if}
@@ -3505,13 +3953,6 @@
         >
             Coverage: {coverageError}
         </div>
-    {/if}
-
-    {#if diffFeatures.length > 0}
-        <DiffLegend
-            showBefore={diffFeatures.some((f) => f.oldGeometry)}
-            class="absolute bottom-2 right-14 z-20"
-        />
     {/if}
 
     {#if ready && !loading && models.length === 0 && layers.length === 0 && coverageRows.length === 0}
@@ -3569,6 +4010,7 @@
         bind:this={el}
         class="cesium-scene absolute inset-0 z-0 bg-neutral-900"
     ></div>
+    <PresenceCursors roster={presenceRoster} nodes={presenceCursorNodes} />
     <div bind:this={creditSink} class="sr-only" aria-hidden="true"></div>
 
     {#if pickOpen}
@@ -3591,7 +4033,25 @@
         <EnuCornerWidget {Cesium} {viewer} show={true} />
     {/if}
 
-    <CesiumAttribution ion={hasIonTerrain} />
+    <div
+        class="absolute bottom-2 right-2 z-20 flex flex-col items-end gap-1"
+    >
+        {#if diffFeatures.length > 0}
+            <DiffLegend
+                showBefore={diffFeatures.some((f) => f.oldGeometry)}
+            />
+        {/if}
+        {#if presenceMember && ready && presenceConnected}
+            <PresenceDock
+                peers={presencePeers}
+                hidden={presenceHidden}
+                onToggleHidden={() => {
+                    void presenceHandle?.setHidden(!presenceHidden);
+                }}
+            />
+        {/if}
+        <CesiumAttribution ion={hasIonTerrain} />
+    </div>
 </div>
 
 <style>
