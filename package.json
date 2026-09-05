@@ -3,14 +3,14 @@
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
-	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
-		"preview": "vite preview",
+  "scripts": {
+    "dev": "svelte-kit sync && vite dev",
+    "build": "svelte-kit sync && vite build",
+    "preview": "svelte-kit sync && vite preview",
 		"demo": "TINYOWL_ADAPTER=node vite build && node scripts/demo-serve.mjs",
 		"demo:serve": "node scripts/demo-serve.mjs",
 		"demo:build": "TINYOWL_ADAPTER=node vite build",
-		"prepare": "svelte-kit sync || echo ''",
+    "prepare": "svelte-kit sync",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"pleiades:index": "python3 scripts/pleiades-index.py"
@@ -41,8 +41,9 @@
 		"typescript": "^6.0.3",
 		"vite": "^8.0.16"
 	},
-	"dependencies": {
-		"@dicebear/avataaars": "^9.4.2",
+  "dependencies": {
+    "@cesium/engine": "^22.3.0",
+    "@dicebear/avataaars": "^9.4.2",
 		"@dicebear/core": "^9.4.3",
 		"@supabase/ssr": "^0.12.0",
 		"@supabase/supabase-js": "^2.110.0",

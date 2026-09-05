@@ -148,7 +148,7 @@
                             {@const editing =
                                 Boolean(editRowId) &&
                                 Boolean(getRowId) &&
-                                getRowId(row.original) === editRowId &&
+                                getRowId?.(row.original) === editRowId &&
                                 Boolean(isEditableColumn?.(cell.column.id))}
                             <Table.Cell
                                 class="max-w-56 px-3 {editing

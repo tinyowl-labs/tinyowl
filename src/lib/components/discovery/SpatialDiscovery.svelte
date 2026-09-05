@@ -17,19 +17,15 @@
     import { searchOverlay } from "$lib/stores/searchOverlay.svelte";
     import {
         DEFAULT_SEARCH_RADIUS,
-        formatYear,
         type SearchBBox,
     } from "$lib/search/params";
     import {
         formatMatchDetail,
         highlightHtml,
-        textMatchesQuery,
     } from "$lib/search/highlight";
     import {
-        projectDateLabel,
         projectInTemporalRange,
         projectIntersectsBounds,
-        projectTags,
         projectWithinRadius,
         type DiscoveryProject,
     } from "$lib/search/discovery";
@@ -177,15 +173,6 @@
         return () => searchOverlay.setPageHost(null);
     });
 
-    function orderedTags(proj: DiscoveryProject): string[] {
-        const tags = projectTags(proj);
-        if (!query) return tags;
-        return [
-            ...tags.filter((t) => textMatchesQuery(t, query)),
-            ...tags.filter((t) => !textMatchesQuery(t, query)),
-        ];
-    }
-
     function onTemporal(from: number | null, to: number | null) {
         dateFrom = from != null ? String(from) : "";
         dateTo = to != null ? String(to) : "";
@@ -213,13 +200,8 @@
     function onMapResultClick(slug: string) {
         selectedProjectId = slug;
         hoveredProjectId = slug;
-        if (inspectorOpen) {
-            mapRef?.flyToSlug(slug);
-            return;
-        }
-        document
-            .querySelector(`[data-discovery-slug="${CSS.escape(slug)}"]`)
-            ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        inspectorOpen = true;
+        mapRef?.flyToSlug(slug);
     }
 
     function onCardClick(slug: string) {
@@ -259,10 +241,6 @@
         }
     }
 
-    const toolBtn =
-        "flex size-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
-    const toolBtnActive = "border-foreground bg-accent text-foreground";
-
     function open3d() {
         if (selectedProjectId) {
             void goto(`/${selectedProjectId}/layers`);
@@ -282,95 +260,116 @@
         <aside
             class="search-vt-panel flex w-[22.5rem] shrink-0 flex-col border-r border-border bg-background"
         >
-            <div class="shrink-0 space-y-3 border-b border-border p-3">
-                <SearchComposer
-                    bind:this={composer}
-                    bind:value={query}
-                    {tags}
-                    {vocabularies}
-                    {projects}
-                    {projectLabels}
-                    bind:lat={centerLat}
-                    bind:lng={centerLng}
-                    bind:radius
-                    bind:bbox={searchBBox}
-                    {dateFrom}
-                    {dateTo}
-                    {semantic}
-                    {mediaHash}
-                    {imageQuery}
-                    placeLabel={placeName}
-                    {accessToken}
-                    {autofocus}
-                    {examples}
-                    shortcutHint={false}
-                    reserveChipTray
-                    placeholder="Search projects or places…"
-                    class="rounded-lg shadow-none"
-                >
-                    {#snippet chipActions()}
-                        <button
-                            type="button"
-                            onclick={setArea}
-                            class="{toolBtn} {drawTool === 'area' ||
-                            (searchBBox && !searchAsMove)
-                                ? toolBtnActive
-                                : ''}"
-                            title="Filter by area"
-                            aria-label="Filter by area"
+            <div class="shrink-0 border-b border-border p-3">
+                <div class="rounded-xl border border-border bg-card">
+                    <div class="p-2">
+                        <SearchComposer
+                            bind:this={composer}
+                            bind:value={query}
+                            {tags}
+                            {vocabularies}
+                            {projects}
+                            {projectLabels}
+                            bind:lat={centerLat}
+                            bind:lng={centerLng}
+                            bind:radius
+                            bind:bbox={searchBBox}
+                            {dateFrom}
+                            {dateTo}
+                            {semantic}
+                            {mediaHash}
+                            {imageQuery}
+                            placeLabel={placeName}
+                            {accessToken}
+                            {autofocus}
+                            {examples}
+                            shortcutHint={false}
+                            bare
+                            placeholder="Search projects or places…"
+                        />
+                    </div>
+
+                    <div class="flex items-center gap-1.5 border-t border-border/70 px-2 py-1.5">
+                        <div
+                            class="flex flex-1 items-center gap-0.5 rounded-lg bg-muted/60 p-0.5"
+                            role="group"
+                            aria-label="Spatial filter"
                         >
-                            <MapIcon class="size-4" />
-                        </button>
-                        <button
-                            type="button"
-                            onclick={setPoint}
-                            class="{toolBtn} {drawTool === 'point' ||
-                            (centerLat != null &&
-                                centerLng != null &&
-                                !searchBBox &&
-                                !searchAsMove)
-                                ? toolBtnActive
-                                : ''}"
-                            title="Filter by point"
-                            aria-label="Filter by point"
-                        >
-                            <CrosshairIcon class="size-4" />
-                        </button>
-                        <button
-                            type="button"
-                            onclick={toggleSearchAsMove}
-                            class="{toolBtn} {searchAsMove ? toolBtnActive : ''}"
-                            title="Filter to map view"
-                            aria-label="Filter to map view"
-                            aria-pressed={searchAsMove}
-                        >
-                            <ScanSearchIcon class="size-4" />
-                        </button>
-                        {#if spatialActive || searchAsMove}
                             <button
                                 type="button"
-                                onclick={clearSpatial}
-                                class={toolBtn}
-                                title="Clear spatial filter"
-                                aria-label="Clear spatial filter"
+                                onclick={setArea}
+                                aria-pressed={drawTool === "area" ||
+                                    (searchBBox && !searchAsMove)}
+                                class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
+                                    'area' ||
+                                (searchBBox && !searchAsMove)
+                                    ? 'bg-background text-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'}"
+                                title="Filter by area"
                             >
-                                <XIcon class="size-4" />
+                                <MapIcon class="size-3.5" />
+                                Area
                             </button>
-                        {/if}
-                    {/snippet}
-                </SearchComposer>
+                            <button
+                                type="button"
+                                onclick={setPoint}
+                                aria-pressed={drawTool === "point" ||
+                                    (centerLat != null &&
+                                        centerLng != null &&
+                                        !searchBBox &&
+                                        !searchAsMove)}
+                                class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
+                                    'point' ||
+                                (centerLat != null &&
+                                    centerLng != null &&
+                                    !searchBBox &&
+                                    !searchAsMove)
+                                    ? 'bg-background text-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'}"
+                                title="Filter by point"
+                            >
+                                <CrosshairIcon class="size-3.5" />
+                                Point
+                            </button>
+                            <button
+                                type="button"
+                                onclick={toggleSearchAsMove}
+                                aria-pressed={searchAsMove}
+                                class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {searchAsMove
+                                    ? 'bg-background text-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'}"
+                                title="Filter to map view"
+                            >
+                                <ScanSearchIcon class="size-3.5" />
+                                View
+                            </button>
+                        </div>
+                        <button
+                            type="button"
+                            onclick={clearSpatial}
+                            class="flex size-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+                            title="Clear spatial filter"
+                            aria-label="Clear spatial filter"
+                            disabled={!spatialActive && !searchAsMove}
+                        >
+                            <XIcon class="size-3.5" />
+                        </button>
+                    </div>
 
-                {#if !inspecting}
-                    <TemporalRangeFilter
-                        projects={results}
-                        bind:dateFrom
-                        bind:dateTo
-                        onCommit={onTemporal}
-                    />
-                {/if}
+                    {#if !inspecting}
+                        <div class="border-t border-border/70 p-2">
+                            <TemporalRangeFilter
+                                projects={results}
+                                bind:dateFrom
+                                bind:dateTo
+                                onCommit={onTemporal}
+                            />
+                        </div>
+                    {/if}
+                </div>
             </div>
 
-            <div class="relative z-0 flex min-h-0 flex-1 flex-col border-t border-border/60">
+            <div class="relative z-0 flex min-h-0 flex-1 flex-col">
                 {#if inspecting}
                     <div class="flex min-h-0 flex-1 flex-col px-3">
                         <ProjectInspector
@@ -381,9 +380,7 @@
                     </div>
                 {:else}
                     {#if media}
-                        <div class="shrink-0 px-3 pt-3">
-                            {@render media()}
-                        </div>
+                        {@render media()}
                     {/if}
                     <div class="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
                         {#if visibleResults.length === 0}
@@ -404,14 +401,6 @@
                                     1
                                         ? "s"
                                         : ""}
-                                    {#if query}
-                                        matching “{query}”
-                                    {/if}
-                                {/if}
-                                {#if parsedFrom != null || parsedTo != null}
-                                    · {formatYear(parsedFrom ?? -12000)}–{formatYear(
-                                        parsedTo ?? 2100,
-                                    )}
                                 {/if}
                             </p>
                             <ul class="space-y-2">
@@ -419,7 +408,6 @@
                                     {@const matchLabel = formatMatchDetail(
                                         proj.match_detail ?? "",
                                     )}
-                                    {@const tags = orderedTags(proj)}
                                     <li
                                         data-discovery-slug={proj.slug}
                                         class="overflow-hidden rounded-lg border transition-colors {selectedProjectId ===
@@ -438,19 +426,13 @@
                                             onclick={() => onCardClick(proj.slug)}
                                         >
                                             <span class="flex items-start justify-between gap-2">
-                                                <span class="min-w-0">
-                                                    <span
-                                                        class="block font-mono text-[11px] text-muted-foreground"
-                                                        >{proj.slug}</span
-                                                    >
-                                                    <span
-                                                        class="mt-0.5 block text-sm font-semibold text-foreground"
-                                                    >
-                                                        {@html highlightHtml(
-                                                            proj.title,
-                                                            query,
-                                                        )}
-                                                    </span>
+                                                <span
+                                                    class="block min-w-0 text-sm font-semibold text-foreground"
+                                                >
+                                                    {@html highlightHtml(
+                                                        proj.title,
+                                                        query,
+                                                    )}
                                                 </span>
                                                 {#if matchLabel}
                                                     <span
@@ -461,7 +443,7 @@
                                             </span>
                                             {#if proj.description}
                                                 <span
-                                                    class="mt-1.5 line-clamp-2 text-xs text-muted-foreground"
+                                                    class="mt-1 line-clamp-2 text-xs text-muted-foreground"
                                                 >
                                                     {@html highlightHtml(
                                                         proj.description,
@@ -469,35 +451,9 @@
                                                     )}
                                                 </span>
                                             {/if}
-                                            {#if tags.length}
-                                                <span
-                                                    class="mt-1.5 flex flex-wrap gap-1"
-                                                >
-                                                    {#each tags as tag}
-                                                        <span
-                                                            class="text-[11px] {textMatchesQuery(
-                                                                tag,
-                                                                query,
-                                                            )
-                                                                ? 'font-medium text-primary'
-                                                                : 'text-muted-foreground'}"
-                                                            >#{tag}</span
-                                                        >
-                                                    {/each}
-                                                </span>
-                                            {/if}
-                                            {#if projectDateLabel(proj)}
-                                                <span
-                                                    class="mt-1.5 text-[10px] text-muted-foreground"
-                                                >
-                                                    {projectDateLabel(proj)}
-                                                </span>
-                                            {/if}
                                         </button>
                                         {#if projectExtras}
-                                            <div class="px-3 pb-3">
-                                                {@render projectExtras(proj)}
-                                            </div>
+                                            {@render projectExtras(proj)}
                                         {/if}
                                     </li>
                                 {/each}

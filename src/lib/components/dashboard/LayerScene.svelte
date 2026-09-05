@@ -322,6 +322,15 @@
     let midDragAfter: number | null = null;
     let vertexDragMoved = false;
     let vertexSuppressClick = false;
+    /** Multi-vertex selection within the active vertex session (indices into drawVertices). */
+    let selectedVertexIndices = $state<Set<number>>(new Set());
+    /** Drag-start snapshot for bulk moves: index → original vertex. */
+    let vertexDragStartPositions: Map<number, LonLatVertex> | null = null;
+    /** Vertex marquee state (Shift/Ctrl drag in edit mode; reuses box/lasso overlay). */
+    let vertexMarqueeStart: { x: number; y: number } | null = null;
+    let vertexMarqueeCurrent: { x: number; y: number } | null = null;
+    let vertexMarqueeMoved = false;
+    let vertexMarqueeOp: "add" | "remove" = "add";
     let drawVertices: LonLatVertex[] = [];
     let drawCartesians: any[] = [];
     let drawParts: LonLatVertex[][] = [];
@@ -433,6 +442,7 @@
     let commentsLoadGen = 0;
     let ctxLon = 0;
     let ctxLat = 0;
+    let ctxHeight = 0;
     let commentDrawMode = $state<DrawGeomMode>("Point");
     let commentSketchVerts: LonLatVertex[] = [];
     let commentSketchCount = $state(0);
@@ -1313,7 +1323,7 @@
         if (measureDataSource) return measureDataSource;
         measureDataSource = new Cesium.CustomDataSource("tinyowl-measure");
         measureDsAdd = viewer.dataSources.add(measureDataSource);
-        void measureDsAdd.then(() => bumpRender());
+        void measureDsAdd?.then(() => bumpRender());
         return measureDataSource;
     }
 
@@ -1799,16 +1809,24 @@
         return new Cesium.Cartesian3(0, 0, 12);
     }
 
-    function addDraftPoints(ds: any, color: any, cartesians: any[], prefix: string) {
+    function addDraftPoints(
+        ds: any,
+        color: any,
+        cartesians: any[],
+        prefix: string,
+        selected?: Set<number>,
+        selectedColor?: any,
+    ) {
         for (let i = 0; i < cartesians.length; i++) {
+            const isSel = selected?.has(i) ?? false;
             ds.entities.add({
                 id: `${prefix}:pt:${i}`,
                 position: cartesians[i],
                 point: {
-                    pixelSize: 8,
-                    color,
-                    outlineColor: Cesium.Color.BLACK,
-                    outlineWidth: 1,
+                    pixelSize: isSel ? 12 : 8,
+                    color: isSel && selectedColor ? selectedColor : color,
+                    outlineColor: isSel ? Cesium.Color.WHITE : Cesium.Color.BLACK,
+                    outlineWidth: isSel ? 2 : 1,
                     heightReference: Cesium.HeightReference.NONE,
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                     eyeOffset: handleEyeOffset(),
@@ -1921,7 +1939,14 @@
         }
         if (lineLike) addDraftLine(ds, color, drawCartesians, "draw:line");
         if (polyLike) addDraftPoly(ds, color, drawCartesians, "draw:poly");
-        addDraftPoints(handles, color, drawCartesians, "draw");
+        addDraftPoints(
+            handles,
+            color,
+            drawCartesians,
+            "draw",
+            vertexSession ? selectedVertexIndices : undefined,
+            Cesium.Color.fromCssColorString(SELECTION_PRIMARY),
+        );
         if (lineLike) {
             addDraftMids(handles, drawCartesians, "draw", polyLike);
         }
@@ -2152,6 +2177,10 @@
                 drawVertices = prev;
                 drawCartesians = vertsToCartesians(prev);
                 drawVertexCount = prev.length;
+                // Drop out-of-range selections after undo.
+                selectedVertexIndices = new Set(
+                    [...selectedVertexIndices].filter((i) => i < prev.length),
+                );
                 paintDraftDraw();
                 return;
             }
@@ -2271,6 +2300,8 @@
         vertexUndoStack = [];
         vertexDragIndex = null;
         midDragAfter = null;
+        vertexDragStartPositions = null;
+        selectedVertexIndices = new Set();
         clearDraftDraw();
         applyHiddenVisibility();
         paintDraftDraw();
@@ -2298,6 +2329,8 @@
         if (!geom || !loadDraftFromGeom(geom)) return false;
         vertexSession = { table, entityId, bufferOp, oldGeometry };
         vertexUndoStack = [];
+        selectedVertexIndices = new Set();
+        vertexDragStartPositions = null;
         applyHiddenVisibility();
         return true;
     }
@@ -2320,9 +2353,117 @@
         vertexUndoStack = [];
         vertexDragIndex = null;
         midDragAfter = null;
+        vertexDragStartPositions = null;
+        selectedVertexIndices = new Set();
         clearDraftDraw();
         applyHiddenVisibility();
         bumpRender();
+        return true;
+    }
+
+    /** Vertex multi-select (06): only the active draft line/polygon has selectable vertices. */
+    function vertexEditHandlesActive(): boolean {
+        if (!vertexSession) return false;
+        return (
+            drawMode === "Polygon" ||
+            drawMode === "LineString" ||
+            drawMode === "MultiPolygon" ||
+            drawMode === "MultiLineString" ||
+            drawMode === "Point" ||
+            drawMode === "MultiPoint"
+        );
+    }
+
+    function clearVertexSelection(repaint = true) {
+        if (selectedVertexIndices.size === 0) return;
+        selectedVertexIndices = new Set();
+        if (repaint) paintDraftDraw();
+    }
+
+    function applyVertexSelectionOp(indices: number[], op: "replace" | "add" | "remove") {
+        const valid = indices.filter(
+            (i) => Number.isInteger(i) && i >= 0 && i < drawVertices.length,
+        );
+        if (op === "replace") {
+            selectedVertexIndices = new Set(valid);
+        } else if (op === "add") {
+            if (valid.length === 0) return;
+            const next = new Set(selectedVertexIndices);
+            for (const i of valid) next.add(i);
+            selectedVertexIndices = next;
+        } else {
+            if (valid.length === 0) return;
+            const next = new Set(selectedVertexIndices);
+            for (const i of valid) next.delete(i);
+            selectedVertexIndices = next;
+        }
+        paintDraftDraw();
+    }
+
+    /** Screen positions of draft vertices (null when behind camera). */
+    function draftVertexScreenPositions(): Array<{ x: number; y: number } | null> {
+        if (!viewer || !Cesium) return [];
+        return drawCartesians.map((c) => {
+            try {
+                const win = Cesium.SceneTransforms.worldToWindowCoordinates(viewer.scene, c);
+                if (!win || !Number.isFinite(win.x) || !Number.isFinite(win.y)) return null;
+                return { x: win.x, y: win.y };
+            } catch {
+                return null;
+            }
+        });
+    }
+
+    function vertexIndicesInRect(left: number, right: number, top: number, bottom: number): number[] {
+        const pts = draftVertexScreenPositions();
+        const out: number[] = [];
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            if (!p) continue;
+            if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) out.push(i);
+        }
+        return out;
+    }
+
+    function vertexIndicesInPolygon(path: Array<{ x: number; y: number }>): number[] {
+        if (path.length < 3) return [];
+        const pts = draftVertexScreenPositions();
+        const out: number[] = [];
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            if (!p) continue;
+            let inside = false;
+            for (let a = 0, b = path.length - 1; a < path.length; b = a++) {
+                const xi = path[a]!.x;
+                const yi = path[a]!.y;
+                const xj = path[b]!.x;
+                const yj = path[b]!.y;
+                if (yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi || Number.EPSILON) + xi) {
+                    inside = !inside;
+                }
+            }
+            if (inside) out.push(i);
+        }
+        return out;
+    }
+
+    function minVerticesForDraft(): number {
+        if (drawMode === "Polygon" || drawMode === "MultiPolygon") return 3;
+        if (drawMode === "LineString" || drawMode === "MultiLineString") return 2;
+        return 1;
+    }
+
+    function deleteSelectedVertices(): boolean {
+        if (!vertexSession || selectedVertexIndices.size === 0) return false;
+        const min = minVerticesForDraft();
+        const keep = drawVertices.filter((_, i) => !selectedVertexIndices.has(i));
+        if (keep.length < min) return false;
+        pushVertexUndo();
+        drawVertices = keep;
+        drawCartesians = vertsToCartesians(drawVertices);
+        drawVertexCount = drawVertices.length;
+        selectedVertexIndices = new Set();
+        paintDraftDraw();
         return true;
     }
 
@@ -2409,6 +2550,15 @@
         vertexDragIndex = index;
         midDragAfter = null;
         vertexDragMoved = false;
+        // Bulk move (06): dragging a selected vertex moves the whole selection.
+        // Snapshot originals so the delta applies cleanly per mousemove.
+        if (selectedVertexIndices.has(index) && selectedVertexIndices.size > 1) {
+            vertexDragStartPositions = new Map(
+                [...selectedVertexIndices].map((i) => [i, { ...drawVertices[i]! }]),
+            );
+        } else {
+            vertexDragStartPositions = null;
+        }
         lockEditCamera();
     }
 
@@ -2444,12 +2594,44 @@
             vertexDragIndex = insertAt;
             midDragAfter = null;
             vertexDragMoved = true;
+            // Midpoint insert shifts later indices: remap selection, select the new vertex.
+            selectedVertexIndices = new Set(
+                [...selectedVertexIndices]
+                    .map((i) => (i >= insertAt ? i + 1 : i))
+                    .filter((i) => i < drawVertices.length),
+            );
+            selectedVertexIndices.add(insertAt);
             paintDraftDraw();
             return;
         }
         if (vertexDragIndex == null) return;
         if (!vertexDragMoved) pushVertexUndo();
         vertexDragMoved = true;
+        // Bulk move: shift every selected vertex by the anchor delta.
+        if (
+            vertexDragStartPositions !== null &&
+            selectedVertexIndices.has(vertexDragIndex) &&
+            selectedVertexIndices.size > 1
+        ) {
+            const anchorStart = vertexDragStartPositions.get(vertexDragIndex);
+            if (anchorStart) {
+                const dLon = next.lon - anchorStart.lon;
+                const dLat = next.lat - anchorStart.lat;
+                const dH = (next.height ?? 0) - (anchorStart.height ?? 0);
+                drawVertices = drawVertices.map((v, i) => {
+                    const start = vertexDragStartPositions!.get(i);
+                    if (!start) return i === vertexDragIndex ? next : v;
+                    return {
+                        lon: start.lon + dLon,
+                        lat: start.lat + dLat,
+                        height: (start.height ?? 0) + dH,
+                    };
+                });
+                drawCartesians = vertsToCartesians(drawVertices);
+                paintDraftDraw();
+                return;
+            }
+        }
         drawVertices = drawVertices.map((v, i) =>
             i === vertexDragIndex ? next : v,
         );
@@ -2461,6 +2643,7 @@
         const dragging = vertexDragIndex != null || midDragAfter != null;
         vertexDragIndex = null;
         midDragAfter = null;
+        vertexDragStartPositions = null;
         if (!dragging) return;
         unlockEditCamera();
         if (vertexDragMoved) vertexSuppressClick = true;
@@ -2488,7 +2671,11 @@
             beginVertexEdit(target.table, target.entityId);
             return;
         }
-        if (vertexSession) return;
+        if (vertexSession) {
+            // Plain click on empty canvas clears the vertex selection.
+            if (vertexEditHandlesActive()) clearVertexSelection();
+            return;
+        }
         const cartesian = pickSnapCartesian(screenPos);
         if (!cartesian) return;
         drawVertices = [...drawVertices, cartesianToVertex(cartesian)];
@@ -2552,6 +2739,13 @@
     function teardownDrawHandler() {
         vertexDragIndex = null;
         midDragAfter = null;
+        vertexDragStartPositions = null;
+        vertexMarqueeStart = null;
+        vertexMarqueeCurrent = null;
+        vertexMarqueeMoved = false;
+        dragRectVisible = false;
+        lassoVisible = false;
+        lassoPoints = [];
         unlockEditCamera();
         try {
             drawHandler?.destroy?.();
@@ -2559,6 +2753,104 @@
             /* ignore */
         }
         drawHandler = null;
+    }
+
+    function startVertexMarquee(screenPos: unknown, op: "add" | "remove") {
+        if (!vertexSession || !vertexEditHandlesActive()) return;
+        const pos = screenPos as { x: number; y: number } | undefined;
+        if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+        // A modified click on a handle is a selection op, not a marquee.
+        if (pickedDraftHandle(pos)) return;
+        // Marquee follows the entity selection tool: box → rect, lasso → path.
+        // In click mode there is no marquee (modified clicks still work).
+        if (selectionToolLocal !== "box" && selectionToolLocal !== "lasso") return;
+        // Freeze the globe so Shift/Ctrl-drag selects instead of rotating.
+        lockEditCamera();
+        vertexMarqueeStart = { x: pos.x, y: pos.y };
+        vertexMarqueeCurrent = { x: pos.x, y: pos.y };
+        vertexMarqueeMoved = false;
+        vertexMarqueeOp = op;
+        if (selectionToolLocal === "box") {
+            dragRectVisible = true;
+            dragRectLeft = pos.x;
+            dragRectTop = pos.y;
+            dragRectWidth = 0;
+            dragRectHeight = 0;
+            lassoVisible = false;
+            lassoPoints = [];
+        } else {
+            dragRectVisible = false;
+            lassoVisible = true;
+            lassoPoints = [{ x: pos.x, y: pos.y }];
+        }
+    }
+
+    function updateVertexMarquee(endPos: unknown) {
+        if (!vertexMarqueeStart) return;
+        const pos = endPos as { x: number; y: number } | undefined;
+        if (!pos) return;
+        vertexMarqueeCurrent = { x: pos.x, y: pos.y };
+        const dx = pos.x - vertexMarqueeStart.x;
+        const dy = pos.y - vertexMarqueeStart.y;
+        if (selectionToolLocal === "box") {
+            dragRectLeft = Math.min(vertexMarqueeStart.x, pos.x);
+            dragRectTop = Math.min(vertexMarqueeStart.y, pos.y);
+            dragRectWidth = Math.abs(dx);
+            dragRectHeight = Math.abs(dy);
+        } else {
+            const last = lassoPoints[lassoPoints.length - 1];
+            if (!last) {
+                lassoPoints = [{ x: pos.x, y: pos.y }];
+            } else if (Math.hypot(pos.x - last.x, pos.y - last.y) >= 4) {
+                lassoPoints = [...lassoPoints, { x: pos.x, y: pos.y }];
+            }
+        }
+        if (!vertexMarqueeMoved && Math.hypot(dx, dy) >= 6) vertexMarqueeMoved = true;
+    }
+
+    /** Returns true when a marquee was consumed (caller should skip endVertexDrag). */
+    function finishVertexMarquee(): boolean {
+        if (!vertexMarqueeStart) return false;
+        const start = vertexMarqueeStart;
+        const current = vertexMarqueeCurrent;
+        const moved = vertexMarqueeMoved;
+        const op = vertexMarqueeOp;
+        vertexMarqueeStart = null;
+        vertexMarqueeCurrent = null;
+        vertexMarqueeMoved = false;
+        dragRectVisible = false;
+        lassoVisible = false;
+        const path = [...lassoPoints];
+        lassoPoints = [];
+        unlockEditCamera();
+        if (!moved || !start || !current) return true;
+        let indices: number[] = [];
+        if (selectionToolLocal === "box") {
+            indices = vertexIndicesInRect(
+                Math.min(start.x, current.x),
+                Math.max(start.x, current.x),
+                Math.min(start.y, current.y),
+                Math.max(start.y, current.y),
+            );
+        } else {
+            indices = vertexIndicesInPolygon([...path, { x: current.x, y: current.y }]);
+        }
+        applyVertexSelectionOp(indices, op);
+        vertexSuppressClick = true;
+        return true;
+    }
+
+    /** Drop an in-progress marquee without applying (Escape). */
+    function cancelVertexMarquee(): boolean {
+        if (!vertexMarqueeStart) return false;
+        vertexMarqueeStart = null;
+        vertexMarqueeCurrent = null;
+        vertexMarqueeMoved = false;
+        dragRectVisible = false;
+        lassoVisible = false;
+        lassoPoints = [];
+        unlockEditCamera();
+        return true;
     }
 
     function setupDrawHandler() {
@@ -2569,10 +2861,70 @@
             const handle = pickedDraftHandle(click.position);
             if (handle && (vertexSession || drawVertexCount > 0)) {
                 if (handle.kind === "mid") startMidDrag(handle.index);
-                else startVertexDrag(handle.index);
+                else {
+                    // Plain grab selects the vertex, then drags (bulk when selected).
+                    // Keep an existing multi-selection when grabbing one of its own.
+                    if (vertexSession && vertexEditHandlesActive() && handle.kind === "vertex") {
+                        if (!selectedVertexIndices.has(handle.index)) {
+                            applyVertexSelectionOp([handle.index], "replace");
+                        }
+                    }
+                    startVertexDrag(handle.index);
+                }
             }
         }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
-        drawHandler.setInputAction((move: { endPosition?: unknown }) => {
+        // NOTE: Cesium keeps one action per (event, modifier) — a second
+        // setInputAction for the same pair overwrites the first. So each pair
+        // below gets exactly one combined callback.
+        const shiftMod = Cesium.KeyboardEventModifier.SHIFT;
+        const ctrlMod = Cesium.KeyboardEventModifier.CTRL;
+        const metaMod = Cesium.KeyboardEventModifier?.META;
+        // Modified press: handle click-op first, else vertex marquee.
+        // (Entity box/lasso convention: Shift = add, Ctrl/Cmd = remove.)
+        const onModifiedDown =
+            (op: "add" | "remove") => (click: { position: unknown }) => {
+                const handle = click.position ? pickedDraftHandle(click.position) : null;
+                if (
+                    handle &&
+                    vertexSession &&
+                    vertexEditHandlesActive() &&
+                    handle.kind === "vertex"
+                ) {
+                    // No click-suppress needed: the follow-up pick hits the
+                    // same handle and returns early in onDrawPick.
+                    applyVertexSelectionOp([handle.index], op);
+                    return;
+                }
+                if (click.position) startVertexMarquee(click.position, op);
+            };
+        if (shiftMod !== undefined) {
+            drawHandler.setInputAction(
+                onModifiedDown("add"),
+                Cesium.ScreenSpaceEventType.LEFT_DOWN,
+                shiftMod,
+            );
+        }
+        if (ctrlMod !== undefined) {
+            drawHandler.setInputAction(
+                onModifiedDown("remove"),
+                Cesium.ScreenSpaceEventType.LEFT_DOWN,
+                ctrlMod,
+            );
+        }
+        if (metaMod !== undefined) {
+            drawHandler.setInputAction(
+                onModifiedDown("remove"),
+                Cesium.ScreenSpaceEventType.LEFT_DOWN,
+                metaMod,
+            );
+        }
+        // Plain move serves both gestures: marquee when one is active,
+        // otherwise the in-progress vertex/mid drag.
+        const onMove = (move: { endPosition?: unknown }) => {
+            if (vertexMarqueeStart) {
+                updateVertexMarquee(move.endPosition);
+                return;
+            }
             if (
                 (vertexDragIndex == null && midDragAfter == null) ||
                 !move.endPosition
@@ -2580,10 +2932,35 @@
                 return;
             }
             moveVertexDrag(move.endPosition);
-        }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-        drawHandler.setInputAction(() => {
+        };
+        drawHandler.setInputAction(onMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+        // Modified moves only ever feed an active marquee (drags start plain).
+        const onModifiedMove = (move: { endPosition?: unknown }) => {
+            updateVertexMarquee(move.endPosition);
+        };
+        if (shiftMod !== undefined) {
+            drawHandler.setInputAction(onModifiedMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE, shiftMod);
+        }
+        if (ctrlMod !== undefined) {
+            drawHandler.setInputAction(onModifiedMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE, ctrlMod);
+        }
+        if (metaMod !== undefined) {
+            drawHandler.setInputAction(onModifiedMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE, metaMod);
+        }
+        const onUp = () => {
+            if (finishVertexMarquee()) return;
             endVertexDrag();
-        }, Cesium.ScreenSpaceEventType.LEFT_UP);
+        };
+        drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP);
+        if (shiftMod !== undefined) {
+            drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP, shiftMod);
+        }
+        if (ctrlMod !== undefined) {
+            drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP, ctrlMod);
+        }
+        if (metaMod !== undefined) {
+            drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP, metaMod);
+        }
         drawHandler.setInputAction((click: { position: unknown }) => {
             onDrawPick(click.position);
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -2602,6 +2979,7 @@
     function setDrawMode(next: DrawGeomMode) {
         if (drawMode === next || anyFormOpen) return;
         if (vertexSession) cancelVertexEdit();
+        selectedVertexIndices = new Set();
         drawMode = next;
         clearDraftDraw();
         paintDraftDraw();
@@ -2626,11 +3004,14 @@
             cancelVertexEdit();
             return;
         }
-        const buf = editBuffer.entries.find(
-            (e) =>
-                e.table === vertexSession.table &&
-                e.entityId === vertexSession.entityId,
-        );
+        const buf = editBuffer.entries.find((e) => {
+            const vs = vertexSession;
+            return (
+                vs !== null &&
+                e.table === vs.table &&
+                e.entityId === vs.entityId
+            );
+        });
         const baseline = buf
             ? asGeometry(buf.geometry)
             : vertexSession.oldGeometry;
@@ -4277,10 +4658,12 @@
         const features = !bufferOverlayVisible
             ? []
             : diffFeatures.flatMap((f) => {
+                  const vs = vertexSession;
                   const editing =
-                      Boolean(vertexSession) &&
-                      f.entityId === vertexSession.entityId &&
-                      f.table === vertexSession.table;
+                      Boolean(vs) &&
+                      vs !== null &&
+                      f.entityId === vs.entityId &&
+                      f.table === vs.table;
                   if (editing) {
                       return f.oldGeometry
                           ? [{ ...f, geometry: null }]
@@ -4291,21 +4674,27 @@
         if (
             bufferOverlayVisible &&
             vertexSession?.oldGeometry &&
-            !features.some(
-                (f) =>
-                    f.entityId === vertexSession.entityId &&
-                    f.table === vertexSession.table &&
-                    f.oldGeometry,
-            )
+            !features.some((f) => {
+                const vs = vertexSession;
+                return (
+                    vs !== null &&
+                    f.entityId === vs.entityId &&
+                    f.table === vs.table &&
+                    f.oldGeometry
+                );
+            })
         ) {
-            features.push({
-                id: vertexSession.entityId,
-                table: vertexSession.table,
-                entityId: vertexSession.entityId,
-                op: "update",
-                geometry: null,
-                oldGeometry: vertexSession.oldGeometry,
-            });
+            const vs = vertexSession;
+            if (vs !== null) {
+                features.push({
+                    id: vs.entityId,
+                    table: vs.table,
+                    entityId: vs.entityId,
+                    op: "update",
+                    geometry: null,
+                    oldGeometry: vs.oldGeometry,
+                });
+            }
         }
         let cancelled = false;
         void syncDiffOverlay(Cesium, viewer, features).then((ds) => {
@@ -4678,6 +5067,7 @@
     function resolveCommentBalloonAnchor(rootId: string): any | null {
         if (!viewer || !Cesium) return null;
         const c = comments.find((x) => x.id === rootId);
+        if (!c) return null;
         const lon = c?.lon;
         const lat = c?.lat;
         if (lon == null || lat == null) return null;
@@ -4914,6 +5304,11 @@
                 if (drawVertexCount === 0) restoreLastDrawPart();
                 return;
             }
+            // Vertex multi-select (06): Del removes selected draft vertices first.
+            if (vertexSession && selectedVertexIndices.size > 0) {
+                deleteSelectedVertices();
+                return;
+            }
             deleteSelectedFeatures();
             return;
         }
@@ -4929,7 +5324,17 @@
                 return;
             }
             if (editEnabled) {
+                if (cancelVertexMarquee()) {
+                    ev.preventDefault();
+                    return;
+                }
                 if (vertexSession) {
+                    // Escape clears the vertex selection before cancelling the session.
+                    if (selectedVertexIndices.size > 0) {
+                        ev.preventDefault();
+                        clearVertexSelection();
+                        return;
+                    }
                     ev.preventDefault();
                     cancelVertexEdit();
                     return;

@@ -12,7 +12,6 @@
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
     import { onMount } from "svelte";
-    import type { Snippet } from "svelte";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
     import { projectLayersSearchHref, projectLayerHref, projectArtefactHref, projectLayersPlaceHref, entityLayersHref } from "$lib/project/entityLink";
@@ -112,10 +111,8 @@
          * only to unbound local state).
          */
         palette?: boolean;
-        /** Always reserve a chip row under the bar so filters don't jump the layout. */
-        reserveChipTray?: boolean;
-        /** Extra controls on the chip row (e.g. spatial tools). */
-        chipActions?: Snippet;
+        /** Borderless input for embedding in a surrounding filter card. */
+        bare?: boolean;
         class?: string;
     };
 
@@ -142,8 +139,7 @@
         placeLabel = null,
         listboxId = "search-mention-list",
         palette = false,
-        reserveChipTray = false,
-        chipActions,
+        bare = false,
         class: klass = "",
     }: Props = $props();
 
@@ -1662,7 +1658,9 @@
         onpaste={onPaste}
     >
         <div
-            class="search-vt-bar relative flex w-full min-h-11 items-center rounded-xl border border-border bg-background py-1.5 pl-10 pr-12 shadow-sm focus-within:border-primary dark:bg-muted dark:shadow-none {dragOver
+            class="search-vt-bar relative flex w-full min-h-11 items-center rounded-xl border py-1.5 pl-10 pr-12 {bare
+                ? 'border-transparent bg-transparent'
+                : 'border-border bg-background shadow-sm focus-within:border-primary dark:bg-muted dark:shadow-none'} {dragOver
                 ? 'ring-2 ring-primary/40'
                 : ''} {klass}"
             onclick={() => inputEl?.focus()}
@@ -1759,15 +1757,16 @@
             {/if}
         </button>
         </div>
-        {#if hasChips || palette || reserveChipTray || chipActions}
+        {#if hasChips || palette}
             <div
-                class="search-chip-tray mt-1.5 flex h-8 shrink-0 items-center gap-1.5 {palette
+                class="search-chip-tray mt-1.5 flex min-h-8 shrink-0 items-center gap-1.5 {palette
                     ? 'border-t border-border px-1 pt-1.5 h-auto min-h-8'
                     : ''}"
                 onclick={(e) => e.stopPropagation()}
             >
+                {#if hasChips}
                 <div
-                    class="flex h-8 min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden rounded-md border border-border bg-muted/30 px-1.5"
+                    class="flex min-w-0 flex-1 flex-wrap items-center gap-1"
                 >
                 {#if hasImageChip}
                     <button
@@ -1870,10 +1869,6 @@
                     </button>
                 {/each}
                 </div>
-                {#if chipActions}
-                    <div class="flex shrink-0 items-center gap-1.5">
-                        {@render chipActions()}
-                    </div>
                 {/if}
                 {#if palette}
                     <span

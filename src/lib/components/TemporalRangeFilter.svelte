@@ -139,8 +139,6 @@
         range = [a, b];
     });
 
-    const hasFilter = $derived(dateFrom !== "" || dateTo !== "");
-
     const selectedLeft = $derived(
         domainMax === domainMin
             ? 0
@@ -170,32 +168,13 @@
         dateTo = String(b);
         onCommit(a, b);
     }
-
-    function clear() {
-        range = [domainMin, domainMax];
-        dateFrom = "";
-        dateTo = "";
-        onCommit(null, null);
-    }
 </script>
 
 <div class="space-y-2">
-    {#if hasFilter}
-        <div class="flex justify-end">
-            <button
-                type="button"
-                onclick={clear}
-                class="text-[11px] text-muted-foreground hover:text-foreground"
-            >
-                Clear
-            </button>
-        </div>
-    {/if}
-
     <div
-        class="relative h-16 rounded-md border border-border bg-muted/30 overflow-hidden"
+        class="relative h-16 rounded-lg bg-muted/30 overflow-hidden"
     >
-        <div class="absolute inset-0 flex items-end gap-px px-0.5 pt-1 pb-0">
+        <div class="absolute inset-0 flex items-end gap-px px-1 pt-3 pb-0">
             {#each bins as bin}
                 {@const h = (bin.count / maxCount) * 100}
                 {@const inRange = bin.end >= range[0] && bin.start <= range[1]}
@@ -203,7 +182,7 @@
                     class="flex-1 min-w-0 rounded-t-[1px] transition-colors {inRange
                         ? 'bg-foreground/70'
                         : 'bg-foreground/15'}"
-                    style="height: {bin.count === 0 ? 8 : Math.max(18, h)}%"
+                    style="height: {bin.count === 0 ? 6 : Math.max(12, h * 0.8)}%"
                     title="{formatYear(Math.round(bin.start))}–{formatYear(
                         Math.round(bin.end),
                     )}: {bin.count}"

@@ -1,16 +1,32 @@
 import { createServerClient } from "@supabase/ssr";
 import type { RequestEvent } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
+import { env as publicEnv } from "$env/dynamic/public";
 
 /** Must match browser client — see client.ts */
 const AUTH_COOKIE = "sb-tinyowl-auth-token";
 
 function supabaseUrl(): string {
   // Prefer runtime URL in Docker (host.docker.internal); bake-time Vite URL otherwise.
+  // PUBLIC_* is the documented deploy convention; VITE_* is the local dev convention.
   return (
     env.SUPABASE_URL ||
     env.VITE_SUPABASE_URL ||
-    import.meta.env.VITE_SUPABASE_URL!
+    publicEnv.PUBLIC_SUPABASE_URL ||
+    import.meta.env.VITE_SUPABASE_URL ||
+    publicEnv.PUBLIC_SUPABASE_URL ||
+    ""
+  );
+}
+
+function supabaseAnonKey(): string {
+  return (
+    env.SUPABASE_ANON_KEY ||
+    env.VITE_SUPABASE_ANON_KEY ||
+    publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    publicEnv.PUBLIC_SUPABASE_ANON_KEY ||
+    import.meta.env.VITE_SUPABASE_ANON_KEY ||
+    ""
   );
 }
 
@@ -24,7 +40,7 @@ export function createClient(event: RequestEvent) {
     event.request.headers.get("x-forwarded-proto") === "https";
   return createServerClient(
     supabaseUrl(),
-    import.meta.env.VITE_SUPABASE_ANON_KEY!,
+    supabaseAnonKey(),
     {
       cookies: {
         getAll: () => event.cookies.getAll(),

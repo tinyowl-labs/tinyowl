@@ -53,7 +53,7 @@
     const recentProjects = $derived.by(() => {
         const bySlug = new Map(projects.map((p) => [p.slug, p]));
         const seen = new Set<string>();
-        const ordered: typeof projects = [];
+        const ordered: Array<(typeof projects)[number]> = [];
         for (const d of diffs) {
             if (seen.has(d.project_slug)) continue;
             const p = bySlug.get(d.project_slug);

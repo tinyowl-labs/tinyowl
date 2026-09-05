@@ -465,7 +465,7 @@
 >
     {#snippet media()}
         {#if showImageResults}
-            <section class="mb-3">
+            <section class="mb-3 shrink-0 px-3 pt-3">
                 {#if isReverseImage}
                     <div class="mb-2 flex flex-wrap items-start gap-3">
                         {#if queryPreview}
@@ -586,77 +586,80 @@
     {/snippet}
 
     {#snippet projectExtras(proj)}
-        {#if data.query}
-            {@const ents = entitiesFor(proj.slug)}
-            {@const hits = proj.match_hits ?? []}
-            {@const snippet = proj.match_snippet ?? ""}
-            {@const showReason =
-                Boolean(snippet) ||
+        {@const ents = entitiesFor(proj.slug)}
+        {@const hits = proj.match_hits ?? []}
+        {@const snippet = proj.match_snippet ?? ""}
+        {@const showReason =
+            Boolean(data.query) &&
+            (Boolean(snippet) ||
                 hits.length > 0 ||
-                (ents && ents.length > 0)}
-            {#if showReason}
-                <div class="mt-2">
-                    {#if !expanded[proj.slug]}
-                        <div
-                            class="mb-1 space-y-1 rounded-md border border-border/50 bg-secondary/30 px-2 py-1.5"
-                        >
-                            {#if snippet}
-                                <p class="text-[11px] leading-snug text-foreground">
-                                    {@html headlineHtml(snippet, data.query)}
-                                </p>
-                            {:else if hits.length > 0}
-                                {#each hits.slice(0, 2) as hit}
-                                    <p class="truncate text-[11px]">
-                                        <span class="font-mono text-muted-foreground"
-                                            >{hit.entity_type}.{hit.column_name}</span
-                                        >
-                                        {@html highlightHtml(hit.local_value, data.query)}
+                (ents && ents.length > 0))}
+        {#if showReason || proj.distance_m != null}
+            <div class="px-3 pb-3">
+                {#if showReason}
+                    <div class="mt-2">
+                        {#if !expanded[proj.slug]}
+                            <div
+                                class="mb-1 space-y-1 rounded-md border border-border/50 bg-secondary/30 px-2 py-1.5"
+                            >
+                                {#if snippet}
+                                    <p class="text-[11px] leading-snug text-foreground">
+                                        {@html headlineHtml(snippet, data.query)}
                                     </p>
-                                {/each}
-                            {/if}
-                        </div>
-                    {/if}
-                    {#if ents && ents.length > 0}
-                        <button
-                            type="button"
-                            onclick={() => toggleEntities(proj.slug)}
-                            class="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                        >
-                            {expanded[proj.slug]
-                                ? "Hide entities"
-                                : `In project data (${ents.length})`}
-                            <ChevronDownIcon
-                                class="size-3 transition-transform {expanded[proj.slug]
-                                    ? 'rotate-180'
-                                    : ''}"
-                            />
-                        </button>
-                        {#if expanded[proj.slug]}
-                            <div class="mt-1 space-y-0.5">
-                                {#each ents as entity}
-                                    <a
-                                        href={entityHref(proj.slug, entity)}
-                                        class="flex items-baseline gap-1.5 rounded px-1 py-0.5 text-[11px] no-underline hover:bg-accent/60 hover:text-primary"
-                                    >
-                                        <span class="font-mono text-muted-foreground"
-                                            >{entity.entity_type}</span
-                                        >
-                                        <span class="truncate text-foreground">
-                                            {@html highlightHtml(entity.match_value, data.query)}
-                                        </span>
-                                    </a>
-                                {/each}
+                                {:else if hits.length > 0}
+                                    {#each hits.slice(0, 2) as hit}
+                                        <p class="truncate text-[11px]">
+                                            <span class="font-mono text-muted-foreground"
+                                                >{hit.entity_type}.{hit.column_name}</span
+                                            >
+                                            {@html highlightHtml(hit.local_value, data.query)}
+                                        </p>
+                                    {/each}
+                                {/if}
                             </div>
                         {/if}
-                    {/if}
-                </div>
-            {/if}
-        {/if}
-        {#if proj.distance_m != null}
-            <p class="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <MapPinIcon class="size-3" />
-                {formatDistance(proj.distance_m)}
-            </p>
+                        {#if ents && ents.length > 0}
+                            <button
+                                type="button"
+                                onclick={() => toggleEntities(proj.slug)}
+                                class="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                            >
+                                {expanded[proj.slug]
+                                    ? "Hide entities"
+                                    : `In project data (${ents.length})`}
+                                <ChevronDownIcon
+                                    class="size-3 transition-transform {expanded[proj.slug]
+                                        ? 'rotate-180'
+                                        : ''}"
+                                />
+                            </button>
+                            {#if expanded[proj.slug]}
+                                <div class="mt-1 space-y-0.5">
+                                    {#each ents as entity}
+                                        <a
+                                            href={entityHref(proj.slug, entity)}
+                                            class="flex items-baseline gap-1.5 rounded px-1 py-0.5 text-[11px] no-underline hover:bg-accent/60 hover:text-primary"
+                                        >
+                                            <span class="font-mono text-muted-foreground"
+                                                >{entity.entity_type}</span
+                                            >
+                                            <span class="truncate text-foreground">
+                                                {@html highlightHtml(entity.match_value, data.query)}
+                                            </span>
+                                        </a>
+                                    {/each}
+                                </div>
+                            {/if}
+                        {/if}
+                    </div>
+                {/if}
+                {#if proj.distance_m != null}
+                    <p class="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <MapPinIcon class="size-3" />
+                        {formatDistance(proj.distance_m)}
+                    </p>
+                {/if}
+            </div>
         {/if}
     {/snippet}
 </SpatialDiscovery>
