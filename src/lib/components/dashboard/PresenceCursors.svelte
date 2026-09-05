@@ -31,39 +31,32 @@
 			use:register={c.userId}
 			class="absolute left-0 top-0 will-change-transform"
 			style="visibility:hidden;transform:translate3d(-9999px,-9999px,0)"
+			title={c.displayName}
 		>
+			<div
+				class="absolute left-[11px] top-[22px] size-6 overflow-hidden rounded-full shadow-sm ring-[1.5px] ring-white"
+			>
+				<UserAvatar
+					userId={c.userId}
+					name={c.displayName}
+					class="size-6 rounded-full"
+				/>
+			</div>
 			<svg
-				width="24"
-				height="36"
-				viewBox="0 0 24 36"
-				fill="none"
-				class="drop-shadow-sm"
+				width="25"
+				height="35"
+				viewBox="0 0 12.5 17.5"
+				class="relative z-10 drop-shadow-md"
 				aria-hidden="true"
 			>
 				<path
 					fill={c.color}
 					stroke="#fff"
-					stroke-width="1.25"
+					stroke-width="1.1"
 					stroke-linejoin="round"
 					d="M5.66 12.37H5.46L5.32 12.5.5 16.88V1.2L11.78 12.37H5.66Z"
 				/>
 			</svg>
-			<div
-				class="absolute left-[12px] top-[14px] flex w-max max-w-[min(28rem,75vw)] items-center gap-1 rounded-full py-0.5 pl-0.5 pr-2 shadow-sm"
-				style="background:{c.color}"
-				title={c.displayName}
-			>
-				<UserAvatar
-					userId={c.userId}
-					name={c.displayName}
-					class="size-4 shrink-0 rounded-full"
-				/>
-				<span
-					class="whitespace-nowrap text-[11px] font-semibold leading-none text-white"
-				>
-					{c.displayName}
-				</span>
-			</div>
 		</div>
 	{/each}
 </div>
