@@ -201,11 +201,7 @@
             />
         </button>
         {#if presenceChrome.active}
-            <PresenceDock
-                peers={presenceChrome.peers}
-                hidden={presenceChrome.hidden}
-                onToggleHidden={() => presenceChrome.onToggleHidden?.()}
-            />
+            <PresenceDock peers={presenceChrome.peers} />
         {/if}
         {#if hasSession}
             <div class="group/profile relative">

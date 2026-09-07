@@ -30,7 +30,6 @@
     import FeatureCreateForm from "./FeatureCreateForm.svelte";
     import {
         applyEntitySelectionStyle as paintEntitySelection,
-        SELECTION_PRIMARY,
     } from "./selectionStyle";
     import { computeInViewKeys } from "./layerSceneInView";
     import { paintLayerViews } from "./layerSceneViews";
@@ -46,6 +45,39 @@
         teardownMeasureHandler as teardownMeasureHandlerImpl,
         type LayerSceneMeasureCtx,
     } from "./layerSceneMeasure";
+    import {
+        createDrawSession,
+        setupDrawHandler as setupDrawHandlerImpl,
+        teardownDrawHandler as teardownDrawHandlerImpl,
+        clearDraftDraw as clearDraftDrawImpl,
+        paintDraftDraw as paintDraftDrawImpl,
+        setDrawUseHeight as setDrawUseHeightImpl,
+        setDrawMode as setDrawModeImpl,
+        confirmCreate as confirmCreateImpl,
+        cancelCreate as cancelCreateImpl,
+        dismissCreateFormKeepDraft as dismissCreateFormKeepDraftImpl,
+        openAttrEdit as openAttrEditImpl,
+        confirmAttrEdit as confirmAttrEditImpl,
+        cancelAttrEdit as cancelAttrEditImpl,
+        deleteBufferedFeature as deleteBufferedFeatureImpl,
+        deleteSelectedFeatures as deleteSelectedFeaturesImpl,
+        addDrawPart as addDrawPartImpl,
+        popLastDrawVertex as popLastDrawVertexImpl,
+        restoreLastDrawPart as restoreLastDrawPartImpl,
+        undoLastBuffer as undoLastBufferImpl,
+        commitEditBuffer as commitEditBufferImpl,
+        beginVertexEdit as beginVertexEditImpl,
+        cancelVertexEdit as cancelVertexEditImpl,
+        settleVertexSessionOnExit as settleVertexSessionOnExitImpl,
+        undoVertexStep as undoVertexStepImpl,
+        clearVertexSelection as clearVertexSelectionImpl,
+        deleteSelectedVertices as deleteSelectedVerticesImpl,
+        detachDrawDataSource as detachDrawDataSourceImpl,
+        finishDrawDraft as finishDrawDraftImpl,
+        onEnterInEdit as onEnterInEditImpl,
+        cancelVertexMarquee as cancelVertexMarqueeImpl,
+        type LayerSceneDrawCtx,
+    } from "./layerSceneDraw";
     import {
         createCameraSession,
         flyCameraToSphere as flyCameraToSphereImpl,
@@ -132,7 +164,6 @@
     import {
         destroyDiffOverlay,
         overlayEntityInfo,
-        submitEditBuffer,
         fetchDevelopTip,
         syncDiffOverlay,
         fromPeerAwareness,
@@ -141,15 +172,12 @@
         PEER_AWARENESS_DS_NAME,
         type DiffFeature,
         type GeoJsonGeometry,
-        DIFF_OP_FILL,
         asGeometry,
-        geometriesEqual,
     } from "$lib/geoDiff";
     import {
         editBuffer,
         attrFieldsForTable,
         geometryFromDraft,
-        draftFromGeometry,
         isMultipartMode,
         minVerticesForMode,
         type DrawGeomMode,
@@ -261,6 +289,26 @@
         dataEpoch?: number;
         /** Called after a successful develop commit (parent refetches layers). */
         onCommitted?: () => void;
+        schemaTables?: {
+            name: string;
+            label?: string;
+            kind?: string;
+            count?: number;
+            columns?: { name: string }[];
+        }[];
+        schemaEdges?: {
+            source: string;
+            target: string;
+            source_column: string;
+            target_column?: string;
+            kind?: string;
+        }[];
+        mediaByEntity?: Record<
+            string,
+            { url: string; media_type: string }[]
+        >;
+        onOpenTable?: (name: string) => void;
+        onAddTableRow?: (name: string) => void;
     };
 
     let {
@@ -293,6 +341,11 @@
         focusLayer = "",
         dataEpoch = 0,
         onCommitted,
+        schemaTables = [],
+        schemaEdges = [],
+        mediaByEntity = {},
+        onOpenTable,
+        onAddTableRow,
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -351,40 +404,7 @@
     let drawMode = $state<DrawGeomMode>("Polygon");
     let drawUseHeight = $state(true);
     let snapMode = $state<SnapMode>("mesh");
-    /** Layer the in-progress draw was started on (survives target-layer switch). */
-    let drawBindTable = $state<string | null>(null);
-    let vertexSession = $state<{
-        table: string;
-        entityId: string;
-        bufferOp: "insert" | "update";
-        oldGeometry: GeoJsonGeometry | null;
-    } | null>(null);
-    let vertexUndoStack: LonLatVertex[][] = [];
-    let vertexDragIndex: number | null = null;
-    let midDragAfter: number | null = null;
-    let vertexDragMoved = false;
-    let vertexSuppressClick = false;
-    /** Multi-vertex selection within the active vertex session (indices into drawVertices). */
-    let selectedVertexIndices = $state<Set<number>>(new Set());
-    /** Drag-start snapshot for bulk moves: index → original vertex. */
-    let vertexDragStartPositions: Map<number, LonLatVertex> | null = null;
-    /** Vertex marquee state (Shift/Ctrl drag in edit mode; reuses box/lasso overlay). */
-    let vertexMarqueeStart: { x: number; y: number } | null = null;
-    let vertexMarqueeCurrent: { x: number; y: number } | null = null;
-    let vertexMarqueeMoved = false;
-    let vertexMarqueeOp: "add" | "remove" = "add";
-    let drawVertices: LonLatVertex[] = [];
-    let drawCartesians: any[] = [];
-    let drawParts: LonLatVertex[][] = [];
-    let drawPartCartesians: any[][] = [];
-    let drawVertexCount = $state(0);
-    let drawPartCount = $state(0);
-    let drawDataSource: any = null;
-    let drawDsAdd: Promise<unknown> | null = null;
-    let drawHandleDataSource: any = null;
-    let drawHandleDsAdd: Promise<unknown> | null = null;
-    let drawDsEpoch = 0;
-    let drawHandler: any;
+    const drawSession = $state(createDrawSession());
     let createFormOpen = $state(false);
     let attrEdit = $state<{ table: string; entityId: string } | null>(null);
     let pendingGeometry = $state<GeoJsonGeometry | null>(null);
@@ -394,12 +414,6 @@
             measureMode !== "point" &&
             measureSession.draftCartesians.length >= minVertices(measureMode),
     );
-    const DRAW_COLOR = DIFF_OP_FILL.insert;
-    const DRAFT_MID_CROSS = `data:image/svg+xml,${encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 11 11">
-			<path fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="square" d="M5.5 1v9M1 5.5h9"/>
-		</svg>`,
-    )}`;
 
     const editLayer = $derived(editBuffer.targetLayer);
     const canEdit = $derived(
@@ -410,7 +424,7 @@
         ),
     );
     const createFields = $derived(
-        attrFieldsForTable(tables[drawBindTable ?? editLayer ?? ""] ?? []),
+        attrFieldsForTable(tables[drawSession.bindTable ?? editLayer ?? ""] ?? []),
     );
     const attrEditFields = $derived(
         attrFieldsForTable(tables[attrEdit?.table ?? ""] ?? []).filter(
@@ -430,13 +444,13 @@
     });
     const drawNeed = $derived(minVerticesForMode(drawMode));
     const drawCanAddPart = $derived(
-        editEnabled && isMultipartMode(drawMode) && drawVertexCount >= drawNeed,
+        editEnabled && isMultipartMode(drawMode) && drawSession.vertexCount >= drawNeed,
     );
     const drawCanFinish = $derived(
         editEnabled &&
             (isMultipartMode(drawMode)
-                ? drawPartCount >= 1 || drawVertexCount >= drawNeed
-                : drawVertexCount >= drawNeed),
+                ? drawSession.partCount >= 1 || drawSession.vertexCount >= drawNeed
+                : drawSession.vertexCount >= drawNeed),
     );
     const bufferEntries = $derived(
         editBuffer.entries.map((e) => ({
@@ -466,7 +480,7 @@
             .join(" · "),
     );
     const barLayer = $derived(
-        vertexSession?.table ?? drawBindTable ?? editLayer ?? "",
+        drawSession.vertexSession?.table ?? drawSession.bindTable ?? editLayer ?? "",
     );
     const sessionSummary = $derived(
         Object.entries(editBuffer.pendingByTable)
@@ -482,6 +496,9 @@
     let renderRequestRemovers: Array<() => void> = [];
     let presencePeers = $state<PresencePeer[]>([]);
     let presenceRoster = $state<PresenceRosterCursor[]>([]);
+    let presenceConnected = $state(false);
+    let presenceHandle = $state<MapPresenceHandle | null>(null);
+    let developCommit = $state("");
     const presenceDockPeers = $derived(
         presencePeers.map((p) => ({
             ...p,
@@ -508,10 +525,6 @@
             .join("\n") + `|${developCommit}`,
     );
     const presenceCursorNodes = new Map<string, HTMLElement>();
-    let presenceHidden = $state(false);
-    let presenceConnected = $state(false);
-    let presenceHandle = $state<MapPresenceHandle | null>(null);
-    let developCommit = $state("");
     /** Envelope parent captured when the session buffer first becomes non-empty. */
     let sessionBaseCommit = $state("");
     let awarenessDataSource: any = null;
@@ -961,9 +974,9 @@
                 }
             }
         }
-        if (vertexSession && vertexSession.bufferOp !== "insert") {
+        if (drawSession.vertexSession && drawSession.vertexSession.bufferOp !== "insert") {
             bufHide.add(
-                toSelectionKey(vertexSession.table, vertexSession.entityId),
+                toSelectionKey(drawSession.vertexSession.table, drawSession.vertexSession.entityId),
             );
         }
         const layerOff = new Set(
@@ -1135,6 +1148,97 @@
         };
     }
 
+    function drawCtx(): LayerSceneDrawCtx {
+        return {
+            Cesium,
+            viewer,
+            session: drawSession,
+            dim,
+            drawMode,
+            drawUseHeight,
+            editEnabled,
+            editLayer: editLayer ?? "",
+            anyFormOpen,
+            createFormOpen,
+            drawNeed,
+            drawCanFinish,
+            bufferOverlayVisible,
+            selectionTool: selectionToolLocal,
+            canWrite,
+            bumpRender,
+            pickSnapCartesian,
+            cartesianToVertex,
+            findEntityByKey,
+            geometryFromCesiumEntity,
+            applyHiddenVisibility,
+            blockPeerEdit,
+            closePickPager,
+            closeContextMenu,
+            setDrawMode: (mode) => {
+                drawMode = mode;
+            },
+            setDrawUseHeight: (on) => {
+                drawUseHeight = on;
+            },
+            setCreateFormOpen: (open) => {
+                createFormOpen = open;
+            },
+            setAttrEdit: (next) => {
+                attrEdit = next;
+            },
+            getAttrEdit: () => attrEdit,
+            getPendingGeometry: () => pendingGeometry,
+            setPendingGeometry: (geom) => {
+                pendingGeometry = geom;
+            },
+            setBoxOverlay: (rect) => {
+                if (!rect) {
+                    dragRectVisible = false;
+                    return;
+                }
+                dragRectVisible = true;
+                dragRectLeft = rect.left;
+                dragRectTop = rect.top;
+                dragRectWidth = rect.width;
+                dragRectHeight = rect.height;
+            },
+            getLassoPoints: () => lassoPoints,
+            setLassoPoints: (pts) => {
+                lassoPoints = pts;
+            },
+            setLassoVisible: (on) => {
+                lassoVisible = on;
+            },
+            projectSlug,
+            accessToken,
+            getSessionBaseCommit: () => sessionBaseCommit,
+            setSessionBaseCommit: (id) => {
+                sessionBaseCommit = id;
+            },
+            getCommitMessage: () => commitMessage,
+            setCommitMessage: (msg) => {
+                commitMessage = msg;
+            },
+            getCommitBusy: () => commitBusy,
+            setCommitBusy: (busy) => {
+                commitBusy = busy;
+            },
+            setCommitError: (msg) => {
+                commitError = msg;
+            },
+            setCommitDoneId: (id) => {
+                commitDoneId = id;
+            },
+            setCommitDoneStatus: (status) => {
+                commitDoneStatus = status;
+            },
+            setDevelopCommit: (id) => {
+                developCommit = id;
+            },
+            onCommitted,
+        };
+    }
+
     function cartesianToVertex(cartesian: any): MeasureVertex {
         const c = Cesium.Cartographic.fromCartesian(cartesian);
         return {
@@ -1268,484 +1372,119 @@
         setupMeasureHandlerImpl(measureCtx);
     }
 
-    function drawColor() {
-        return Cesium.Color.fromCssColorString(DRAW_COLOR);
+    function setupDrawHandler() {
+        setupDrawHandlerImpl(drawCtx);
     }
 
-    function attachDrawNamedDs(ds: any, gen: number, stillMine: () => boolean) {
-        const already = Boolean(viewer.dataSources.contains?.(ds));
-        const attached = already
-            ? Promise.resolve(ds)
-            : Promise.resolve(viewer.dataSources.add(ds));
-        return attached.then(
-            (added) => {
-                if (gen !== drawDsEpoch || !stillMine()) {
-                    try {
-                        if (viewer.dataSources.contains?.(ds)) {
-                            viewer.dataSources.remove(ds, true);
-                        }
-                    } catch {
-                        /* ignore */
-                    }
-                    return added;
-                }
-                bumpRender();
-                return added;
-            },
-            () => ds,
-        );
-    }
-
-    function getOrCreateDrawDs() {
-        if (!viewer || !Cesium) return null;
-        if (!drawDataSource) {
-            const gen = ++drawDsEpoch;
-            const ds = new Cesium.CustomDataSource("tinyowl-draw");
-            drawDataSource = ds;
-            drawDsAdd = attachDrawNamedDs(
-                ds,
-                gen,
-                () => drawDataSource === ds,
-            );
-        }
-        if (!drawHandleDataSource) {
-            const gen = drawDsEpoch || ++drawDsEpoch;
-            const ds = new Cesium.CustomDataSource("tinyowl-draw-handles");
-            drawHandleDataSource = ds;
-            drawHandleDsAdd = attachDrawNamedDs(
-                ds,
-                gen,
-                () => drawHandleDataSource === ds,
-            );
-        }
-        return drawDataSource;
-    }
-
-    function getOrCreateHandleDs() {
-        getOrCreateDrawDs();
-        return drawHandleDataSource;
-    }
-
-    function raiseDrawHandles() {
-        try {
-            if (drawHandleDataSource) {
-                viewer?.dataSources?.raiseToTop?.(drawHandleDataSource);
-            }
-        } catch {
-            /* ignore */
-        }
+    function teardownDrawHandler() {
+        teardownDrawHandlerImpl(drawCtx());
     }
 
     function clearDraftDraw() {
-        drawVertices = [];
-        drawCartesians = [];
-        drawParts = [];
-        drawPartCartesians = [];
-        drawVertexCount = 0;
-        drawPartCount = 0;
-        drawBindTable = null;
-        clearDraftDrawEntitiesOnly();
-    }
-
-    function clearDraftDrawEntitiesOnly() {
-        for (const ds of [drawDataSource, drawHandleDataSource]) {
-            if (!ds) continue;
-            try {
-                ds.entities.removeAll();
-            } catch {
-                /* ignore */
-            }
-        }
-    }
-
-    function handleEyeOffset() {
-        return new Cesium.Cartesian3(0, 0, 12);
-    }
-
-    function addDraftPoints(
-        ds: any,
-        color: any,
-        cartesians: any[],
-        prefix: string,
-        selected?: Set<number>,
-        selectedColor?: any,
-    ) {
-        for (let i = 0; i < cartesians.length; i++) {
-            const isSel = selected?.has(i) ?? false;
-            ds.entities.add({
-                id: `${prefix}:pt:${i}`,
-                position: cartesians[i],
-                point: {
-                    pixelSize: isSel ? 12 : 8,
-                    color: isSel && selectedColor ? selectedColor : color,
-                    outlineColor: isSel ? Cesium.Color.WHITE : Cesium.Color.BLACK,
-                    outlineWidth: isSel ? 2 : 1,
-                    heightReference: Cesium.HeightReference.NONE,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                    eyeOffset: handleEyeOffset(),
-                },
-            });
-        }
-    }
-
-    function addDraftMids(
-        ds: any,
-        cartesians: any[],
-        prefix: string,
-        closed: boolean,
-    ) {
-        if (!Cesium || cartesians.length < 2) return;
-        const n = cartesians.length;
-        const segs = closed && n >= 3 ? n : n - 1;
-        for (let i = 0; i < segs; i++) {
-            const a = cartesians[i];
-            const b = cartesians[(i + 1) % n];
-            if (!a || !b) continue;
-            const pos = Cesium.Cartesian3.midpoint(
-                a,
-                b,
-                new Cesium.Cartesian3(),
-            );
-            ds.entities.add({
-                id: `${prefix}:mid:${i}`,
-                position: pos,
-                billboard: {
-                    image: DRAFT_MID_CROSS,
-                    width: 11,
-                    height: 11,
-                    verticalOrigin: Cesium.VerticalOrigin?.CENTER,
-                    heightReference: Cesium.HeightReference.NONE,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                    eyeOffset: handleEyeOffset(),
-                },
-            });
-        }
-    }
-
-    function addDraftLine(ds: any, color: any, cartesians: any[], id: string) {
-        if (cartesians.length < 2) return;
-        ds.entities.add({
-            id,
-            polyline: {
-                positions: cartesians.slice(),
-                width: 3,
-                material: new Cesium.PolylineDashMaterialProperty({ color }),
-                clampToGround: false,
-            },
-        });
-    }
-
-    function addDraftPoly(ds: any, color: any, cartesians: any[], id: string) {
-        if (cartesians.length < 3 || !Cesium) return;
-        ds.entities.add({
-            id,
-            polygon: {
-                hierarchy: new Cesium.PolygonHierarchy(cartesians.slice()),
-                material: color.withAlpha(0.18),
-                outline: true,
-                outlineColor: color,
-                perPositionHeight: true,
-                heightReference: Cesium.HeightReference.NONE,
-            },
-        });
-    }
-
-    function vertsToCartesians(verts: LonLatVertex[]): any[] {
-        if (!Cesium) return [];
-        return verts.map((v) =>
-            Cesium.Cartesian3.fromDegrees(v.lon, v.lat, v.height ?? 0),
-        );
-    }
-
-    function rebuildDrawCartesians() {
-        drawCartesians = vertsToCartesians(drawVertices);
-        drawPartCartesians = drawParts.map((p) => vertsToCartesians(p));
-    }
-
-    function setDrawUseHeight(on: boolean) {
-        if (drawUseHeight === on) return;
-        drawUseHeight = on;
-        rebuildDrawCartesians();
-        paintDraftDraw();
-        if (createFormOpen) {
-            pendingGeometry = snapshotPendingGeometry();
-        }
+        clearDraftDrawImpl(drawCtx());
     }
 
     function paintDraftDraw() {
-        const ds = getOrCreateDrawDs();
-        const handles = getOrCreateHandleDs();
-        if (!ds || !handles || !Cesium) return;
-        clearDraftDrawEntitiesOnly();
-        const color = drawColor();
-        const lineLike =
-            drawMode === "LineString" ||
-            drawMode === "MultiLineString" ||
-            drawMode === "Polygon" ||
-            drawMode === "MultiPolygon";
-        const polyLike = drawMode === "Polygon" || drawMode === "MultiPolygon";
-        for (let p = 0; p < drawPartCartesians.length; p++) {
-            const part = drawPartCartesians[p]!;
-            if (lineLike) addDraftLine(ds, color, part, `draw:part${p}:line`);
-            if (polyLike) addDraftPoly(ds, color, part, `draw:part${p}:poly`);
-            addDraftPoints(handles, color, part, `draw:part${p}`);
-        }
-        if (lineLike) addDraftLine(ds, color, drawCartesians, "draw:line");
-        if (polyLike) addDraftPoly(ds, color, drawCartesians, "draw:poly");
-        addDraftPoints(
-            handles,
-            color,
-            drawCartesians,
-            "draw",
-            vertexSession ? selectedVertexIndices : undefined,
-            Cesium.Color.fromCssColorString(SELECTION_PRIMARY),
-        );
-        if (lineLike) {
-            addDraftMids(handles, drawCartesians, "draw", polyLike);
-        }
-        raiseDrawHandles();
-        bumpRender();
+        paintDraftDrawImpl(drawCtx());
     }
 
-    function snapshotPendingGeometry(): GeoJsonGeometry | null {
-        if (!(drawBindTable ?? editLayer)) return null;
-        return geometryFromDraft(
-            drawMode,
-            drawVertices,
-            drawParts,
-            drawUseHeight,
-        );
+    function setDrawUseHeight(on: boolean) {
+        setDrawUseHeightImpl(drawCtx(), on);
     }
 
-    function openCreateForm() {
-        if (createFormOpen) return;
-        const geom = snapshotPendingGeometry();
-        if (!geom) return;
-        pendingGeometry = geom;
-        createFormOpen = true;
-        bumpRender();
+    function setDrawMode(next: DrawGeomMode) {
+        setDrawModeImpl(drawCtx(), next);
     }
 
     function confirmCreate(attrs: Record<string, string>) {
-        const geom = pendingGeometry ?? snapshotPendingGeometry();
-        const table = drawBindTable ?? editLayer;
-        if (!geom || !table) {
-            pendingGeometry = null;
-            createFormOpen = false;
-            return;
-        }
-        const sourceId = attrs.source_id?.trim();
-        editBuffer.push({
-            op: "insert",
-            table,
-            entityId: sourceId || editBuffer.nextEntityId(),
-            geometry: geom,
-            attributes: attrs,
-        });
-        pendingGeometry = null;
-        createFormOpen = false;
-        clearDraftDraw();
-        bumpRender();
+        confirmCreateImpl(drawCtx(), attrs);
     }
 
     function cancelCreate() {
-        pendingGeometry = null;
-        createFormOpen = false;
-        clearDraftDraw();
-        bumpRender();
+        cancelCreateImpl(drawCtx());
     }
 
     function openAttrEdit(table: string, entityId: string) {
-        if (!canWrite || !table || !entityId) return;
-        if (blockPeerEdit(table, entityId)) return;
-        createFormOpen = false;
-        pendingGeometry = null;
-        attrEdit = { table, entityId };
-        editBuffer.setTargetLayer(table);
-        closePickPager({ suppressClick: true });
-        closeContextMenu();
-        bumpRender();
+        openAttrEditImpl(drawCtx(), table, entityId);
     }
 
     function confirmAttrEdit(attrs: Record<string, string>) {
-        if (!attrEdit) return;
-        editBuffer.upsertAttributes(attrEdit.table, attrEdit.entityId, attrs);
-        attrEdit = null;
-        applyHiddenVisibility();
-        bumpRender();
+        confirmAttrEditImpl(drawCtx(), attrs);
     }
 
     function cancelAttrEdit() {
-        attrEdit = null;
-        bumpRender();
-    }
-
-    function geometryForDelete(
-        table: string,
-        entityId: string,
-    ): GeoJsonGeometry | null {
-        const buf = editBuffer.entries.find(
-            (e) => e.table === table && e.entityId === entityId,
-        );
-        const fromBuf =
-            asGeometry(buf?.geometry) ?? asGeometry(buf?.oldGeometry);
-        if (fromBuf) return fromBuf;
-        if (vertexSession?.table === table && vertexSession.entityId === entityId) {
-            return (
-                snapshotPendingGeometry() ??
-                asGeometry(vertexSession.oldGeometry)
-            );
-        }
-        const entity = findEntityByKey(toSelectionKey(table, entityId));
-        return geometryFromCesiumEntity(entity);
-    }
-
-    function presenceSelectionPayload(): PresenceSelection[] {
-        const out: PresenceSelection[] = [];
-        for (const key of layerSelection.keys().slice(0, MAX_OVERLAY_ITEMS)) {
-            const { layer, id } = parseSelectionKey(key);
-            if (!layer || !id) continue;
-            out.push({ table: layer, entityId: id });
-        }
-        return out;
+        cancelAttrEditImpl(drawCtx());
     }
 
     function deleteBufferedFeature(table: string, entityId: string) {
-        if (!canWrite || !table || !entityId) return;
-        const geom = geometryForDelete(table, entityId);
-        if (
-            vertexSession?.table === table &&
-            vertexSession.entityId === entityId
-        ) {
-            cancelVertexEdit();
-        }
-        editBuffer.markDelete(table, entityId, geom);
-        if (attrEdit?.table === table && attrEdit.entityId === entityId) {
-            attrEdit = null;
-        }
-        layerSelection.removeSelection(table, entityId);
-        closePickPager({ suppressClick: true });
-        applyHiddenVisibility();
-        bumpRender();
+        deleteBufferedFeatureImpl(drawCtx(), table, entityId);
     }
 
     function deleteSelectedFeatures() {
-        if (!canWrite) return;
-        const targets: { table: string; entityId: string }[] = [];
-        const add = (table: string, entityId: string) => {
-            if (!table || !entityId) return;
-            if (targets.some((t) => t.table === table && t.entityId === entityId))
-                return;
-            targets.push({ table, entityId });
-        };
-        if (vertexSession) {
-            add(vertexSession.table, vertexSession.entityId);
-        }
-        for (const key of layerSelection.keys()) {
-            const { layer: l, id } = parseSelectionKey(key);
-            add(l, id);
-        }
-        if (targets.length === 0 && ctxOpen && ctxKind === "entity") {
-            add(ctxLayerName, ctxEntityId);
-        }
-        for (const t of targets) deleteBufferedFeature(t.table, t.entityId);
-        closeContextMenu();
-        closePickPager({ suppressClick: true });
+        deleteSelectedFeaturesImpl(drawCtx(), {
+            ctxOpen,
+            ctxKind,
+            ctxLayerName,
+            ctxEntityId,
+        });
     }
 
     function addDrawPart() {
-        if (!isMultipartMode(drawMode)) return;
-        if (drawVertices.length < drawNeed) return;
-        drawParts = [...drawParts, drawVertices];
-        drawPartCartesians = [
-            ...drawPartCartesians,
-            vertsToCartesians(drawVertices),
-        ];
-        drawPartCount = drawParts.length;
-        drawVertices = [];
-        drawCartesians = [];
-        drawVertexCount = 0;
-        paintDraftDraw();
+        addDrawPartImpl(drawCtx());
     }
 
     function popLastDrawVertex(repaint = true) {
-        if (drawVertices.length === 0) return;
-        drawVertices = drawVertices.slice(0, -1);
-        drawCartesians = vertsToCartesians(drawVertices);
-        drawVertexCount = drawVertices.length;
-        if (drawVertices.length === 0 && drawParts.length === 0) {
-            drawBindTable = null;
-        }
-        if (repaint) paintDraftDraw();
+        popLastDrawVertexImpl(drawCtx(), repaint);
     }
 
-    function restoreLastDrawPart(): boolean {
-        if (drawParts.length === 0) return false;
-        const last = drawParts[drawParts.length - 1]!;
-        drawParts = drawParts.slice(0, -1);
-        drawPartCartesians = drawPartCartesians.slice(0, -1);
-        drawPartCount = drawParts.length;
-        drawVertices = last;
-        drawCartesians = vertsToCartesians(last);
-        drawVertexCount = last.length;
-        paintDraftDraw();
-        return true;
+    function restoreLastDrawPart() {
+        return restoreLastDrawPartImpl(drawCtx());
     }
 
-    function undoLastBuffer(): boolean {
-        if (editBuffer.size === 0) return false;
-        editBuffer.pop();
-        bumpRender();
-        return true;
+    function undoLastBuffer() {
+        const ok = undoLastBufferImpl();
+        if (ok) bumpRender();
+        return ok;
     }
 
     async function commitEditBuffer() {
-        const message = commitMessage.trim();
-        if (!message || editBuffer.size === 0 || commitBusy || !canWrite) return;
-        if (vertexSession) {
-            if (!commitVertexEdit()) cancelVertexEdit();
-        }
-        commitBusy = true;
-        commitError = "";
-        commitDoneId = "";
-        commitDoneStatus = "";
-        try {
-            const res = await submitEditBuffer(
-                projectSlug,
-                accessToken,
-                message,
-                editBuffer.entries,
-                sessionBaseCommit,
-            );
-            if (res.status === "conflicted") {
-                commitDoneId = res.commit_id;
-                commitDoneStatus = "conflicted";
-                commitError =
-                    res.error ||
-                    "Conflicts with develop; unmerged commit kept. Refresh and re-commit.";
-                return;
-            }
-            editBuffer.clear();
-            sessionBaseCommit = "";
-            commitMessage = "";
-            commitDoneId = res.commit_id;
-            if (res.status === "parked") {
-                commitDoneStatus = "parked";
-                commitError =
-                    res.error ||
-                    "Develop moved; parked on a personal ref. Integrate from Review.";
-                onCommitted?.();
-                return;
-            }
-            commitDoneStatus = "committed";
-            if (res.develop) developCommit = res.develop;
-            onCommitted?.();
-        } catch (e) {
-            commitError = e instanceof Error ? e.message : "Commit failed";
-        } finally {
-            commitBusy = false;
-            bumpRender();
-        }
+        await commitEditBufferImpl(drawCtx());
+    }
+
+    function beginVertexEdit(table: string, entityId: string) {
+        return beginVertexEditImpl(drawCtx(), table, entityId);
+    }
+
+    function cancelVertexEdit() {
+        cancelVertexEditImpl(drawCtx());
+    }
+
+    function settleVertexSessionOnExit() {
+        settleVertexSessionOnExitImpl(drawCtx());
+    }
+
+    function clearVertexSelection() {
+        clearVertexSelectionImpl(drawCtx());
+    }
+
+    function deleteSelectedVertices() {
+        return deleteSelectedVerticesImpl(drawCtx());
+    }
+
+    async function detachDrawDataSource() {
+        await detachDrawDataSourceImpl(drawCtx());
+    }
+
+    function finishDrawDraft() {
+        return finishDrawDraftImpl(drawCtx());
+    }
+
+    function onEnterInEdit() {
+        onEnterInEditImpl(drawCtx());
+    }
+
+    function cancelVertexMarquee() {
+        return cancelVertexMarqueeImpl(drawCtx());
     }
 
     function undoDrawOrMeasure() {
@@ -1754,29 +1493,16 @@
             return;
         }
         if (createFormOpen) {
-            pendingGeometry = null;
-            createFormOpen = false;
-            paintDraftDraw();
+            dismissCreateFormKeepDraftImpl(drawCtx());
             return;
         }
-        if (vertexSession) {
-            if (vertexUndoStack.length > 0) {
-                const prev = vertexUndoStack.pop()!;
-                drawVertices = prev;
-                drawCartesians = vertsToCartesians(prev);
-                drawVertexCount = prev.length;
-                // Drop out-of-range selections after undo.
-                selectedVertexIndices = new Set(
-                    [...selectedVertexIndices].filter((i) => i < prev.length),
-                );
-                paintDraftDraw();
-                return;
-            }
+        if (drawSession.vertexSession) {
+            if (undoVertexStepImpl(drawCtx())) return;
             cancelVertexEdit();
             return;
         }
         if (editEnabled) {
-            if (drawVertices.length > 0) {
+            if (drawSession.vertices.length > 0) {
                 popLastDrawVertex();
                 return;
             }
@@ -1790,13 +1516,21 @@
                 return;
             }
             if (measureRecords.length > 0) {
-                void removeMeasurement(
-                    measureRecords[measureRecords.length - 1]!.id,
-                );
+                void removeMeasurement(measureRecords[measureRecords.length - 1]!.id);
                 return;
             }
         }
         undoLastBuffer();
+    }
+
+    function presenceSelectionPayload(): PresenceSelection[] {
+        const out: PresenceSelection[] = [];
+        for (const key of layerSelection.keys().slice(0, MAX_OVERLAY_ITEMS)) {
+            const { layer, id } = parseSelectionKey(key);
+            if (!layer || !id) continue;
+            out.push({ table: layer, entityId: id });
+        }
+        return out;
     }
 
     function dropClosingVertex(verts: LonLatVertex[]): LonLatVertex[] {
@@ -1918,724 +1652,6 @@
         return true;
     }
 
-    function loadDraftFromGeom(
-        geom: GeoJsonGeometry,
-        modeHint?: DrawGeomMode,
-    ): boolean {
-        const draft = draftFromGeometry(geom);
-        if (!draft) return false;
-        drawMode = modeHint && draft.mode === modeHint ? modeHint : draft.mode;
-        drawParts = draft.parts;
-        drawPartCartesians = draft.parts.map((p) => vertsToCartesians(p));
-        drawPartCount = draft.parts.length;
-        drawVertices = draft.vertices;
-        drawCartesians = vertsToCartesians(draft.vertices);
-        drawVertexCount = draft.vertices.length;
-        paintDraftDraw();
-        raiseDrawHandles();
-        return true;
-    }
-
-    function cancelVertexEdit() {
-        vertexSession = null;
-        vertexUndoStack = [];
-        vertexDragIndex = null;
-        midDragAfter = null;
-        vertexDragStartPositions = null;
-        selectedVertexIndices = new Set();
-        clearDraftDraw();
-        applyHiddenVisibility();
-        paintDraftDraw();
-    }
-
-    function beginVertexEdit(table: string, entityId: string): boolean {
-        if (anyFormOpen) return false;
-        if (blockPeerEdit(table, entityId)) return false;
-        const buf = editBuffer.entries.find(
-            (e) => e.table === table && e.entityId === entityId,
-        );
-        let geom: GeoJsonGeometry | null = null;
-        let oldGeometry: GeoJsonGeometry | null = null;
-        let bufferOp: "insert" | "update" = "update";
-        if (buf) {
-            geom = asGeometry(buf.geometry);
-            oldGeometry = asGeometry(buf.oldGeometry);
-            if (buf.op === "delete") return false;
-            bufferOp = buf.op === "insert" ? "insert" : "update";
-        }
-        if (!geom) {
-            const entity = findEntityByKey(toSelectionKey(table, entityId));
-            geom = geometryFromCesiumEntity(entity);
-            oldGeometry = geom;
-        }
-        if (!geom || !loadDraftFromGeom(geom)) return false;
-        if (editBuffer.targetLayer !== table) {
-            editBuffer.setTargetLayer(table);
-        }
-        vertexSession = { table, entityId, bufferOp, oldGeometry };
-        vertexUndoStack = [];
-        selectedVertexIndices = new Set();
-        vertexDragStartPositions = null;
-        applyHiddenVisibility();
-        return true;
-    }
-
-    function commitVertexEdit(): boolean {
-        if (!vertexSession) return false;
-        const geom = snapshotPendingGeometry();
-        if (!geom) return false;
-        editBuffer.upsert({
-            op: vertexSession.bufferOp,
-            table: vertexSession.table,
-            entityId: vertexSession.entityId,
-            geometry: geom,
-            oldGeometry:
-                vertexSession.bufferOp === "insert"
-                    ? null
-                    : vertexSession.oldGeometry,
-        });
-        vertexSession = null;
-        vertexUndoStack = [];
-        vertexDragIndex = null;
-        midDragAfter = null;
-        vertexDragStartPositions = null;
-        selectedVertexIndices = new Set();
-        clearDraftDraw();
-        applyHiddenVisibility();
-        bumpRender();
-        return true;
-    }
-
-    /** Vertex multi-select (06): only the active draft line/polygon has selectable vertices. */
-    function vertexEditHandlesActive(): boolean {
-        if (!vertexSession) return false;
-        return (
-            drawMode === "Polygon" ||
-            drawMode === "LineString" ||
-            drawMode === "MultiPolygon" ||
-            drawMode === "MultiLineString" ||
-            drawMode === "Point" ||
-            drawMode === "MultiPoint"
-        );
-    }
-
-    function clearVertexSelection(repaint = true) {
-        if (selectedVertexIndices.size === 0) return;
-        selectedVertexIndices = new Set();
-        if (repaint) paintDraftDraw();
-    }
-
-    function applyVertexSelectionOp(indices: number[], op: "replace" | "add" | "remove") {
-        const valid = indices.filter(
-            (i) => Number.isInteger(i) && i >= 0 && i < drawVertices.length,
-        );
-        if (op === "replace") {
-            selectedVertexIndices = new Set(valid);
-        } else if (op === "add") {
-            if (valid.length === 0) return;
-            const next = new Set(selectedVertexIndices);
-            for (const i of valid) next.add(i);
-            selectedVertexIndices = next;
-        } else {
-            if (valid.length === 0) return;
-            const next = new Set(selectedVertexIndices);
-            for (const i of valid) next.delete(i);
-            selectedVertexIndices = next;
-        }
-        paintDraftDraw();
-    }
-
-    /** Screen positions of draft vertices (null when behind camera). */
-    function draftVertexScreenPositions(): Array<{ x: number; y: number } | null> {
-        if (!viewer || !Cesium) return [];
-        return drawCartesians.map((c) => {
-            try {
-                const win = Cesium.SceneTransforms.worldToWindowCoordinates(viewer.scene, c);
-                if (!win || !Number.isFinite(win.x) || !Number.isFinite(win.y)) return null;
-                return { x: win.x, y: win.y };
-            } catch {
-                return null;
-            }
-        });
-    }
-
-    function vertexIndicesInRect(left: number, right: number, top: number, bottom: number): number[] {
-        const pts = draftVertexScreenPositions();
-        const out: number[] = [];
-        for (let i = 0; i < pts.length; i++) {
-            const p = pts[i];
-            if (!p) continue;
-            if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) out.push(i);
-        }
-        return out;
-    }
-
-    function vertexIndicesInPolygon(path: Array<{ x: number; y: number }>): number[] {
-        if (path.length < 3) return [];
-        const pts = draftVertexScreenPositions();
-        const out: number[] = [];
-        for (let i = 0; i < pts.length; i++) {
-            const p = pts[i];
-            if (!p) continue;
-            let inside = false;
-            for (let a = 0, b = path.length - 1; a < path.length; b = a++) {
-                const xi = path[a]!.x;
-                const yi = path[a]!.y;
-                const xj = path[b]!.x;
-                const yj = path[b]!.y;
-                if (yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi || Number.EPSILON) + xi) {
-                    inside = !inside;
-                }
-            }
-            if (inside) out.push(i);
-        }
-        return out;
-    }
-
-    function minVerticesForDraft(): number {
-        if (drawMode === "Polygon" || drawMode === "MultiPolygon") return 3;
-        if (drawMode === "LineString" || drawMode === "MultiLineString") return 2;
-        return 1;
-    }
-
-    function deleteSelectedVertices(): boolean {
-        if (!vertexSession || selectedVertexIndices.size === 0) return false;
-        const min = minVerticesForDraft();
-        const keep = drawVertices.filter((_, i) => !selectedVertexIndices.has(i));
-        if (keep.length < min) return false;
-        pushVertexUndo();
-        drawVertices = keep;
-        drawCartesians = vertsToCartesians(drawVertices);
-        drawVertexCount = drawVertices.length;
-        selectedVertexIndices = new Set();
-        paintDraftDraw();
-        return true;
-    }
-
-    function pickedDraftHandle(
-        screenPos: any,
-    ): { kind: "vertex" | "mid"; index: number } | null {
-        if (!viewer) return null;
-        try {
-            const picked = viewer.scene.pick(screenPos);
-            const raw = picked?.id;
-            const id =
-                typeof raw === "string"
-                    ? raw
-                    : raw && typeof raw === "object" && "id" in raw
-                      ? String((raw as { id?: unknown }).id ?? "")
-                      : "";
-            const vertex = /^draw:pt:(\d+)$/.exec(id);
-            if (vertex) {
-                const i = Number(vertex[1]);
-                return Number.isInteger(i) ? { kind: "vertex", index: i } : null;
-            }
-            const mid = /^draw:mid:(\d+)$/.exec(id);
-            if (mid) {
-                const i = Number(mid[1]);
-                return Number.isInteger(i) ? { kind: "mid", index: i } : null;
-            }
-        } catch {
-            /* ignore */
-        }
-        return null;
-    }
-
-    function pickEditTarget(
-        screenPos: any,
-    ): { table: string; entityId: string } | null {
-        if (!viewer || !bufferOverlayVisible) return null;
-        const overlayHit = (picked: any) => {
-            const entity =
-                picked?.id && typeof picked.id === "object"
-                    ? picked.id
-                    : picked;
-            const info = overlayEntityInfo(entity);
-            if (!info || info.role !== "after") return null;
-            const buf = editBuffer.entryFor(info.table, info.entityId);
-            if (buf && buf.op !== "delete") {
-                return { table: buf.table, entityId: buf.entityId };
-            }
-            return null;
-        };
-        try {
-            const top = overlayHit(viewer.scene.pick(screenPos));
-            if (top) return top;
-            for (const picked of viewer.scene.drillPick(screenPos, 8) ?? []) {
-                const hit = overlayHit(picked);
-                if (hit) return hit;
-            }
-        } catch {
-            /* ignore */
-        }
-        return null;
-    }
-
-    function lockEditCamera() {
-        if (!viewer) return;
-        const c = viewer.scene.screenSpaceCameraController;
-        c.enableRotate = false;
-        c.enableTranslate = false;
-        c.enableLook = false;
-        c.enableTilt = false;
-        c.enableZoom = false;
-    }
-
-    function unlockEditCamera() {
-        if (!viewer) return;
-        const is3d = dim === "3d";
-        const c = viewer.scene.screenSpaceCameraController;
-        c.enableRotate = is3d;
-        c.enableTranslate = true;
-        c.enableLook = is3d;
-        c.enableTilt = is3d;
-        c.enableZoom = true;
-    }
-
-    function startVertexDrag(index: number) {
-        vertexDragIndex = index;
-        midDragAfter = null;
-        vertexDragMoved = false;
-        // Bulk move (06): dragging a selected vertex moves the whole selection.
-        // Snapshot originals so the delta applies cleanly per mousemove.
-        if (selectedVertexIndices.has(index) && selectedVertexIndices.size > 1) {
-            vertexDragStartPositions = new Map(
-                [...selectedVertexIndices].map((i) => [i, { ...drawVertices[i]! }]),
-            );
-        } else {
-            vertexDragStartPositions = null;
-        }
-        lockEditCamera();
-    }
-
-    function startMidDrag(afterIndex: number) {
-        vertexDragIndex = null;
-        midDragAfter = afterIndex;
-        vertexDragMoved = false;
-        lockEditCamera();
-    }
-
-    function pushVertexUndo() {
-        vertexUndoStack = [
-            ...vertexUndoStack,
-            drawVertices.map((v) => ({ ...v })),
-        ];
-    }
-
-    function moveVertexDrag(screenPos: any) {
-        if (vertexDragIndex == null && midDragAfter == null) return;
-        const cartesian = pickSnapCartesian(screenPos);
-        if (!cartesian) return;
-        const next = cartesianToVertex(cartesian);
-        if (midDragAfter != null) {
-            const insertAt = Math.min(midDragAfter + 1, drawVertices.length);
-            pushVertexUndo();
-            drawVertices = [
-                ...drawVertices.slice(0, insertAt),
-                next,
-                ...drawVertices.slice(insertAt),
-            ];
-            drawCartesians = vertsToCartesians(drawVertices);
-            drawVertexCount = drawVertices.length;
-            vertexDragIndex = insertAt;
-            midDragAfter = null;
-            vertexDragMoved = true;
-            // Midpoint insert shifts later indices: remap selection, select the new vertex.
-            selectedVertexIndices = new Set(
-                [...selectedVertexIndices]
-                    .map((i) => (i >= insertAt ? i + 1 : i))
-                    .filter((i) => i < drawVertices.length),
-            );
-            selectedVertexIndices.add(insertAt);
-            paintDraftDraw();
-            return;
-        }
-        if (vertexDragIndex == null) return;
-        if (!vertexDragMoved) pushVertexUndo();
-        vertexDragMoved = true;
-        // Bulk move: shift every selected vertex by the anchor delta.
-        if (
-            vertexDragStartPositions !== null &&
-            selectedVertexIndices.has(vertexDragIndex) &&
-            selectedVertexIndices.size > 1
-        ) {
-            const anchorStart = vertexDragStartPositions.get(vertexDragIndex);
-            if (anchorStart) {
-                const dLon = next.lon - anchorStart.lon;
-                const dLat = next.lat - anchorStart.lat;
-                const dH = (next.height ?? 0) - (anchorStart.height ?? 0);
-                drawVertices = drawVertices.map((v, i) => {
-                    const start = vertexDragStartPositions!.get(i);
-                    if (!start) return i === vertexDragIndex ? next : v;
-                    return {
-                        lon: start.lon + dLon,
-                        lat: start.lat + dLat,
-                        height: (start.height ?? 0) + dH,
-                    };
-                });
-                drawCartesians = vertsToCartesians(drawVertices);
-                paintDraftDraw();
-                return;
-            }
-        }
-        drawVertices = drawVertices.map((v, i) =>
-            i === vertexDragIndex ? next : v,
-        );
-        drawCartesians = vertsToCartesians(drawVertices);
-        paintDraftDraw();
-    }
-
-    function endVertexDrag() {
-        const dragging = vertexDragIndex != null || midDragAfter != null;
-        vertexDragIndex = null;
-        midDragAfter = null;
-        vertexDragStartPositions = null;
-        if (!dragging) return;
-        unlockEditCamera();
-        if (vertexDragMoved) vertexSuppressClick = true;
-        vertexDragMoved = false;
-    }
-
-    function onDrawPick(screenPos: any) {
-        if (anyFormOpen) return;
-        if (vertexSuppressClick) {
-            vertexSuppressClick = false;
-            return;
-        }
-        if (pickedDraftHandle(screenPos)) return;
-        const target = pickEditTarget(screenPos);
-        if (target) {
-            if (
-                vertexSession &&
-                vertexSession.table === target.table &&
-                vertexSession.entityId === target.entityId
-            ) {
-                return;
-            }
-            if (blockPeerEdit(target.table, target.entityId)) return;
-            if (vertexSession) commitVertexEdit();
-            else if (drawVertexCount > 0 || drawPartCount > 0) return;
-            if (editBuffer.targetLayer !== target.table) {
-                editBuffer.setTargetLayer(target.table);
-            }
-            beginVertexEdit(target.table, target.entityId);
-            return;
-        }
-        if (vertexSession) {
-            // Plain click on empty canvas clears the vertex selection.
-            if (vertexEditHandlesActive()) clearVertexSelection();
-            return;
-        }
-        const cartesian = pickSnapCartesian(screenPos);
-        if (!cartesian) return;
-        if (!drawBindTable && editLayer) drawBindTable = editLayer;
-        drawVertices = [...drawVertices, cartesianToVertex(cartesian)];
-        drawCartesians = vertsToCartesians(drawVertices);
-        drawVertexCount = drawVertices.length;
-        paintDraftDraw();
-        if (drawMode === "Point") {
-            openCreateForm();
-        }
-    }
-
-    async function detachDrawDataSource() {
-        drawDsEpoch += 1;
-        const geom = drawDataSource;
-        const handles = drawHandleDataSource;
-        const pending = [drawDsAdd, drawHandleDsAdd];
-        drawDataSource = null;
-        drawHandleDataSource = null;
-        drawDsAdd = null;
-        drawHandleDsAdd = null;
-        for (const p of pending) {
-            if (!p) continue;
-            try {
-                await p;
-            } catch {
-                /* ignore */
-            }
-        }
-        if (!viewer) return;
-        for (const ds of [geom, handles]) {
-            if (!ds) continue;
-            try {
-                if (viewer.dataSources.contains?.(ds)) {
-                    viewer.dataSources.remove(ds, true);
-                }
-            } catch {
-                /* ignore */
-            }
-        }
-    }
-
-    function finishDrawDraft(): boolean {
-        if (vertexSession) return commitVertexEdit();
-        if (!drawCanFinish) return false;
-        openCreateForm();
-        return true;
-    }
-
-    function onEnterInEdit() {
-        if (vertexSession) {
-            finishDrawDraft();
-            return;
-        }
-        if (isMultipartMode(drawMode) && drawVertexCount >= drawNeed) {
-            addDrawPart();
-            return;
-        }
-        finishDrawDraft();
-    }
-
-    function teardownDrawHandler() {
-        vertexDragIndex = null;
-        midDragAfter = null;
-        vertexDragStartPositions = null;
-        vertexMarqueeStart = null;
-        vertexMarqueeCurrent = null;
-        vertexMarqueeMoved = false;
-        dragRectVisible = false;
-        lassoVisible = false;
-        lassoPoints = [];
-        unlockEditCamera();
-        try {
-            drawHandler?.destroy?.();
-        } catch {
-            /* ignore */
-        }
-        drawHandler = null;
-    }
-
-    function startVertexMarquee(screenPos: unknown, op: "add" | "remove") {
-        if (!vertexSession || !vertexEditHandlesActive()) return;
-        const pos = screenPos as { x: number; y: number } | undefined;
-        if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
-        // A modified click on a handle is a selection op, not a marquee.
-        if (pickedDraftHandle(pos)) return;
-        // Marquee follows the entity selection tool: box → rect, lasso → path.
-        // In click mode there is no marquee (modified clicks still work).
-        if (selectionToolLocal !== "box" && selectionToolLocal !== "lasso") return;
-        // Freeze the globe so Shift/Ctrl-drag selects instead of rotating.
-        lockEditCamera();
-        vertexMarqueeStart = { x: pos.x, y: pos.y };
-        vertexMarqueeCurrent = { x: pos.x, y: pos.y };
-        vertexMarqueeMoved = false;
-        vertexMarqueeOp = op;
-        if (selectionToolLocal === "box") {
-            dragRectVisible = true;
-            dragRectLeft = pos.x;
-            dragRectTop = pos.y;
-            dragRectWidth = 0;
-            dragRectHeight = 0;
-            lassoVisible = false;
-            lassoPoints = [];
-        } else {
-            dragRectVisible = false;
-            lassoVisible = true;
-            lassoPoints = [{ x: pos.x, y: pos.y }];
-        }
-    }
-
-    function updateVertexMarquee(endPos: unknown) {
-        if (!vertexMarqueeStart) return;
-        const pos = endPos as { x: number; y: number } | undefined;
-        if (!pos) return;
-        vertexMarqueeCurrent = { x: pos.x, y: pos.y };
-        const dx = pos.x - vertexMarqueeStart.x;
-        const dy = pos.y - vertexMarqueeStart.y;
-        if (selectionToolLocal === "box") {
-            dragRectLeft = Math.min(vertexMarqueeStart.x, pos.x);
-            dragRectTop = Math.min(vertexMarqueeStart.y, pos.y);
-            dragRectWidth = Math.abs(dx);
-            dragRectHeight = Math.abs(dy);
-        } else {
-            const last = lassoPoints[lassoPoints.length - 1];
-            if (!last) {
-                lassoPoints = [{ x: pos.x, y: pos.y }];
-            } else if (Math.hypot(pos.x - last.x, pos.y - last.y) >= 4) {
-                lassoPoints = [...lassoPoints, { x: pos.x, y: pos.y }];
-            }
-        }
-        if (!vertexMarqueeMoved && Math.hypot(dx, dy) >= 6) vertexMarqueeMoved = true;
-    }
-
-    /** Returns true when a marquee was consumed (caller should skip endVertexDrag). */
-    function finishVertexMarquee(): boolean {
-        if (!vertexMarqueeStart) return false;
-        const start = vertexMarqueeStart;
-        const current = vertexMarqueeCurrent;
-        const moved = vertexMarqueeMoved;
-        const op = vertexMarqueeOp;
-        vertexMarqueeStart = null;
-        vertexMarqueeCurrent = null;
-        vertexMarqueeMoved = false;
-        dragRectVisible = false;
-        lassoVisible = false;
-        const path = [...lassoPoints];
-        lassoPoints = [];
-        unlockEditCamera();
-        if (!moved || !start || !current) return true;
-        let indices: number[] = [];
-        if (selectionToolLocal === "box") {
-            indices = vertexIndicesInRect(
-                Math.min(start.x, current.x),
-                Math.max(start.x, current.x),
-                Math.min(start.y, current.y),
-                Math.max(start.y, current.y),
-            );
-        } else {
-            indices = vertexIndicesInPolygon([...path, { x: current.x, y: current.y }]);
-        }
-        applyVertexSelectionOp(indices, op);
-        vertexSuppressClick = true;
-        return true;
-    }
-
-    /** Drop an in-progress marquee without applying (Escape). */
-    function cancelVertexMarquee(): boolean {
-        if (!vertexMarqueeStart) return false;
-        vertexMarqueeStart = null;
-        vertexMarqueeCurrent = null;
-        vertexMarqueeMoved = false;
-        dragRectVisible = false;
-        lassoVisible = false;
-        lassoPoints = [];
-        unlockEditCamera();
-        return true;
-    }
-
-    function setupDrawHandler() {
-        if (!viewer || !Cesium) return;
-        teardownDrawHandler();
-        drawHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-        drawHandler.setInputAction((click: { position: unknown }) => {
-            const handle = pickedDraftHandle(click.position);
-            if (handle && (vertexSession || drawVertexCount > 0)) {
-                if (handle.kind === "mid") startMidDrag(handle.index);
-                else {
-                    // Plain grab selects the vertex, then drags (bulk when selected).
-                    // Keep an existing multi-selection when grabbing one of its own.
-                    if (vertexSession && vertexEditHandlesActive() && handle.kind === "vertex") {
-                        if (!selectedVertexIndices.has(handle.index)) {
-                            applyVertexSelectionOp([handle.index], "replace");
-                        }
-                    }
-                    startVertexDrag(handle.index);
-                }
-            }
-        }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
-        // NOTE: Cesium keeps one action per (event, modifier) — a second
-        // setInputAction for the same pair overwrites the first. So each pair
-        // below gets exactly one combined callback.
-        const shiftMod = Cesium.KeyboardEventModifier.SHIFT;
-        const ctrlMod = Cesium.KeyboardEventModifier.CTRL;
-        const metaMod = Cesium.KeyboardEventModifier?.META;
-        // Modified press: handle click-op first, else vertex marquee.
-        // (Entity box/lasso convention: Shift = add, Ctrl/Cmd = remove.)
-        const onModifiedDown =
-            (op: "add" | "remove") => (click: { position: unknown }) => {
-                const handle = click.position ? pickedDraftHandle(click.position) : null;
-                if (
-                    handle &&
-                    vertexSession &&
-                    vertexEditHandlesActive() &&
-                    handle.kind === "vertex"
-                ) {
-                    // No click-suppress needed: the follow-up pick hits the
-                    // same handle and returns early in onDrawPick.
-                    applyVertexSelectionOp([handle.index], op);
-                    return;
-                }
-                if (click.position) startVertexMarquee(click.position, op);
-            };
-        if (shiftMod !== undefined) {
-            drawHandler.setInputAction(
-                onModifiedDown("add"),
-                Cesium.ScreenSpaceEventType.LEFT_DOWN,
-                shiftMod,
-            );
-        }
-        if (ctrlMod !== undefined) {
-            drawHandler.setInputAction(
-                onModifiedDown("remove"),
-                Cesium.ScreenSpaceEventType.LEFT_DOWN,
-                ctrlMod,
-            );
-        }
-        if (metaMod !== undefined) {
-            drawHandler.setInputAction(
-                onModifiedDown("remove"),
-                Cesium.ScreenSpaceEventType.LEFT_DOWN,
-                metaMod,
-            );
-        }
-        // Plain move serves both gestures: marquee when one is active,
-        // otherwise the in-progress vertex/mid drag.
-        const onMove = (move: { endPosition?: unknown }) => {
-            if (vertexMarqueeStart) {
-                updateVertexMarquee(move.endPosition);
-                return;
-            }
-            if (
-                (vertexDragIndex == null && midDragAfter == null) ||
-                !move.endPosition
-            ) {
-                return;
-            }
-            moveVertexDrag(move.endPosition);
-        };
-        drawHandler.setInputAction(onMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-        // Modified moves only ever feed an active marquee (drags start plain).
-        const onModifiedMove = (move: { endPosition?: unknown }) => {
-            updateVertexMarquee(move.endPosition);
-        };
-        if (shiftMod !== undefined) {
-            drawHandler.setInputAction(onModifiedMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE, shiftMod);
-        }
-        if (ctrlMod !== undefined) {
-            drawHandler.setInputAction(onModifiedMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE, ctrlMod);
-        }
-        if (metaMod !== undefined) {
-            drawHandler.setInputAction(onModifiedMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE, metaMod);
-        }
-        const onUp = () => {
-            if (finishVertexMarquee()) return;
-            endVertexDrag();
-        };
-        drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP);
-        if (shiftMod !== undefined) {
-            drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP, shiftMod);
-        }
-        if (ctrlMod !== undefined) {
-            drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP, ctrlMod);
-        }
-        if (metaMod !== undefined) {
-            drawHandler.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP, metaMod);
-        }
-        drawHandler.setInputAction((click: { position: unknown }) => {
-            onDrawPick(click.position);
-        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-        drawHandler.setInputAction(() => {
-            if (vertexSession) {
-                finishDrawDraft();
-                return;
-            }
-            if (drawMode === "Point") return;
-            popLastDrawVertex(false);
-            if (!finishDrawDraft()) paintDraftDraw();
-        }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
-        getOrCreateDrawDs();
-    }
-
-    function setDrawMode(next: DrawGeomMode) {
-        if (drawMode === next || anyFormOpen) return;
-        if (vertexSession) cancelVertexEdit();
-        selectedVertexIndices = new Set();
-        drawMode = next;
-        clearDraftDraw();
-        paintDraftDraw();
-    }
-
     function layerFromSelection(): string | null {
         const key = layerSelection.primaryKey;
         if (!key) return null;
@@ -2646,31 +1662,6 @@
     function dismissEntityPopup() {
         hideEntityPopup();
         pickDismissedKey = layerSelection.primaryKey ?? "";
-    }
-
-    function settleVertexSessionOnExit() {
-        if (!vertexSession) return;
-        const geom = snapshotPendingGeometry();
-        if (!geom) {
-            cancelVertexEdit();
-            return;
-        }
-        const buf = editBuffer.entries.find((e) => {
-            const vs = vertexSession;
-            return (
-                vs !== null &&
-                e.table === vs.table &&
-                e.entityId === vs.entityId
-            );
-        });
-        const baseline = buf
-            ? asGeometry(buf.geometry)
-            : vertexSession.oldGeometry;
-        if (geometriesEqual(geom, baseline)) {
-            cancelVertexEdit();
-            return;
-        }
-        commitVertexEdit();
     }
 
     function selectionEditTarget(): { table: string; entityId: string } | null {
@@ -2703,7 +1694,7 @@
         clearCommentSketch();
         queueMicrotask(() => {
             if (opts?.skipSelectionLock) return;
-            if (!editEnabled || vertexSession) return;
+            if (!editEnabled || drawSession.vertexSession) return;
             const next = selectionEditTarget();
             if (!next) return;
             if (editBuffer.targetLayer !== next.table) {
@@ -3039,7 +2030,9 @@
             if (awarenessDataSource) {
                 viewer?.dataSources?.raiseToTop?.(awarenessDataSource);
             }
-            raiseDrawHandles();
+            if (drawSession.handleDataSource) {
+                viewer?.dataSources?.raiseToTop?.(drawSession.handleDataSource);
+            }
         } catch {
             /* ignore */
         }
@@ -4128,14 +3121,14 @@
 
     $effect(() => {
         diffFeatures;
-        vertexSession;
+        drawSession.vertexSession;
         bufferOverlayVisible;
         editBuffer.entries;
         if (!ready || !started || !viewer || !Cesium) return;
         const features = !bufferOverlayVisible
             ? []
             : diffFeatures.flatMap((f) => {
-                  const vs = vertexSession;
+                  const vs = drawSession.vertexSession;
                   const editing =
                       Boolean(vs) &&
                       vs !== null &&
@@ -4150,9 +3143,9 @@
               });
         if (
             bufferOverlayVisible &&
-            vertexSession?.oldGeometry &&
+            drawSession.vertexSession?.oldGeometry &&
             !features.some((f) => {
-                const vs = vertexSession;
+                const vs = drawSession.vertexSession;
                 return (
                     vs !== null &&
                     f.entityId === vs.entityId &&
@@ -4161,7 +3154,7 @@
                 );
             })
         ) {
-            const vs = vertexSession;
+            const vs = drawSession.vertexSession;
             if (vs !== null) {
                 features.push({
                     id: vs.entityId,
@@ -4290,9 +3283,6 @@
                 presencePeers = peers;
                 layer?.sync(peers);
             },
-            onHidden: (hidden) => {
-                if (!stopped) presenceHidden = hidden;
-            },
         }).then(async (next) => {
             if (stopped) {
                 await next?.stop();
@@ -4310,7 +3300,7 @@
             mouse = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
             mouse.setInputAction(
                 (m: { endPosition?: unknown }) => {
-                    if (!active || handle?.hidden) return;
+                    if (!active || !handle) return;
                     const cart = pickMeasureCartesian(m.endPosition);
                     if (!cart) return;
                     const v = cartesianToVertex(cart);
@@ -4354,13 +3344,8 @@
             presenceChrome.clear();
             return;
         }
-        const handle = presenceHandle;
         presenceChrome.publish({
             peers: presenceDockPeers,
-            hidden: presenceHidden,
-            onToggleHidden: () => {
-                void handle?.setHidden(!presenceHidden);
-            },
         });
     });
 
@@ -4400,13 +3385,12 @@
 
     $effect(() => {
         const h = presenceHandle;
-        const hidden = presenceHidden;
         const connected = presenceConnected;
         const sel = selectionSig;
         const buf = editBuffer.entries;
         const base = developCommit;
-        const vs = vertexSession;
-        if (!h || hidden || !connected) return;
+        const vs = drawSession.vertexSession;
+        if (!h || !connected) return;
         void sel;
         h.publishOverlay({
             tracking_ref: "develop",
@@ -5009,10 +3993,10 @@
             measureEnabled,
             commentsEnabled,
             commentCanFinishSketch,
-            vertexSession: Boolean(vertexSession),
-            drawVertexCount,
-            drawPartCount,
-            selectedVertexCount: selectedVertexIndices.size,
+            vertexSession: Boolean(drawSession.vertexSession),
+            drawVertexCount: drawSession.vertexCount,
+            drawPartCount: drawSession.partCount,
+            selectedVertexCount: drawSession.selectedVertexIndices.size,
             attrEdit: Boolean(attrEdit),
             createFormOpen,
             ctxOpen,
@@ -5031,7 +4015,7 @@
             undoDrawOrMeasure,
             popLastDrawVertex: () => {
                 popLastDrawVertex();
-                if (drawVertexCount === 0) restoreLastDrawPart();
+                if (drawSession.vertexCount === 0) restoreLastDrawPart();
             },
             deleteSelectedVertices,
             deleteSelectedFeatures,
@@ -5347,15 +4331,19 @@
     $effect(() => {
         if (!ready || !viewer) return;
         if (editEnabled) {
-            setupDrawHandler();
-            viewer.canvas.style.cursor = "crosshair";
+            untrack(() => {
+                setupDrawHandler();
+                viewer.canvas.style.cursor = "crosshair";
+            });
             return;
         }
-        teardownDrawHandler();
-        clearDraftDraw();
-        if (!measureEnabled && !commentAdding && viewer?.canvas) {
-            viewer.canvas.style.cursor = "";
-        }
+        untrack(() => {
+            teardownDrawHandler();
+            clearDraftDraw();
+            if (!measureEnabled && !commentAdding && viewer?.canvas) {
+                viewer.canvas.style.cursor = "";
+            }
+        });
     });
 
     $effect(() => {
@@ -5519,11 +4507,11 @@
                     layer={barLayer}
                     mode={drawMode}
                     canFinish={drawCanFinish && !anyFormOpen}
-                    canAddPart={drawCanAddPart && !anyFormOpen && !vertexSession}
+                    canAddPart={drawCanAddPart && !anyFormOpen && !drawSession.vertexSession}
                     canDelete={!anyFormOpen}
                     useHeight={drawUseHeight}
                     snap={snapMode}
-                    vertexEditing={Boolean(vertexSession)}
+                    vertexEditing={Boolean(drawSession.vertexSession)}
                     sessionSummary={sessionSummary}
                     onMode={setDrawMode}
                     onUseHeight={setDrawUseHeight}
@@ -5702,15 +4690,20 @@
                 {inViewEntityKeys}
                 {inViewModelHashes}
                     {canWrite}
+                    {schemaTables}
+                    {onOpenTable}
+                    {onAddTableRow}
                     class="min-h-0 flex-1"
                 />
                 {#if canWrite && createFormOpen}
                     <FeatureCreateForm
-                        layer={drawBindTable ?? editLayer ?? ""}
+                        layer={drawSession.bindTable ?? editLayer ?? ""}
                         geomType={drawMode}
                         fields={createFields}
                         slug={projectSlug}
                         {accessToken}
+                        {schemaTables}
+                        {rows}
                         onConfirm={confirmCreate}
                         onCancel={cancelCreate}
                     />
@@ -5720,13 +4713,19 @@
                             mode="edit"
                             layer={attrEdit.table}
                             entityId={attrEdit.entityId}
-                            geomType="Point"
+                            geomType="none"
                             fields={attrEditFields}
                             initial={attrEditInitial}
                             slug={projectSlug}
                             {accessToken}
+                            {schemaTables}
+                            {rows}
                             onConfirm={confirmAttrEdit}
                             onCancel={cancelAttrEdit}
+                            onOpenRelated={(t, id) => {
+                                layerSelection.selectSingle(t, id);
+                                onOpenTable?.(t);
+                            }}
                         />
                     {/key}
                 {/if}
@@ -5786,9 +4785,9 @@
                                 </li>
                                 {#each group.rows as rec (`${rec.table}:${rec.entityId}`)}
                                 <li
-                                    class="flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary/80 {vertexSession?.entityId ===
+                                    class="flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary/80 {drawSession.vertexSession?.entityId ===
                                         rec.entityId &&
-                                    vertexSession?.table === rec.table
+                                    drawSession.vertexSession?.table === rec.table
                                         ? 'bg-secondary'
                                         : ''}"
                                 >
@@ -6018,6 +5017,21 @@
             onIndexChange={applyPickIndex}
             canEdit={canWrite}
             onEdit={(c) => openAttrEdit(c.layerName, c.entityId)}
+            schemaEdges={schemaEdges}
+            {rows}
+            {mediaByEntity}
+            onSelectRelated={(table, id) => {
+                layerSelection.selectSingle(table, id);
+                const spatial = (tables[table] ?? []).some((c) =>
+                    /^_?geom/i.test(c),
+                );
+                if (spatial) {
+                    lastFlownKey = "";
+                    void flyToSelection(true);
+                } else {
+                    onOpenTable?.(table);
+                }
+            }}
             onClose={() => {
                 closePickPager({ suppressClick: true });
             }}

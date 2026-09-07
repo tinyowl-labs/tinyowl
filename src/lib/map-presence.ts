@@ -83,10 +83,6 @@ function presenceTopic(slug: string): string {
 	return `${PRESENCE_TOPIC_PREFIX}${slug}`;
 }
 
-function hideStorageKey(slug: string): string {
-	return `echidna:map-presence:hidden:${slug}`;
-}
-
 function parseCursorPayload(raw: unknown): CursorTick | null {
 	if (!raw || typeof raw !== "object") return null;
 	const o = raw as Record<string, unknown>;
@@ -242,23 +238,6 @@ function dropStaleTicks(
 	return changed;
 }
 
-function readHidden(slug: string): boolean {
-	try {
-		return localStorage.getItem(hideStorageKey(slug)) === "1";
-	} catch {
-		return false;
-	}
-}
-
-function writeHidden(slug: string, hidden: boolean) {
-	try {
-		if (hidden) localStorage.setItem(hideStorageKey(slug), "1");
-		else localStorage.removeItem(hideStorageKey(slug));
-	} catch {
-		/* ignore */
-	}
-}
-
 export function displayNameFromUser(user: {
 	email?: string | null;
 	user_metadata?: Record<string, unknown> | null;
@@ -307,8 +286,6 @@ async function loadIdentity(
 }
 
 export type MapPresenceHandle = {
-	hidden: boolean;
-	setHidden: (hidden: boolean) => Promise<void>;
 	setPageVisible: (visible: boolean) => Promise<void>;
 	publishCursor: (lon: number, lat: number, h?: number) => void;
 	publishOverlay: (overlay: PresenceOverlay) => void;
@@ -319,7 +296,6 @@ export async function connectMapPresence(opts: {
 	slug: string;
 	userId: string;
 	onPeers: (peers: PresencePeer[]) => void;
-	onHidden?: (hidden: boolean) => void;
 }): Promise<MapPresenceHandle | null> {
 	const slug = opts.slug.trim();
 	const userId = opts.userId.trim();
@@ -341,7 +317,6 @@ export async function connectMapPresence(opts: {
 
 	const identity = await loadIdentity(userId, token, data.session?.user ?? null);
 	const peers = new Map<string, PresencePeer>();
-	let hidden = readHidden(slug);
 	let pageVisible = typeof document === "undefined" ? true : !document.hidden;
 	let lastSent: { lon: number; lat: number } | null = null;
 	let lastSentAt = 0;
@@ -471,7 +446,7 @@ export async function connectMapPresence(opts: {
 	}
 
 	const track = async () => {
-		if (stopped || hidden || !pageVisible) return;
+		if (stopped || !pageVisible) return;
 		await channel.track(identity);
 	};
 	const untrack = async () => {
@@ -544,35 +519,22 @@ export async function connectMapPresence(opts: {
 		);
 	};
 
-	if (!hidden && pageVisible) await track();
-	opts.onHidden?.(hidden);
+	if (pageVisible) await track();
 
 	staleTimer = setInterval(() => {
 		if (dropStaleTicks(peers)) emit();
 	}, 5_000);
 
 	const handle: MapPresenceHandle = {
-		get hidden() {
-			return hidden;
-		},
-		setHidden: async (next: boolean) => {
-			hidden = next;
-			writeHidden(slug, next);
-			opts.onHidden?.(next);
-			if (next) {
-				clearOverlay();
-				await untrack();
-			} else if (pageVisible) await track();
-		},
 		setPageVisible: async (visible: boolean) => {
 			pageVisible = visible;
 			if (!visible) {
 				clearOverlay();
 				await untrack();
-			} else if (!hidden) await track();
+			} else await track();
 		},
 		publishCursor: (lon, lat, h) => {
-			if (stopped || hidden || !pageVisible) return;
+			if (stopped || !pageVisible) return;
 			const now = Date.now();
 			if (now - lastSentAt < THROTTLE_MS) return;
 			if (!cursorMovedEnough(lastSent, lon, lat)) return;
@@ -599,7 +561,7 @@ export async function connectMapPresence(opts: {
 			});
 		},
 		publishOverlay: (overlay) => {
-			if (stopped || hidden || !pageVisible) return;
+			if (stopped || !pageVisible) return;
 			sendOverlay(overlay, true);
 		},
 		stop: async () => {

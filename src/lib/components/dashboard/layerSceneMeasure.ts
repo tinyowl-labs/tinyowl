@@ -5,6 +5,7 @@
 import { cesiumMapLabel } from "$lib/components/cesiumBoot";
 import {
     computeMeasureValue,
+    formatLengthSubtext,
     formatMeasureValue,
     measureHint,
     minVertices,
@@ -53,12 +54,22 @@ function measureColor(Cesium: any) {
     return Cesium.Color.fromCssColorString(MEASURE_COLOR);
 }
 
-function pathLength3d(Cesium: any, cartesians: any[]): number {
-    let sum = 0;
-    for (let i = 1; i < cartesians.length; i++) {
-        sum += Cesium.Cartesian3.distance(cartesians[i - 1], cartesians[i]);
-    }
-    return sum;
+function lengthValue(
+    measureMode: MeasureMode,
+    vertices: MeasureVertex[],
+): number {
+    return computeMeasureValue(measureMode, vertices);
+}
+
+function formatLengthStatus(
+    measureMode: MeasureMode,
+    vertices: MeasureVertex[],
+): string {
+    const value = lengthValue(measureMode, vertices);
+    const hero = formatMeasureValue(measureMode, value, vertices);
+    if (measureMode !== "length") return hero;
+    const sub = formatLengthSubtext(vertices);
+    return sub ? `${hero} · ${sub}` : hero;
 }
 
 function getOrCreateMeasureDs(ctx: LayerSceneMeasureCtx) {
@@ -148,12 +159,7 @@ function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
         });
     }
     if (drafts.length >= minVertices(measureMode)) {
-        const value =
-            measureMode === "point"
-                ? 0
-                : measureMode === "area"
-                  ? computeMeasureValue(measureMode, session.draftVertices)
-                  : pathLength3d(Cesium, drafts);
+        const value = lengthValue(measureMode, session.draftVertices);
         const mid = drafts[Math.floor(drafts.length / 2)];
         ds.entities.add({
             id: "draft:label",
@@ -177,12 +183,7 @@ async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
     const need = minVertices(measureMode);
     if (session.draftCartesians.length < need) return;
 
-    const value =
-        measureMode === "point"
-            ? 0
-            : measureMode === "area"
-              ? computeMeasureValue(measureMode, session.draftVertices)
-              : pathLength3d(Cesium, session.draftCartesians);
+    const value = lengthValue(measureMode, session.draftVertices);
     const id = newMeasureId();
     const label = formatMeasureValue(
         measureMode,
@@ -313,13 +314,7 @@ async function onMeasurePick(
     ctx.setStatus(
         n < minVertices(measureMode)
             ? `${n} point${n === 1 ? "" : "s"} · ${measureHint(measureMode, ctx.dim === "2d" ? "2d" : "3d")}`
-            : `${formatMeasureValue(
-                  measureMode,
-                  measureMode === "area"
-                      ? computeMeasureValue(measureMode, session.draftVertices)
-                      : pathLength3d(ctx.Cesium, session.draftCartesians),
-                  session.draftVertices,
-              )} · Finish, double-click, or Enter`,
+            : `${formatLengthStatus(measureMode, session.draftVertices)} · Finish, double-click, or Enter`,
     );
 }
 

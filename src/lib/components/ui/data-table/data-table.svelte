@@ -17,6 +17,7 @@
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronRight from "@lucide/svelte/icons/chevron-right";
     import EditableCell from "$lib/components/ui/data-table/editable-cell.svelte";
+    import type { LookupOpt } from "$lib/project/schemaFields";
 
     type Props<TData> = {
         columns: ColumnDef<TData>[];
@@ -30,6 +31,7 @@
         editRowId?: string | null;
         getRowId?: (row: TData) => string;
         isEditableColumn?: (columnId: string) => boolean;
+        columnLookups?: Record<string, LookupOpt[]>;
         onCommitCell?: (row: TData, columnId: string, value: string) => void;
         onCancelEdit?: () => void;
     };
@@ -47,6 +49,7 @@
         editRowId = null,
         getRowId,
         isEditableColumn,
+        columnLookups,
         onCommitCell,
         onCancelEdit,
     }: Props<TData> = $props();
@@ -160,6 +163,7 @@
                                         value={cell.getValue() == null
                                             ? ""
                                             : String(cell.getValue())}
+                                        options={columnLookups?.[cell.column.id]}
                                         onCommit={(v) =>
                                             onCommitCell?.(
                                                 row.original,

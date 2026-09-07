@@ -9,8 +9,12 @@
     import FilterIcon from "@lucide/svelte/icons/filter";
     import HexagonIcon from "@lucide/svelte/icons/hexagon";
     import LayersIcon from "@lucide/svelte/icons/layers";
+    import LinkIcon from "@lucide/svelte/icons/link";
+    import ListIcon from "@lucide/svelte/icons/list";
     import MousePointerSquareDashedIcon from "@lucide/svelte/icons/mouse-pointer-square-dashed";
     import PaletteIcon from "@lucide/svelte/icons/palette";
+    import PlusIcon from "@lucide/svelte/icons/plus";
+    import TableIcon from "@lucide/svelte/icons/table";
     import {
         layerSelection,
         toSelectionKey,
@@ -23,7 +27,6 @@
     import {
         activeView,
         contrastColor,
-        layerLegendColor,
         layerLegend,
         rgbaToHex,
         rowByEntityId,
@@ -32,6 +35,10 @@
         resolveSeriesKind,
         SERIES_ALL,
     } from "./layerViews";
+    import {
+        groupNonGeomTables,
+        type SchemaTableKind,
+    } from "$lib/project/schemaFields";
 
     type Props = {
         layers?: LayerData[];
@@ -69,6 +76,10 @@
         seriesStepByLayer?: Record<string, string>;
         /** Writers see layer-select + Tab hint for Cesium edit mode. */
         canWrite?: boolean;
+        /** Non-geometry schema tables (lookup / junction / attribute). */
+        schemaTables?: SchemaTableKind[];
+        onOpenTable?: (name: string) => void;
+        onAddTableRow?: (name: string) => void;
         class?: string;
     };
 
@@ -101,12 +112,17 @@
         joinedKeys = [],
         seriesStepByLayer = {},
         canWrite = false,
+        schemaTables = [],
+        onOpenTable,
+        onAddTableRow,
         class: klass = "",
     }: Props = $props();
 
     let modelsOpen = $state(false);
     let coveragesOpen = $state(true);
+    let attrTablesOpen = $state(true);
     let layerOpen = $state<Record<string, boolean>>({});
+    let entityOpen = $state<Record<string, boolean>>({});
     let rangeAnchorKey = $state<string | null>(null);
     let layerMenu = $state<{
         name: string;
@@ -125,6 +141,11 @@
     } | null>(null);
     let tilesetMenuEl = $state<HTMLDivElement>();
 
+    const geomNames = $derived(new Set(layers.map((l) => l.name)));
+    const attrGroups = $derived(groupNonGeomTables(schemaTables, geomNames));
+    const attrTableCount = $derived(
+        attrGroups.reduce((n, g) => n + g.tables.length, 0),
+    );
     const joinedSet = $derived(new Set(joinedKeys));
     const pendingByLayer = $derived(editBuffer.pendingByTable);
     const pendingKeys = $derived.by(() => {
@@ -191,20 +212,40 @@
         layerOpen = { ...layerOpen, [name]: !isLayerExpanded(name) };
     }
 
+    function isEntitiesExpanded(name: string): boolean {
+        return entityOpen[name] === true;
+    }
+
+    function toggleEntitiesExpanded(name: string) {
+        entityOpen = { ...entityOpen, [name]: !isEntitiesExpanded(name) };
+    }
+
     function expandAll() {
         modelsOpen = true;
         coveragesOpen = true;
+        attrTablesOpen = true;
         const next: Record<string, boolean> = {};
-        for (const l of layers) next[l.name] = true;
+        const ents: Record<string, boolean> = {};
+        for (const l of layers) {
+            next[l.name] = true;
+            ents[l.name] = true;
+        }
         layerOpen = next;
+        entityOpen = ents;
     }
 
     function collapseAll() {
         modelsOpen = false;
         coveragesOpen = false;
+        attrTablesOpen = false;
         const next: Record<string, boolean> = {};
-        for (const l of layers) next[l.name] = false;
+        const ents: Record<string, boolean> = {};
+        for (const l of layers) {
+            next[l.name] = false;
+            ents[l.name] = false;
+        }
         layerOpen = next;
+        entityOpen = ents;
     }
 
     function byDisplayName(a: string, b: string): number {
@@ -696,14 +737,11 @@
             {@const allEnts = entitiesForLayerSorted(layer)}
             {@const ents = filterEntities(layer, allEnts)}
             {@const orderedKeys = ents.map((e) => e.key)}
-            {@const swatch = layerLegendColor(
-                layer.views,
-                layer.activeViewId ?? "",
-            )}
             {@const readLegend =
                 layer.name === focusLayerName
                     ? layerLegend(
-                          activeView(layer.views, layer.activeViewId ?? ""),
+                          activeView(layer.views, layer.activeViewId ?? "") ??
+                              undefined,
                           rows[layer.name],
                       )
                     : null}
@@ -748,12 +786,9 @@
                         title={layerDisplayName(layer.name)}
                         onclick={() => selectEditLayer(layer.name)}
                     >
-                        <span
-                            class="size-3.5 shrink-0 rounded-sm border"
-                            style="background: {rgbaToHex(swatch)}; border-color: {rgbaToHex(
-                                contrastColor(swatch),
-                            )}"
-                        ></span>
+                        <LayersIcon
+                            class="size-3.5 shrink-0 text-muted-foreground"
+                        />
                         <span class="truncate"
                             >{layerDisplayName(layer.name)}</span
                         >
@@ -782,7 +817,9 @@
                     </button>
                 </div>
                 {#if readLegend && (readLegend.ramp || readLegend.classes.length > 0)}
-                    <div class="mb-1 space-y-0.5 {childIndent}">
+                    <div
+                        class="mb-1 max-h-40 space-y-0.5 overflow-y-auto {childIndent}"
+                    >
                         {#if readLegend.ramp}
                             <div class="px-0.5 py-0.5">
                                 <div
@@ -826,97 +863,206 @@
                     </div>
                 {/if}
                 {#if !compact && isLayerExpanded(layer.name)}
-                    <div class="mb-1 space-y-0.5 {childIndent}">
-                        {#each ents as ent}
-                            {@const selected =
-                                layerSelection.isSelected(
-                                    ent.layerName,
-                                    ent.entityId,
-                                ) ||
-                                joinedSet.has(
-                                    toSelectionKey(ent.layerName, ent.entityId),
-                                )}
-                            {@const primary = layerSelection.isPrimary(
-                                ent.layerName,
-                                ent.entityId,
-                            )}
-                            {@const hidden = layerSelection.isSessionHidden(
-                                ent.layerName,
-                                ent.entityId,
-                            )}
+                    <div class="mb-1 {childIndent}">
+                        <button
+                            type="button"
+                            class="flex w-full items-center gap-1 rounded-md px-0.5 py-0.5 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:bg-secondary hover:text-foreground"
+                            title={isEntitiesExpanded(layer.name)
+                                ? "Collapse entities"
+                                : "Expand entities"}
+                            onclick={() => toggleEntitiesExpanded(layer.name)}
+                        >
+                            <ChevronDownIcon
+                                class="size-3 shrink-0 transition-transform {isEntitiesExpanded(
+                                    layer.name,
+                                )
+                                    ? ''
+                                    : '-rotate-90'}"
+                            />
+                            <span>Entities</span>
+                            <span class="ml-auto tabular-nums opacity-60"
+                                >{ents.length}</span
+                            >
+                        </button>
+                        {#if isEntitiesExpanded(layer.name)}
                             <div
-                                class="flex items-center gap-0.5 rounded-md {selected
-                                    ? primary
-                                        ? 'bg-primary/20 ring-1 ring-inset ring-primary/30'
-                                        : 'bg-accent/50'
-                                    : 'hover:bg-secondary'}"
+                                class="mt-0.5 max-h-52 space-y-0.5 overflow-y-auto"
                             >
-                                <button
-                                    type="button"
-                                    class="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left"
-                                    onclick={(e) =>
-                                        onEntityClick(
-                                            e,
+                                {#each ents as ent}
+                                    {@const selected =
+                                        layerSelection.isSelected(
                                             ent.layerName,
                                             ent.entityId,
-                                            orderedKeys,
+                                        ) ||
+                                        joinedSet.has(
+                                            toSelectionKey(
+                                                ent.layerName,
+                                                ent.entityId,
+                                            ),
                                         )}
-                                    ondblclick={() =>
-                                        onEntityDblClick(
+                                    {@const primary =
+                                        layerSelection.isPrimary(
                                             ent.layerName,
                                             ent.entityId,
                                         )}
-                                    title={ent.entityId}
-                                >
-                                    <HexagonIcon
-                                        class="size-3 shrink-0 text-muted-foreground"
-                                    />
-                                    <span
-                                        class="truncate {hidden
-                                            ? 'opacity-40 line-through'
-                                            : ''}"
+                                    {@const hidden =
+                                        layerSelection.isSessionHidden(
+                                            ent.layerName,
+                                            ent.entityId,
+                                        )}
+                                    <div
+                                        class="flex items-center gap-0.5 rounded-md {selected
+                                            ? primary
+                                                ? 'bg-primary/20 ring-1 ring-inset ring-primary/30'
+                                                : 'bg-accent/50'
+                                            : 'hover:bg-secondary'}"
                                     >
-                                        {ent.label}
-                                    </span>
-                                    {#if pendingKeys.has(ent.key)}
-                                        <span
-                                            class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-normal normal-case tracking-normal text-foreground"
-                                            title="In session buffer">buf</span
+                                        <button
+                                            type="button"
+                                            class="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left"
+                                            onclick={(e) =>
+                                                onEntityClick(
+                                                    e,
+                                                    ent.layerName,
+                                                    ent.entityId,
+                                                    orderedKeys,
+                                                )}
+                                            ondblclick={() =>
+                                                onEntityDblClick(
+                                                    ent.layerName,
+                                                    ent.entityId,
+                                                )}
+                                            title={ent.entityId}
                                         >
-                                    {/if}
-                                </button>
-                                <button
-                                    type="button"
-                                    class="mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                                    title={hidden ? "Show" : "Hide"}
-                                    onclick={() =>
-                                        toggleEntityHidden(
-                                            ent.layerName,
-                                            ent.entityId,
-                                        )}
-                                >
-                                    {#if hidden}
-                                        <EyeOffIcon class="size-3" />
-                                    {:else}
-                                        <EyeIcon class="size-3" />
-                                    {/if}
-                                </button>
+                                            <HexagonIcon
+                                                class="size-3 shrink-0 text-muted-foreground"
+                                            />
+                                            <span
+                                                class="truncate {hidden
+                                                    ? 'opacity-40 line-through'
+                                                    : ''}"
+                                            >
+                                                {ent.label}
+                                            </span>
+                                            {#if pendingKeys.has(ent.key)}
+                                                <span
+                                                    class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-normal normal-case tracking-normal text-foreground"
+                                                    title="In session buffer"
+                                                    >buf</span
+                                                >
+                                            {/if}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                                            title={hidden ? "Show" : "Hide"}
+                                            onclick={() =>
+                                                toggleEntityHidden(
+                                                    ent.layerName,
+                                                    ent.entityId,
+                                                )}
+                                        >
+                                            {#if hidden}
+                                                <EyeOffIcon class="size-3" />
+                                            {:else}
+                                                <EyeIcon class="size-3" />
+                                            {/if}
+                                        </button>
+                                    </div>
+                                {:else}
+                                    <p
+                                        class="px-1 py-1 text-[10px] text-muted-foreground"
+                                    >
+                                        {filterToView
+                                            ? "None in view"
+                                            : "No entities"}
+                                    </p>
+                                {/each}
                             </div>
-                        {:else}
-                            <p
-                                class="px-1 py-1 text-[10px] text-muted-foreground"
-                            >
-                                {filterToView
-                                    ? "None in view"
-                                    : "No entities"}
-                            </p>
-                        {/each}
+                        {/if}
                     </div>
                 {/if}
             {/if}
         {/each}
 
-        {#if layers.length === 0 && models.length === 0}
+        {#if attrTableCount > 0}
+            <div
+                class="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+            >
+                <button
+                    type="button"
+                    class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
+                    title={attrTablesOpen ? "Collapse" : "Expand"}
+                    onclick={() => (attrTablesOpen = !attrTablesOpen)}
+                >
+                    <ChevronDownIcon
+                        class="size-3.5 shrink-0 transition-transform {attrTablesOpen
+                            ? ''
+                            : '-rotate-90'}"
+                    />
+                </button>
+                <div class="flex min-w-0 flex-1 items-center gap-1 px-0.5 py-0.5">
+                    <TableIcon class="size-3.5 shrink-0" />
+                    <span class="truncate">Tables</span>
+                    <span class="ml-auto tabular-nums opacity-60"
+                        >{attrTableCount}</span
+                    >
+                </div>
+            </div>
+            {#if attrTablesOpen}
+                {#each attrGroups as group (group.key)}
+                    <p
+                        class="px-1.5 pt-1 text-[9px] font-medium uppercase tracking-wide text-muted-foreground {childIndent}"
+                    >
+                        {group.label}
+                    </p>
+                    {#each group.tables as tbl (tbl.name)}
+                        <div
+                            class="flex w-full items-center gap-0.5 {childIndent}"
+                        >
+                            <button
+                                type="button"
+                                class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-secondary hover:text-foreground"
+                                title={tbl.name}
+                                onclick={() => onOpenTable?.(tbl.name)}
+                            >
+                                {#if group.key === "lookup"}
+                                    <ListIcon
+                                        class="size-3 shrink-0 text-muted-foreground"
+                                    />
+                                {:else if group.key === "junction"}
+                                    <LinkIcon
+                                        class="size-3 shrink-0 text-muted-foreground"
+                                    />
+                                {:else}
+                                    <TableIcon
+                                        class="size-3 shrink-0 text-muted-foreground"
+                                    />
+                                {/if}
+                                <span class="truncate"
+                                    >{tbl.label || tbl.name.replace(/_/g, " ")}</span
+                                >
+                                <span class="ml-auto tabular-nums opacity-60"
+                                    >{tbl.count ?? 0}</span
+                                >
+                            </button>
+                            {#if canWrite && onAddTableRow}
+                                <button
+                                    type="button"
+                                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                                    title="Add row"
+                                    onclick={() => onAddTableRow(tbl.name)}
+                                >
+                                    <PlusIcon class="size-3" />
+                                </button>
+                            {/if}
+                        </div>
+                    {/each}
+                {/each}
+            {/if}
+        {/if}
+
+        {#if layers.length === 0 && models.length === 0 && attrTableCount === 0}
             <p class="px-2 py-3 text-center text-muted-foreground">
                 Nothing in the scene yet
             </p>

@@ -94,11 +94,11 @@ const POPUP_TITLE_KEYS = new Set(["label", "identifier", "name", "title"]);
 export function popupAttrFields(
 	attrs: Record<string, string> | undefined,
 	opts: { label: string; entityId: string },
-): Array<{ key: string; value: string }> {
+): Array<{ key: string; column: string; value: string }> {
 	if (!attrs) return [];
 	const label = opts.label.trim();
 	const entityId = opts.entityId.trim();
-	const out: Array<{ key: string; value: string }> = [];
+	const out: Array<{ key: string; column: string; value: string }> = [];
 	for (const [rawKey, rawVal] of Object.entries(attrs)) {
 		const value = String(rawVal ?? "").trim();
 		if (!value) continue;
@@ -110,7 +110,11 @@ export function popupAttrFields(
 		) {
 			continue;
 		}
-		out.push({ key: rawKey.replace(/_/g, " "), value });
+		out.push({
+			key: rawKey.replace(/_/g, " "),
+			column: rawKey,
+			value,
+		});
 	}
 	return out;
 }

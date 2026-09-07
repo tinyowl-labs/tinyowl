@@ -21,6 +21,7 @@
     export type SchemaTable = {
         name: string;
         label?: string;
+        kind?: string;
         columns: SchemaColumn[];
         count: number;
     };

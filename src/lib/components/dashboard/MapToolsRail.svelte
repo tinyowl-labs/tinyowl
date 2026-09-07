@@ -19,7 +19,12 @@
     import CopyIcon from "@lucide/svelte/icons/copy";
     import type { Snippet } from "svelte";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
-    import { measureHint } from "$lib/measure";
+    import {
+        elevationProfile,
+        formatLengthSubtext,
+        measureHint,
+    } from "$lib/measure";
+    import ElevationProfile from "$lib/measure/ElevationProfile.svelte";
     import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
 
     type Props = {
@@ -206,10 +211,14 @@
     }
 
     async function copyRecord(rec: MeasureRecord) {
+        const sub =
+            rec.mode === "length" ? formatLengthSubtext(rec.vertices) : null;
         const text =
             rec.mode === "point"
                 ? rec.label
-                : `${modeLabel[rec.mode]}: ${rec.label}`;
+                : sub
+                  ? `${modeLabel[rec.mode]}: ${rec.label} (${sub})`
+                  : `${modeLabel[rec.mode]}: ${rec.label}`;
         try {
             await navigator.clipboard.writeText(text);
             copiedId = rec.id;
@@ -365,7 +374,7 @@
             >
                 Select
             </div>
-            {#each selectTools as tool}
+            {#each selectTools as tool (tool.id)}
                 <button
                     type="button"
                     class="{menuItem} {selectionTool === tool.id
@@ -506,12 +515,12 @@
 
     {#if enabled}
         <div
-            class="flex w-56 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-2 text-xs shadow-lg backdrop-blur-sm"
+            class="flex w-64 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-2 text-xs shadow-lg backdrop-blur-sm"
         >
             <div
                 class="flex items-center overflow-hidden rounded-md border border-border"
             >
-                {#each measureModes as m, i}
+                {#each measureModes as m, i (m.id)}
                     <button
                         type="button"
                         class="flex-1 px-1.5 py-1 transition-colors {i > 0
@@ -559,42 +568,64 @@
                             Clear
                         </button>
                     </div>
-                    <ul class="max-h-40 space-y-0.5 overflow-y-auto">
+                    <ul class="max-h-72 space-y-1 overflow-y-auto">
                         {#each records as rec, i (rec.id)}
+                            {@const sub =
+                                rec.mode === "length"
+                                    ? formatLengthSubtext(rec.vertices)
+                                    : null}
+                            {@const profile =
+                                rec.mode === "length"
+                                    ? elevationProfile(rec.vertices)
+                                    : null}
                             <li
-                                class="flex items-center gap-1.5 rounded-md px-1 py-1 hover:bg-secondary/80"
+                                class="rounded-md px-1 py-1 hover:bg-secondary/80"
                             >
-                                <span
-                                    class="w-3.5 shrink-0 tabular-nums text-[10px] text-muted-foreground"
-                                    >{i + 1}</span
-                                >
-                                <span class="min-w-0 flex-1 truncate">
-                                    <span class="text-muted-foreground"
-                                        >{modeLabel[rec.mode]} ·</span
-                                    >
+                                <div class="flex items-center gap-1.5">
                                     <span
-                                        class="font-medium tabular-nums text-foreground"
-                                        >{rec.label}</span
+                                        class="w-3.5 shrink-0 tabular-nums text-[10px] text-muted-foreground"
+                                        >{i + 1}</span
                                     >
-                                </span>
-                                <button
-                                    type="button"
-                                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
-                                    title={copiedId === rec.id
-                                        ? "Copied"
-                                        : "Copy"}
-                                    onclick={() => void copyRecord(rec)}
-                                >
-                                    <CopyIcon class="size-3" />
-                                </button>
-                                <button
-                                    type="button"
-                                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
-                                    title="Remove"
-                                    onclick={() => onRemove?.(rec.id)}
-                                >
-                                    <XIcon class="size-3" />
-                                </button>
+                                    <span class="min-w-0 flex-1 truncate">
+                                        <span class="text-muted-foreground"
+                                            >{modeLabel[rec.mode]} ·</span
+                                        >
+                                        <span
+                                            class="font-medium tabular-nums text-foreground"
+                                            >{rec.label}</span
+                                        >
+                                    </span>
+                                    <button
+                                        type="button"
+                                        class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                        title={copiedId === rec.id
+                                            ? "Copied"
+                                            : "Copy"}
+                                        onclick={() => void copyRecord(rec)}
+                                    >
+                                        <CopyIcon class="size-3" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                                        title="Remove"
+                                        onclick={() => onRemove?.(rec.id)}
+                                    >
+                                        <XIcon class="size-3" />
+                                    </button>
+                                </div>
+                                {#if sub}
+                                    <p
+                                        class="pl-5 text-[10px] tabular-nums text-muted-foreground"
+                                    >
+                                        {sub}
+                                    </p>
+                                {/if}
+                                {#if profile}
+                                    <div class="pl-5">
+                                        <ElevationProfile points={profile} />
+                                    </div>
+                                {/if}
                             </li>
                         {/each}
                     </ul>

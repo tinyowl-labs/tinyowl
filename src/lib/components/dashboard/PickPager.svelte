@@ -6,6 +6,13 @@
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import XIcon from "@lucide/svelte/icons/x";
     import { popupAttrFields, type PickCandidate } from "./pickCandidates";
+    import {
+        fkEdgeForColumn,
+        resolveFkDisplay,
+        type SchemaFieldEdge,
+    } from "$lib/project/schemaFields";
+
+    type EntityMedia = { url: string; media_type: string };
 
     type Props = {
         open?: boolean;
@@ -26,6 +33,10 @@
         /** Writers: open attribute editor into the session buffer. */
         canEdit?: boolean;
         onEdit?: (candidate: PickCandidate) => void;
+        schemaEdges?: SchemaFieldEdge[];
+        rows?: Record<string, Record<string, unknown>[]>;
+        mediaByEntity?: Record<string, EntityMedia[]>;
+        onSelectRelated?: (table: string, id: string) => void;
     };
 
     let {
@@ -40,6 +51,10 @@
         onClose,
         canEdit = false,
         onEdit,
+        schemaEdges = [],
+        rows = {},
+        mediaByEntity = {},
+        onSelectRelated,
     }: Props = $props();
 
     let copied = $state(false);
@@ -57,6 +72,18 @@
             entityId: current?.entityId ?? "",
         }),
     );
+
+    const media = $derived.by(() => {
+        const c = current;
+        if (!c) return [];
+        return mediaByEntity[`${c.layerName}:${c.entityId}`] ?? [];
+    });
+
+    let expanded = $state<EntityMedia | null>(null);
+
+    $effect(() => {
+        if (!open) expanded = null;
+    });
 
     const idDistinct = $derived(
         Boolean(
@@ -150,8 +177,12 @@
             : undefined}
         role="dialog"
         aria-label="Picked entity"
+        tabindex="-1"
         onpointerdown={(e) => e.stopPropagation()}
         onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => {
+            if (e.key === "Escape") onClose?.();
+        }}
     >
         <div
             class="flex items-start gap-1 border-b border-border px-2.5 py-2"
@@ -229,18 +260,74 @@
             </div>
         </div>
 
+        {#if media.length > 0}
+            <div class="flex gap-1 overflow-x-auto border-b border-border px-2.5 py-1.5">
+                {#each media as item, i (item.url + i)}
+                    <button
+                        type="button"
+                        class="size-10 shrink-0 overflow-hidden rounded border border-border bg-secondary/40"
+                        title={item.media_type}
+                        onclick={() => {
+                            if (
+                                item.media_type.startsWith("image") ||
+                                item.media_type.startsWith("video")
+                            ) {
+                                expanded = item;
+                            } else {
+                                window.open(item.url, "_blank");
+                            }
+                        }}
+                    >
+                        {#if item.media_type.startsWith("image")}
+                            <img
+                                src={item.url}
+                                alt=""
+                                class="size-full object-cover"
+                            />
+                        {:else}
+                            <span
+                                class="flex size-full items-center justify-center text-[9px] uppercase text-muted-foreground"
+                                >{item.media_type.split("/")[0] ?? "file"}</span
+                            >
+                        {/if}
+                    </button>
+                {/each}
+            </div>
+        {/if}
+
         {#if fields.length > 0}
             <div class="max-h-52 space-y-1.5 overflow-y-auto px-2.5 py-2">
-                {#each fields as field}
+                {#each fields as field (field.column)}
+                    {@const edge = current
+                        ? fkEdgeForColumn(
+                              schemaEdges,
+                              current.layerName,
+                              field.column,
+                          )
+                        : undefined}
+                    {@const related = edge
+                        ? resolveFkDisplay(field.value, edge, rows)
+                        : null}
                     <div>
                         <div
                             class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
                         >
                             {field.key}
                         </div>
-                        <div class="break-words text-[11px] text-foreground">
-                            {field.value}
-                        </div>
+                        {#if related}
+                            <button
+                                type="button"
+                                class="break-words text-left text-[11px] text-primary underline-offset-2 hover:underline"
+                                onclick={() =>
+                                    onSelectRelated?.(related.table, related.id)}
+                            >
+                                {related.label}
+                            </button>
+                        {:else}
+                            <div class="break-words text-[11px] text-foreground">
+                                {field.value}
+                            </div>
+                        {/if}
                     </div>
                 {/each}
             </div>
@@ -272,6 +359,45 @@
                     </button>
                 </div>
             </div>
+        {/if}
+    </div>
+{/if}
+
+{#if expanded}
+    <div
+        class="pointer-events-auto fixed inset-0 z-[1200] flex items-center justify-center bg-black/70 p-4"
+        onclick={() => (expanded = null)}
+        onkeydown={(e) => {
+            if (e.key === "Escape") expanded = null;
+        }}
+        role="dialog"
+        aria-label="Media"
+        tabindex="-1"
+    >
+        <button
+            type="button"
+            class="absolute right-3 top-3 rounded-md p-1 text-white/80 hover:bg-white/10"
+            onclick={() => (expanded = null)}
+            aria-label="Close"
+        >
+            <XIcon class="size-5" />
+        </button>
+        {#if expanded.media_type.startsWith("image")}
+            <img
+                src={expanded.url}
+                alt=""
+                class="max-h-full max-w-full object-contain"
+                onpointerdown={(e) => e.stopPropagation()}
+            />
+        {:else if expanded.media_type.startsWith("video")}
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <video
+                src={expanded.url}
+                class="max-h-full max-w-full"
+                controls
+                autoplay
+                onpointerdown={(e) => e.stopPropagation()}
+            ></video>
         {/if}
     </div>
 {/if}

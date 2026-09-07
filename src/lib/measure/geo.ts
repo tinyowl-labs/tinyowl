@@ -54,13 +54,84 @@ function ringAreaSqMeters(vertices: MeasureVertex[]): number {
   return area;
 }
 
+/** True when a length can use 3D / H/V / profile (every vertex has height). */
+export function verticesHaveHeight(vertices: MeasureVertex[]): boolean {
+  return (
+    vertices.length >= 2 &&
+    vertices.every(
+      (v) => v.height != null && Number.isFinite(v.height),
+    )
+  );
+}
+
+export type LengthBreakdown = {
+  /** Great-circle path (m). */
+  horizontal: number;
+  /** Signed net height last − first (m). */
+  vertical: number;
+  /** Σ hypot(horiz, Δh) per segment; equals horizontal when no heights. */
+  length3d: number;
+  hasHeight: boolean;
+};
+
+export function lengthBreakdown(vertices: MeasureVertex[]): LengthBreakdown {
+  const horizontal = pathLengthMeters(vertices);
+  if (!verticesHaveHeight(vertices)) {
+    return {
+      horizontal,
+      vertical: 0,
+      length3d: horizontal,
+      hasHeight: false,
+    };
+  }
+  let length3d = 0;
+  for (let i = 1; i < vertices.length; i++) {
+    const a = vertices[i - 1]!;
+    const b = vertices[i]!;
+    length3d += Math.hypot(distanceMeters(a, b), b.height! - a.height!);
+  }
+  return {
+    horizontal,
+    vertical: vertices[vertices.length - 1]!.height! - vertices[0]!.height!,
+    length3d,
+    hasHeight: true,
+  };
+}
+
+/** Chord-station profile: X = cumulative great-circle, Y = height − start. */
+export type ProfilePoint = { x: number; y: number };
+
+const PROFILE_MIN_RANGE_M = 0.01;
+
+export function elevationProfile(
+  vertices: MeasureVertex[],
+): ProfilePoint[] | null {
+  if (!verticesHaveHeight(vertices)) return null;
+  const start = vertices[0]!.height!;
+  const ys = vertices.map((v) => v.height! - start);
+  let minY = ys[0]!;
+  let maxY = ys[0]!;
+  for (const y of ys) {
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (maxY - minY < PROFILE_MIN_RANGE_M) return null;
+  const pts: ProfilePoint[] = [{ x: 0, y: ys[0]! }];
+  let x = 0;
+  for (let i = 1; i < vertices.length; i++) {
+    x += distanceMeters(vertices[i - 1]!, vertices[i]!);
+    pts.push({ x, y: ys[i]! });
+  }
+  return pts;
+}
+
 export function computeMeasureValue(
   mode: MeasureMode,
   vertices: MeasureVertex[],
 ): number {
   if (mode === "point") return 0;
   if (mode === "area") return ringAreaSqMeters(vertices);
-  return pathLengthMeters(vertices);
+  return lengthBreakdown(vertices).length3d;
 }
 
 export function minVertices(mode: MeasureMode): number {

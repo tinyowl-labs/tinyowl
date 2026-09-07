@@ -169,7 +169,8 @@ function formatLegendNum(n: number): string {
 	return legendNum.format(n);
 }
 
-const LEGEND_CLASS_CAP = 8;
+/** SCENE legend is uncapped; pass a finite cap only for compact previews. */
+const LEGEND_CLASS_CAP = Number.POSITIVE_INFINITY;
 
 export type LayerLegendClass = {
 	label: string;

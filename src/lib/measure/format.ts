@@ -1,8 +1,12 @@
+import { lengthBreakdown, type LengthBreakdown } from "./geo";
 import type { MeasureMode, MeasureVertex } from "./types";
+
+/** Show H/V when |vertical| is at least this fraction of 3D length. */
+const HV_FRACTION = 0.05;
 
 /** Format measure values for UI labels. */
 
-function formatDistanceMeters(meters: number): string {
+export function formatDistanceMeters(meters: number): string {
   if (!Number.isFinite(meters) || meters < 0) return "—";
   if (meters < 1) return `${Math.round(meters * 1000)} mm`;
   if (meters < 100)
@@ -44,6 +48,17 @@ function formatCoordinates(
     return `${base}, ${v.height.toFixed(1)} m`;
   }
   return base;
+}
+
+export function formatLengthSubtext(
+  vertices: MeasureVertex[],
+  breakdown?: LengthBreakdown,
+): string | null {
+  const b = breakdown ?? lengthBreakdown(vertices);
+  if (!b.hasHeight || b.length3d <= 0) return null;
+  if (Math.abs(b.vertical) < HV_FRACTION * b.length3d) return null;
+  const arrow = b.vertical >= 0 ? "↑" : "↓";
+  return `H ${formatDistanceMeters(b.horizontal)} · ${arrow} ${formatDistanceMeters(Math.abs(b.vertical))}`;
 }
 
 export function formatMeasureValue(

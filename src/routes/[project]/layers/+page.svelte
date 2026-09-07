@@ -3,6 +3,7 @@
     import TableIcon from "@lucide/svelte/icons/table";
     import PanelRightIcon from "@lucide/svelte/icons/panel-right";
     import PencilIcon from "@lucide/svelte/icons/pencil";
+    import PlusIcon from "@lucide/svelte/icons/plus";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { goto, invalidateAll } from "$app/navigation";
     import { page } from "$app/stores";
@@ -35,6 +36,10 @@
         relatedSelectionKeys,
     } from "$lib/project/schemaJoin";
     import { editBuffer, attrFieldsForTable } from "$lib/stores/editBuffer.svelte";
+    import {
+        loadProjectFkLookups,
+        type LookupOpt,
+    } from "$lib/project/schemaFields";
     import { fromEditBuffer } from "$lib/geoDiff";
     import { isTypingTarget } from "$lib/components/dashboard/mapShortcuts";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
@@ -153,13 +158,21 @@
     let tableColumnBuilder = $state<
         typeof import("./tableColumns").buildColumns | null
     >(null);
+    let tableLookups = $state<Record<string, Record<string, LookupOpt[]>>>(
+        {},
+    );
 
     const columnsByTable = $derived.by(() => {
         const build = tableColumnBuilder;
         const out: LayersColumns = {};
         if (!build) return out;
         for (const name of tableNames) {
-            out[name] = build(name, tables, mediaByEntity);
+            out[name] = build(
+                name,
+                tables,
+                mediaByEntity,
+                tableLookups[name],
+            );
         }
         return out;
     });
@@ -332,6 +345,7 @@
     let tableAttrEdit = $state<{ table: string; entityId: string } | null>(
         null,
     );
+    let addRowTable = $state<string | null>(null);
 
     type LazyCmp = any;
     let LayerSceneCmp = $state<LazyCmp>(null);
@@ -341,6 +355,7 @@
     let FkLinkerCmp = $state<LazyCmp | null>(null);
     let PromoteLookupCmp = $state<LazyCmp | null>(null);
     let PromoteJunctionCmp = $state<LazyCmp | null>(null);
+    let FeatureCreateFormCmp = $state<LazyCmp | null>(null);
 
     $effect(() => {
         if (!browser) return;
@@ -422,6 +437,13 @@
             void import("./tableColumns").then((m) => {
                 tableColumnBuilder = m.buildColumns;
             });
+        }
+        if (canWrite && !FeatureCreateFormCmp) {
+            void import("$lib/components/dashboard/FeatureCreateForm.svelte").then(
+                (m) => {
+                    FeatureCreateFormCmp = m.default;
+                },
+            );
         }
     });
 
@@ -511,11 +533,25 @@
         const byId = new Map(
             bufs.map((e) => [e.entityId, e.attributes] as const),
         );
-        return visible.map((row) => {
+        const merged = visible.map((row) => {
             const id = String(row.source_id ?? row.SOURCE_ID ?? "");
             const attrs = id ? byId.get(id) : undefined;
             return attrs ? { ...row, ...attrs } : row;
         });
+        const seen = new Set(
+            merged.map((row) =>
+                String(row.source_id ?? row.SOURCE_ID ?? ""),
+            ),
+        );
+        for (const e of editBuffer.entries) {
+            if (e.table !== table || e.op !== "insert") continue;
+            if (seen.has(e.entityId)) continue;
+            merged.push({
+                source_id: e.entityId,
+                ...(e.attributes ?? {}),
+            });
+        }
+        return merged;
     }
 
     function deleteSelectedTableRows() {
@@ -540,6 +576,43 @@
         }
         if (ids.length > 0) tableAttrEdit = null;
     }
+
+    function openAddTableRow(name: string) {
+        if (!canWrite || !name) return;
+        handleTabChange(name);
+        addRowTable = name;
+    }
+
+    function confirmAddTableRow(attrs: Record<string, string>) {
+        const table = addRowTable;
+        if (!table) return;
+        editBuffer.push({
+            op: "insert",
+            table,
+            entityId: editBuffer.nextEntityId(),
+            attributes: attrs,
+        });
+        addRowTable = null;
+    }
+
+    $effect(() => {
+        if (!browser) return;
+        const slug = $page.params.project;
+        const token = accessToken;
+        const tbls = tables;
+        if (!slug || Object.keys(tbls).length === 0) return;
+        let cancelled = false;
+        void loadProjectFkLookups({
+            slug,
+            accessToken: token,
+            tables: tbls,
+        }).then((next) => {
+            if (!cancelled) tableLookups = next;
+        });
+        return () => {
+            cancelled = true;
+        };
+    });
 
     function isTableEditableColumn(table: string, columnId: string): boolean {
         if (!columnId || columnId.startsWith("_")) return false;
@@ -1104,6 +1177,13 @@
                             void loadAllCzml(true);
                             void invalidateAll();
                         }}
+                        schemaTables={schemaTables}
+                        schemaEdges={schemaEdges}
+                        {mediaByEntity}
+                        onOpenTable={(name: string) => handleTabChange(name)}
+                        onAddTableRow={canWrite
+                            ? (name: string) => openAddTableRow(name)
+                            : undefined}
                     />
                 {:else}
                     <CesiumLoading />
@@ -1130,6 +1210,20 @@
                         >
                             {#snippet afterSeparator()}
                                 {#if canWrite}
+                                    <button
+                                        type="button"
+                                        onclick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (viewMode === "table" && activeTab)
+                                                openAddTableRow(activeTab);
+                                        }}
+                                        class="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                        title="Add row"
+                                        aria-label="Add row"
+                                    >
+                                        <PlusIcon class="size-4" />
+                                    </button>
                                     <button
                                         type="button"
                                         onclick={(e) => {
@@ -1256,6 +1350,9 @@
                                                         tabValue,
                                                         colId,
                                                     )}
+                                                columnLookups={tableLookups[
+                                                    tabValue
+                                                ]}
                                                 onCommitCell={(
                                                     row: Record<
                                                         string,
@@ -1348,6 +1445,18 @@
                                             >
                                                 No rows in this table yet.
                                             </p>
+                                            {#if canWrite}
+                                                <button
+                                                    type="button"
+                                                    class="mt-3 text-sm font-medium text-foreground underline-offset-2 hover:underline"
+                                                    onclick={() =>
+                                                        openAddTableRow(
+                                                            tabValue,
+                                                        )}
+                                                >
+                                                    Add a row
+                                                </button>
+                                            {/if}
                                         </div>
                                     {/if}
                                     </div>
@@ -1372,6 +1481,29 @@
                         </div>
                     {/if}
                 </div>
+                {#if addRowTable && FeatureCreateFormCmp && canWrite}
+                    <div
+                        class="pointer-events-none absolute right-4 bottom-4 z-20"
+                    >
+                        <FeatureCreateFormCmp
+                            layer={addRowTable}
+                            geomType="none"
+                            mode="create"
+                            fields={attrFieldsForTable(
+                                tables[addRowTable] ?? [],
+                            ).filter(
+                                (c) =>
+                                    c !== "source_id" && c !== "entity_type",
+                            )}
+                            slug={$page.params.project ?? ""}
+                            {accessToken}
+                            schemaTables={schemaTables}
+                            {rows}
+                            onConfirm={confirmAddTableRow}
+                            onCancel={() => (addRowTable = null)}
+                        />
+                    </div>
+                {/if}
                 {#if viewMode === "schema" && schemaToolsOpen}
                     <aside
                         class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-4"

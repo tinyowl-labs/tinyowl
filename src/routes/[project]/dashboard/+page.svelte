@@ -190,6 +190,14 @@
                         <DownloadIcon class="size-4" />
                         Download field package
                     </a>
+                    <a
+                        href={`/api/v1/projects/${slug}/exit-pack${accessToken ? `?token=${encodeURIComponent(accessToken)}` : ""}`}
+                        data-sveltekit-reload
+                        class="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors no-underline"
+                    >
+                        <DownloadIcon class="size-4" />
+                        Download archive
+                    </a>
                 </div>
             {/if}
         </div>

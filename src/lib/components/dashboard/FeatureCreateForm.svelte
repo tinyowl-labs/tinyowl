@@ -2,41 +2,45 @@
     import XIcon from "@lucide/svelte/icons/x";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Field, FieldLabel } from "$lib/components/ui/field/index.js";
-    import { Input } from "$lib/components/ui/input/index.js";
     import type { DrawGeomMode } from "$lib/stores/editBuffer.svelte";
-
-    type LookupOpt = { id: string; label: string };
-    type SchemaEdge = {
-        source: string;
-        target: string;
-        source_column: string;
-        kind?: string;
-    };
+    import {
+        loadFkLookups,
+        type LookupOpt,
+        type SchemaTableKind,
+    } from "$lib/project/schemaFields";
+    import SchemaField from "./SchemaField.svelte";
+    import JunctionRelated from "./JunctionRelated.svelte";
 
     type Props = {
         layer: string;
-        geomType: DrawGeomMode;
+        geomType?: DrawGeomMode | "none";
         fields?: string[];
         mode?: "create" | "edit";
         entityId?: string;
         initial?: Record<string, string>;
         slug?: string;
         accessToken?: string;
+        schemaTables?: SchemaTableKind[];
+        rows?: Record<string, Record<string, unknown>[]>;
         onConfirm?: (attrs: Record<string, string>) => void;
         onCancel?: () => void;
+        onOpenRelated?: (table: string, id: string) => void;
     };
 
     let {
         layer,
-        geomType,
+        geomType = "none",
         fields = [],
         mode = "create",
         entityId = "",
         initial = {},
         slug = "",
         accessToken = "",
+        schemaTables = [],
+        rows = {},
         onConfirm,
         onCancel,
+        onOpenRelated,
     }: Props = $props();
 
     let values = $state<Record<string, string>>({});
@@ -60,55 +64,15 @@
         const table = layer;
         const cols = [...fields];
         const token = accessToken;
-        void (async () => {
-            try {
-                const headers: Record<string, string> = {};
-                if (token) headers.Authorization = `Bearer ${token}`;
-                const res = await fetch(
-                    `/api/v1/projects/${encodeURIComponent(slug)}/schema`,
-                    { headers },
-                );
-                if (!res.ok) return;
-                const json = (await res.json()) as { edges?: SchemaEdge[] };
-                const next: Record<string, LookupOpt[]> = {};
-                await Promise.all(
-                    cols.map(async (name) => {
-                        const edge = (json.edges ?? []).find(
-                            (e) =>
-                                e.kind === "fk" &&
-                                e.source === table &&
-                                e.source_column === name,
-                        );
-                        if (!edge?.target) return;
-                        const rowsRes = await fetch(
-                            `/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(edge.target)}/rows`,
-                            { headers },
-                        );
-                        if (!rowsRes.ok) return;
-                        const body = (await rowsRes.json()) as {
-                            rows?: Record<string, unknown>[];
-                        };
-                        next[name] = (body.rows ?? []).map((row) => {
-                            const id = String(row.source_id ?? "");
-                            const label = lookupLabel(row, id);
-                            return { id, label };
-                        });
-                    }),
-                );
-                lookups = next;
-            } catch {
-                lookups = {};
-            }
-        })();
+        void loadFkLookups({
+            slug,
+            table,
+            columns: cols,
+            accessToken: token,
+        }).then((next) => {
+            lookups = next;
+        });
     });
-
-    function lookupLabel(row: Record<string, unknown>, fallback: string) {
-        for (const k of ["label", "name", "title", "code"]) {
-            const v = row[k];
-            if (v != null && String(v).trim() !== "") return String(v);
-        }
-        return fallback;
-    }
 
     function confirm() {
         const attrs: Record<string, string> = {};
@@ -125,6 +89,8 @@
     function setField(name: string, value: string) {
         values = { ...values, [name]: value };
     }
+
+    const attrOnly = $derived(geomType === "none");
 </script>
 
 <form
@@ -134,14 +100,22 @@
         confirm();
     }}
 >
-    <div class="flex shrink-0 items-start justify-between gap-2 border-b border-border px-2 py-1.5">
+    <div
+        class="flex shrink-0 items-start justify-between gap-2 border-b border-border px-2 py-1.5"
+    >
         <div class="min-w-0">
             <p class="font-medium text-foreground">
-                {mode === "edit" ? "Edit attributes" : "New feature"}
+                {mode === "edit"
+                    ? "Edit attributes"
+                    : attrOnly
+                      ? "New row"
+                      : "New feature"}
             </p>
             <p class="mt-0.5 truncate text-[11px] text-muted-foreground">
                 {#if mode === "edit"}
                     {layer}{entityId ? ` · ${entityId}` : ""}
+                {:else if attrOnly}
+                    {layer}
                 {:else}
                     {geomType} on {layer}
                 {/if}
@@ -162,42 +136,31 @@
             <p class="text-[11px] text-muted-foreground">
                 {mode === "edit"
                     ? "No editable attribute columns on this table."
-                    : "No attribute columns. Save to keep geometry in the session buffer."}
+                    : attrOnly
+                      ? "No attribute columns."
+                      : "No attribute columns. Save to keep geometry in the session buffer."}
             </p>
         {:else}
-            {#each fields as name}
+            {#each fields as name (name)}
                 <Field>
                     <FieldLabel class="text-[11px]">{name}</FieldLabel>
-                    {#if lookups[name]}
-                        <select
-                            class="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-                            value={values[name] ?? ""}
-                            onchange={(e) =>
-                                setField(
-                                    name,
-                                    (e.currentTarget as HTMLSelectElement)
-                                        .value,
-                                )}
-                        >
-                            <option value="">—</option>
-                            {#each lookups[name] as opt}
-                                <option value={opt.id}>{opt.label}</option>
-                            {/each}
-                        </select>
-                    {:else}
-                        <Input
-                            class="h-8 text-sm"
-                            value={values[name] ?? ""}
-                            autocomplete="off"
-                            oninput={(e) =>
-                                setField(
-                                    name,
-                                    (e.currentTarget as HTMLInputElement).value,
-                                )}
-                        />
-                    {/if}
+                    <SchemaField
+                        value={values[name] ?? ""}
+                        options={lookups[name]}
+                        onInput={(v) => setField(name, v)}
+                        onCommit={(v) => setField(name, v)}
+                    />
                 </Field>
             {/each}
+        {/if}
+        {#if mode === "edit"}
+            <JunctionRelated
+                table={layer}
+                {entityId}
+                {schemaTables}
+                {rows}
+                {onOpenRelated}
+            />
         {/if}
     </div>
 

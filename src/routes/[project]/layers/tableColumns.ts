@@ -2,6 +2,7 @@ import { type ColumnDef, createColumnHelper } from "@tanstack/table-core";
 import { renderComponent } from "$lib/components/ui/data-table/render-helpers.js";
 import MediaCell from "$lib/components/ui/media-cell.svelte";
 import RowNum from "$lib/components/ui/row-num.svelte";
+import type { LookupOpt } from "$lib/project/schemaFields";
 
 const columnHelper = createColumnHelper<Record<string, unknown>>();
 
@@ -50,6 +51,7 @@ export function buildColumns(
     tableName: string,
     tables: Record<string, string[]>,
     mediaByEntity: Record<string, { url: string; media_type: string }[]>,
+    lookupsByColumn?: Record<string, LookupOpt[]>,
 ): ColumnDef<Record<string, unknown>>[] {
     const cols = tables[tableName] ?? [];
 
@@ -79,6 +81,12 @@ export function buildColumns(
                 header: col,
                 cell: (info) => {
                     const val = info.getValue();
+                    const opts = lookupsByColumn?.[col];
+                    if (opts && val != null && String(val) !== "") {
+                        const id = String(val);
+                        const hit = opts.find((o) => o.id === id);
+                        return hit ? hit.label : formatCellValue(val);
+                    }
                     return formatCellValue(val);
                 },
             }),
