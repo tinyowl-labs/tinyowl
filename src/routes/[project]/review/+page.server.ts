@@ -78,11 +78,30 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		}
 	} catch (_) {}
 
+	let heads: { name: string; commit_id: string; author?: string }[] = [];
+	try {
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/refs`,
+			{ headers },
+		);
+		if (res.ok) {
+			const data = await res.json();
+			const develop = typeof data?.develop === "string" ? data.develop : "";
+			if (Array.isArray(data?.heads)) {
+				heads = data.heads.filter(
+					(h: { commit_id?: string }) =>
+						h?.commit_id && h.commit_id !== develop,
+				);
+			}
+		}
+	} catch (_) {}
+
 	return {
 		accessToken: accessToken ?? "",
 		preview,
 		changesets,
 		conflictedCommits,
+		heads,
 		role,
 	};
 };

@@ -346,7 +346,7 @@ function addFeature(Cesium: any, ds: any, f: DiffFeature) {
 /** One in-flight `dataSources.add` per name so filter flips cannot double-push. */
 const overlayAttach = new Map<string, Promise<any>>();
 
-async function getOrAttachOverlayDs(
+export async function getOrAttachOverlayDs(
     Cesium: any,
     viewer: any,
     name: string,

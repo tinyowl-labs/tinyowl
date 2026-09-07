@@ -1,5 +1,9 @@
 import { asGeometry, geometriesEqual } from "./geometry";
 import { entityIdFromChanges, parseDiffOp } from "./identity";
+import {
+    geometryFromChangeValue,
+    isGeomColumnName,
+} from "./wkb";
 import type {
     DiffFeature,
     GeoJsonGeometry,
@@ -20,8 +24,14 @@ function geomFromChanges(
     changes: ListChangeCol[] | undefined,
     key: "old_geometry" | "new_geometry",
 ) {
+    const rawKey = key === "new_geometry" ? "new" : "old";
     for (const c of changes ?? []) {
         const g = asGeometry(c[key]);
+        if (g) return g;
+    }
+    for (const c of changes ?? []) {
+        if (!isGeomColumnName(String(c?.name ?? ""))) continue;
+        const g = geometryFromChangeValue(c[rawKey]);
         if (g) return g;
     }
     return null;
@@ -40,7 +50,7 @@ export function fromListChanges(input: unknown): DiffFeature[] {
         const entityId = entityIdFromChanges(changes, `#${i + 1}`);
         const newG = geomFromChanges(changes, "new_geometry");
         const oldG = geomFromChanges(changes, "old_geometry");
-        const top = asGeometry(e.geometry);
+        const top = asGeometry(e.geometry) ?? geometryFromChangeValue(e.geometry);
 
         let geometry: GeoJsonGeometry | null = newG ?? top;
         let oldGeometry: GeoJsonGeometry | null = oldG;

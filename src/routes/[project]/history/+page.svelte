@@ -8,7 +8,7 @@
     import StepScrubber, {
         type StepItem,
     } from "$lib/components/ui/step-scrubber.svelte";
-    import { fromListChanges, parseDiffOp } from "$lib/geoDiff";
+    import { fromListChanges, isChangeOp, parseDiffOp } from "$lib/geoDiff";
 
     let { data } = $props();
 
@@ -72,11 +72,14 @@
     let scrubFeatures = $state<any[]>([]);
     let loadErr = $state("");
     let loadGen = 0;
-    let onlyChanges = $state(true);
+    let diffOnly = $state(true);
+    let inspectId = $state<string | null>(null);
 
     const mapFeatures = $derived(
-        onlyChanges
-            ? scrubFeatures.filter((f) => parseDiffOp(f.type) !== "head")
+        diffOnly
+            ? scrubFeatures.filter((f) =>
+                  isChangeOp(parseDiffOp(f.op ?? f.type)),
+              )
             : scrubFeatures,
     );
 
@@ -119,43 +122,25 @@
             const tableName = String((e as any)?.table ?? "");
             if (tableName && !tableName.startsWith("_")) names.add(tableName);
         }
-        if (names.size === 0 && !onlyChanges) names.add("Sites");
+        if (names.size === 0 && !diffOnly) names.add("Sites");
 
         const parsed = fromListChanges(geodiff);
-        const opByKey = new Map<
-            string,
-            { type: string; geometry: any; oldGeometry?: any }
-        >();
-        for (let i = 0; i < geodiff.length; i++) {
-            const e = geodiff[i] as any;
-            const table = String(e?.table ?? "");
-            if (!table || table.startsWith("_")) continue;
-            const f = parsed[i];
-            const op = String(f?.op ?? e?.type ?? "").toLowerCase();
-            if (op !== "insert" && op !== "update" && op !== "delete") continue;
-            const cols = Array.isArray(e?.changes) ? e.changes : [];
-            let eid = "";
-            for (const c of cols) {
-                const n = String(c?.name ?? "");
-                if (n !== "source_id" && n !== "fid" && n !== "id" && n !== "entity_id")
-                    continue;
-                const v = c.new ?? c.old;
-                if (v != null && v !== "") {
-                    eid = String(v);
-                    break;
-                }
-            }
-            const key = eid ? `${table}:${eid}` : "";
-            if (key) {
-                opByKey.set(key, {
-                    type: op,
-                    geometry: f?.geometry ?? e.geometry,
-                    oldGeometry: f?.oldGeometry,
-                });
-            }
+        const changeByKey = new Map<string, (typeof parsed)[number]>();
+        for (const f of parsed) {
+            if (!isChangeOp(f.op) || f.table.startsWith("_")) continue;
+            if (f.entityId) changeByKey.set(`${f.table}:${f.entityId}`, f);
         }
 
-        const hideSnapshot = onlyChanges;
+        const toMapFeat = (f: (typeof parsed)[number], geom = f.geometry) => ({
+            id: f.id,
+            table: f.table,
+            type: f.op,
+            op: f.op,
+            geometry: geom,
+            oldGeometry: f.oldGeometry,
+        });
+
+        const hideSnapshot = diffOnly;
         if (!hideSnapshot) {
             for (const name of names) {
                 try {
@@ -165,45 +150,41 @@
                     );
                     if (!res.ok) continue;
                     const fc = await res.json();
-                    for (const f of fc.features ?? []) {
-                        const eid = f.properties?.entity_id;
-                        const key = eid != null ? `${name}:${eid}` : `${name}:${feats.length}`;
-                        const op = opByKey.get(key);
+                    for (const feat of fc.features ?? []) {
+                        const eid =
+                            feat.properties?.entity_id ??
+                            feat.properties?.source_id ??
+                            "";
+                        const key =
+                            eid !== ""
+                                ? `${name}:${eid}`
+                                : `${name}:${feats.length}`;
+                        const ch = changeByKey.get(key);
                         feats.push({
-                            id: key,
+                            id: ch?.id ?? key,
                             table: name,
-                            type: op?.type ?? "head",
-                            geometry: f.geometry,
-                            oldGeometry: op?.oldGeometry,
+                            type: ch?.op ?? "head",
+                            op: ch?.op ?? "head",
+                            geometry: feat.geometry,
+                            oldGeometry: ch?.oldGeometry,
                         });
-                        if (op) opByKey.delete(key);
+                        if (ch) changeByKey.delete(key);
                     }
                 } catch {
                     /* skip table */
                 }
             }
         }
-        for (const [key, op] of opByKey) {
-            if (!op.geometry && !op.oldGeometry) continue;
-            const table = key.slice(0, key.indexOf(":"));
-            feats.push({
-                id: key,
-                table,
-                type: op.type,
-                geometry: op.geometry,
-                oldGeometry: op.oldGeometry,
-            });
-        }
-        if (feats.length === 0) {
+        if (hideSnapshot) {
             for (const f of parsed) {
+                if (!isChangeOp(f.op) || f.table.startsWith("_")) continue;
                 if (!f.geometry && !f.oldGeometry) continue;
-                feats.push({
-                    id: `${f.table}:${f.entityId}`,
-                    table: f.table,
-                    type: f.op,
-                    geometry: f.geometry,
-                    oldGeometry: f.oldGeometry,
-                });
+                feats.push(toMapFeat(f));
+            }
+        } else {
+            for (const f of changeByKey.values()) {
+                if (!f.geometry && !f.oldGeometry) continue;
+                feats.push(toMapFeat(f));
             }
         }
         if (gen !== loadGen) return;
@@ -212,7 +193,7 @@
 
     $effect(() => {
         if (!browser) return;
-        onlyChanges;
+        diffOnly;
         const rev = selectedRev;
         if (!rev) return;
         const t = setTimeout(() => {
@@ -373,16 +354,16 @@
         {#snippet actions()}
             <button
                 type="button"
-                class="px-2 py-1 rounded-md border border-border text-xs shrink-0 {onlyChanges
+                class="px-2 py-1 rounded-md border border-border text-xs shrink-0 {diffOnly
                     ? 'bg-accent text-foreground'
                     : 'text-muted-foreground hover:text-foreground'}"
-                title={onlyChanges
-                    ? "Showing changed geometry only"
+                title={diffOnly
+                    ? "Showing insert / update / delete geometry"
                     : "Showing the full snapshot with changes highlighted"}
-                aria-pressed={onlyChanges}
-                onclick={() => (onlyChanges = !onlyChanges)}
+                aria-pressed={diffOnly}
+                onclick={() => (diffOnly = !diffOnly)}
             >
-                Only changes
+                Diff only
             </button>
             {#if developOldest.length > 0}
                 <div class="flex rounded-md border border-border text-xs overflow-hidden shrink-0">
@@ -606,15 +587,15 @@
             <div class="relative z-0 isolate flex-1 min-h-0 overflow-hidden">
                 <ReviewMap
                     features={mapFeatures}
-                    selectedId={null}
+                    selectedId={inspectId}
                     class="h-full w-full"
                 />
                 {#if selectedRev && !loadErr && mapFeatures.length === 0}
                     <p
                         class="pointer-events-none absolute left-3 top-3 z-20 rounded-md bg-background/80 px-2 py-1 text-xs text-muted-foreground"
                     >
-                        {#if onlyChanges && scrubFeatures.length > 0}
-                            No changed geometry
+                        {#if diffOnly && geodiff.length > 0}
+                            No geometry on these changes
                         {:else if onDevelop}
                             No geometry at {(selectedRev ?? "").slice(0, 8)}
                         {:else}
@@ -646,7 +627,11 @@
                         </button>
                     {/if}
                 </div>
-                <ChangesetInspect {geodiff} showMap={false} />
+                <ChangesetInspect
+                    {geodiff}
+                    showMap={false}
+                    onSelect={(id) => (inspectId = id)}
+                />
             </div>
         </div>
     </div>

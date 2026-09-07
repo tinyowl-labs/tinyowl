@@ -2,7 +2,7 @@
     import { browser } from "$app/environment";
     import { page } from "$app/stores";
     import { env as publicEnv } from "$env/dynamic/public";
-    import { onDestroy, onMount } from "svelte";
+    import { onDestroy, onMount, untrack } from "svelte";
     import CheckIcon from "@lucide/svelte/icons/check";
     import BoxIcon from "@lucide/svelte/icons/box";
     import EyeIcon from "@lucide/svelte/icons/eye";
@@ -30,10 +30,14 @@
     import FeatureCreateForm from "./FeatureCreateForm.svelte";
     import { SELECTION_PRIMARY, SELECTION_SECONDARY } from "./selectionStyle";
     import {
+        bboxFromEntity,
+        collectKeysAtScreenPoint,
         collectKeysInScreenPolygon,
         collectKeysInScreenRect,
+        type GeoBbox,
         type SelectableEntity,
     } from "./mapSelection";
+    import { syncSelectionOverlay } from "./selectionOverlay";
     import { mapToolShortcut } from "./mapShortcuts";
     import {
         dedupePickCandidates,
@@ -195,6 +199,7 @@
         baseLon?: number;
         baseLat?: number;
         baseAlt?: number;
+        bbox?: GeoBbox | null;
     };
 
     type Props = {
@@ -332,7 +337,7 @@
     let commitBusy = $state(false);
     let commitError = $state("");
     let commitDoneId = $state("");
-    let commitDoneStatus = $state<"committed" | "conflicted" | "">("");
+    let commitDoneStatus = $state<"committed" | "conflicted" | "parked" | "">("");
     let drawMode = $state<DrawGeomMode>("Polygon");
     let drawUseHeight = $state(true);
     let snapMode = $state<SnapMode>("mesh");
@@ -498,6 +503,8 @@
     let presenceConnected = $state(false);
     let presenceHandle = $state<MapPresenceHandle | null>(null);
     let developCommit = $state("");
+    /** Envelope parent captured when the session buffer first becomes non-empty. */
+    let sessionBaseCommit = $state("");
     let awarenessDataSource: any = null;
     let editLockHint = $state("");
     let editLockTimer: ReturnType<typeof setTimeout> | null = null;
@@ -562,6 +569,8 @@
     const layerSources = new Map<string, any>();
     const clusteredSources = new WeakSet<object>();
     const entityMeta = new WeakMap<object, EntityMeta>();
+    /** Reverse index for selection keys — avoid scanning every entity on click. */
+    const entitiesByKey = new Map<string, any[]>();
     let selectedEntity: any = null;
     let layerLoadGen = 0;
     let modelLoadGen = 0;
@@ -586,8 +595,8 @@
     /** Project extent used by Home — preferred over a one-shot camera pose. */
     let homeSphere: any | null = null;
     let scratchSphere: any;
-    /** Keys that currently have selection styling applied. */
-    let styledSelectionKeys = new Set<string>();
+    let selectionDataSource: any = null;
+    let appliedClassifyTiles: boolean | null = null;
     /** Modifier keys captured on pointerdown (Cesium click has no modifiers). */
     let lastPointerMods = { shift: false, ctrl: false, meta: false };
 
@@ -1086,7 +1095,7 @@
                 const key = toSelectionKey(meta.layerName, meta.entityId);
                 if (seen.has(key)) continue;
                 seen.add(key);
-                out.push({ key, entity });
+                out.push({ key, entity, bbox: meta.bbox });
             }
         }
         return out;
@@ -1100,33 +1109,16 @@
 
     function findEntitiesByKey(key: string): any[] {
         if (!key) return [];
-        const { layer, id } = parseSelectionKey(key);
-        if (!id) return [];
-        const out: any[] = [];
-        for (const ds of entityDataSources()) {
-            try {
-                for (const entity of ds.entities.values) {
-                    const meta = entityMeta.get(entity);
-                    if (!meta) continue;
-                    if (
-                        meta.entityId === id &&
-                        (!layer || meta.layerName === layer)
-                    ) {
-                        out.push(entity);
-                    }
-                }
-            } catch {
-                /* ignore */
-            }
-        }
-        const visible = out.filter((e) => {
+        const indexed = entitiesByKey.get(key);
+        if (!indexed || indexed.length === 0) return [];
+        const visible = indexed.filter((e) => {
             try {
                 return e.show !== false;
             } catch {
                 return true;
             }
         });
-        return visible.length > 0 ? visible : out;
+        return visible.length > 0 ? visible : indexed;
     }
 
     function findEntityByKey(key: string): any | null {
@@ -1177,6 +1169,7 @@
     function destroyLayerSource(name: string) {
         const ds = layerSources.get(name);
         if (!ds) return;
+        unindexDataSource(ds);
         layerSources.delete(name);
         try {
             viewer?.dataSources?.remove(ds, true);
@@ -1202,7 +1195,6 @@
         clearSelectionUi();
         lastFlownKey = "";
         clearCommentSelection();
-        if (started) syncAllSelectionStyles();
     }
 
     /** Exit isolate; if this isolate came from `/layers?q=`, drop the query and selection. */
@@ -1227,11 +1219,14 @@
     function closeContextMenu() {
         const wasOpen = ctxOpen;
         const wasEntity = ctxKind === "entity";
+        const previewed = ctxEntity;
         ctxOpen = false;
         ctxEntity = null;
         ctxKind = "entity";
         ctxTilesetHash = "";
-        // Restore selection styles after context preview highlight.
+        if (wasOpen && wasEntity && previewed) {
+            applyEntitySelectionStyle(previewed, null);
+        }
         if (wasOpen && wasEntity && started) syncAllSelectionStyles();
     }
 
@@ -2262,6 +2257,7 @@
                 accessToken,
                 message,
                 editBuffer.entries,
+                sessionBaseCommit,
             );
             if (res.status === "conflicted") {
                 commitDoneId = res.commit_id;
@@ -2272,8 +2268,17 @@
                 return;
             }
             editBuffer.clear();
+            sessionBaseCommit = "";
             commitMessage = "";
             commitDoneId = res.commit_id;
+            if (res.status === "parked") {
+                commitDoneStatus = "parked";
+                commitError =
+                    res.error ||
+                    "Develop moved; parked on a personal ref. Integrate from Review.";
+                onCommitted?.();
+                return;
+            }
             commitDoneStatus = "committed";
             if (res.develop) developCommit = res.develop;
             onCommitted?.();
@@ -2682,19 +2687,25 @@
         screenPos: any,
     ): { table: string; entityId: string } | null {
         if (!viewer || !bufferOverlayVisible) return null;
+        const overlayHit = (picked: any) => {
+            const entity =
+                picked?.id && typeof picked.id === "object"
+                    ? picked.id
+                    : picked;
+            const info = overlayEntityInfo(entity);
+            if (!info || info.role !== "after") return null;
+            const buf = editBuffer.entryFor(info.table, info.entityId);
+            if (buf && buf.op !== "delete") {
+                return { table: buf.table, entityId: buf.entityId };
+            }
+            return null;
+        };
         try {
-            const picks = viewer.scene.drillPick(screenPos, 24) ?? [];
-            for (const picked of picks) {
-                const entity =
-                    picked?.id && typeof picked.id === "object"
-                        ? picked.id
-                        : picked;
-                const info = overlayEntityInfo(entity);
-                if (!info || info.role !== "after") continue;
-                const buf = editBuffer.entryFor(info.table, info.entityId);
-                if (buf && buf.op !== "delete") {
-                    return { table: buf.table, entityId: buf.entityId };
-                }
+            const top = overlayHit(viewer.scene.pick(screenPos));
+            if (top) return top;
+            for (const picked of viewer.scene.drillPick(screenPos, 8) ?? []) {
+                const hit = overlayHit(picked);
+                if (hit) return hit;
             }
         } catch {
             /* ignore */
@@ -3576,30 +3587,76 @@
         layerSelection.selectSingle(c.layerName, c.entityId);
         focusSeriesLayer(c.layerName);
         lastFlownKey = selectionFlyKey();
-        syncAllSelectionStyles();
         selectedEntity = findEntityByKey(c.key);
         // Do not retarget pickAnchorCartesian — panel stays pinned to the click in 3D.
     }
 
+    function clickGeoPoint(position: { x: number; y: number } | unknown): { longitude: number; latitude: number } | null {
+        if (!viewer || !Cesium || !position || typeof position !== "object") return null;
+        const pos = position as { x: number; y: number };
+        if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return null;
+        const world = pickMeasureCartesian(pos);
+        if (!world) return null;
+        try {
+            const c = Cesium.Cartographic.fromCartesian(world);
+            if (!c) return null;
+            return { longitude: c.longitude, latitude: c.latitude };
+        } catch {
+            return null;
+        }
+    }
+
+    function candidateFromEntity(entity: any): PickCandidate | null {
+        const meta = entityMeta.get(entity);
+        if (!meta) return null;
+        try {
+            if (entity.show === false) return null;
+        } catch {
+            /* ignore */
+        }
+        if (layerSelection.isHidden(meta.layerName, meta.entityId)) return null;
+        if (isViewFiltered(meta.layerName, meta.entityId)) return null;
+        return makePickCandidate(entity, meta.layerName, meta.entityId);
+    }
+
+    function collectTopCandidate(position: unknown): PickCandidate | null {
+        if (!viewer || !Cesium) return null;
+        try {
+            const entity = resolvePickedEntity(viewer.scene.pick(position));
+            return entity ? candidateFromEntity(entity) : null;
+        } catch {
+            return null;
+        }
+    }
+
     function collectDrillCandidates(position: unknown): PickCandidate[] {
         if (!viewer || !Cesium) return [];
-        const picks = viewer.scene.drillPick(position, 32) ?? [];
-        const out: PickCandidate[] = [];
-        for (const picked of picks) {
-            const entity = resolvePickedEntity(picked);
-            if (!entity) continue;
-            try {
-                if (entity.show === false) continue;
-            } catch {
-                /* ignore */
-            }
-            const meta = entityMeta.get(entity);
-            if (!meta) continue;
-            if (layerSelection.isHidden(meta.layerName, meta.entityId)) continue;
-            if (isViewFiltered(meta.layerName, meta.entityId)) continue;
-            out.push(makePickCandidate(entity, meta.layerName, meta.entityId));
+        const top = collectTopCandidate(position);
+        const screen = position as { x: number; y: number };
+        if (
+            !screen ||
+            typeof screen.x !== "number" ||
+            typeof screen.y !== "number"
+        ) {
+            return top ? [top] : [];
         }
-        return dedupePickCandidates(out);
+        const geo = clickGeoPoint(screen);
+        const keys = collectKeysAtScreenPoint(
+            Cesium,
+            viewer,
+            allSelectableEntities(),
+            screen,
+            geo,
+        );
+        const extra: PickCandidate[] = [];
+        for (const key of keys) {
+            if (top && key === top.key) continue;
+            const entity = findEntityByKey(key);
+            if (!entity) continue;
+            const c = candidateFromEntity(entity);
+            if (c) extra.push(c);
+        }
+        return dedupePickCandidates(top ? [top, ...extra] : extra);
     }
 
     function applyEntitySelectionStyle(
@@ -3671,35 +3728,50 @@
         }
     }
 
-    function syncAllSelectionStyles() {
-        for (const key of styledSelectionKeys) {
-            for (const entity of findEntitiesByKey(key)) {
-                applyEntitySelectionStyle(entity, null);
+    function raiseTransientOverlays() {
+        try {
+            if (selectionDataSource) {
+                viewer?.dataSources?.raiseToTop?.(selectionDataSource);
             }
+            if (diffDataSource) {
+                viewer?.dataSources?.raiseToTop?.(diffDataSource);
+            }
+            if (awarenessDataSource) {
+                viewer?.dataSources?.raiseToTop?.(awarenessDataSource);
+            }
+            raiseDrawHandles();
+        } catch {
+            /* ignore */
         }
-        styledSelectionKeys = new Set();
+    }
 
+    function syncAllSelectionStyles() {
         const primary = layerSelection.primaryKey;
+        const items: Array<{ entity: any; kind: "primary" | "secondary" }> = [];
+        const seen = new Set<string>();
         for (const key of layerSelection.selected) {
-            const entities = findEntitiesByKey(key);
-            if (entities.length === 0) continue;
             const kind = key === primary ? "primary" : "secondary";
-            for (const entity of entities) {
-                applyEntitySelectionStyle(entity, kind);
+            for (const entity of findEntitiesByKey(key)) {
+                items.push({ entity, kind });
             }
-            styledSelectionKeys.add(key);
+            seen.add(key);
         }
         for (const key of joinedKeys) {
-            if (styledSelectionKeys.has(key)) continue;
-            const entities = findEntitiesByKey(key);
-            if (entities.length === 0) continue;
-            for (const entity of entities) {
-                applyEntitySelectionStyle(entity, "secondary");
+            if (seen.has(key)) continue;
+            for (const entity of findEntitiesByKey(key)) {
+                items.push({ entity, kind: "secondary" });
             }
-            styledSelectionKeys.add(key);
         }
 
-        bumpRender();
+        if (viewer && Cesium) {
+            void syncSelectionOverlay(Cesium, viewer, items).then((ds) => {
+                selectionDataSource = ds;
+                raiseTransientOverlays();
+                bumpRender();
+            });
+        } else {
+            bumpRender();
+        }
 
         if (editEnabled) {
             hideEntityPopup();
@@ -3712,7 +3784,6 @@
             return;
         }
 
-        // Single selection: show popup. Multi: no popup (primary still styled).
         if (layerSelection.size === 1 && primary) {
             if (pickDismissedKey === primary) return;
             const entity = findEntityByKey(primary);
@@ -3723,6 +3794,35 @@
             }
         }
         hideEntityPopup();
+    }
+
+    function unindexEntity(entity: any) {
+        const meta = entityMeta.get(entity);
+        if (!meta) return;
+        const key = toSelectionKey(meta.layerName, meta.entityId);
+        const list = entitiesByKey.get(key);
+        if (!list) return;
+        const next = list.filter((e) => e !== entity);
+        if (next.length > 0) entitiesByKey.set(key, next);
+        else entitiesByKey.delete(key);
+    }
+
+    function unindexDataSource(ds: any) {
+        if (!ds?.entities) return;
+        try {
+            for (const entity of ds.entities.values) unindexEntity(entity);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    function indexEntity(entity: any, key: string) {
+        const list = entitiesByKey.get(key);
+        if (!list) {
+            entitiesByKey.set(key, [entity]);
+            return;
+        }
+        if (!list.includes(entity)) list.push(entity);
     }
 
     function trackEntity(
@@ -3744,6 +3844,9 @@
         > = {},
     ) {
         if (!entityId) return;
+        unindexEntity(entity);
+        const key = toSelectionKey(layerName, entityId);
+        const time = Cesium?.JulianDate?.now?.() ?? undefined;
         entityMeta.set(entity, {
             layerName,
             entityId,
@@ -3755,9 +3858,11 @@
             baseOutline: extras.baseOutline ?? null,
             baseAlpha: extras.baseAlpha ?? 0.35,
             dash: extras.dash ?? false,
+            bbox: Cesium ? bboxFromEntity(Cesium, entity, time) : null,
             ...captureBasePosition(entity),
         });
-        entity.name = toSelectionKey(layerName, entityId);
+        entity.name = key;
+        indexEntity(entity, key);
         if (layerSelection.isHidden(layerName, entityId)) {
             try {
                 entity.show = false;
@@ -4046,6 +4151,7 @@
                 /* ignore */
             }
         }
+        void syncPolygonGroundMode();
 
         applyBasemapTheme();
         try {
@@ -4182,6 +4288,13 @@
         applyBasemapTheme();
         viewer.scene.globe.depthTestAgainstTerrain = false;
         try {
+            viewer.screenSpaceEventHandler.removeInputAction(
+                Cesium.ScreenSpaceEventType.LEFT_CLICK,
+            );
+        } catch {
+            /* ignore */
+        }
+        try {
             renderRequestRemovers.push(
                 viewer.camera.changed.addEventListener(bumpRender),
             );
@@ -4226,6 +4339,11 @@
             closeContextMenu();
             const commentHit = pickCommentId(viewer, click.position);
             if (commentHit) {
+                try {
+                    viewer.selectedEntity = undefined;
+                } catch {
+                    /* ignore */
+                }
                 layerSelection.clearSelection();
                 clearSelectionUi();
                 commentsEnabled = true;
@@ -4247,6 +4365,26 @@
                 return;
             }
             const { shift, ctrl, meta: cmd } = lastPointerMods;
+            if (shift || ctrl || cmd) {
+                const top = collectTopCandidate(click.position);
+                if (!top) {
+                    if (!shift) {
+                        clearSelection();
+                        closePickPager();
+                    }
+                    return;
+                }
+                clearCommentSelection();
+                pickDismissedKey = "";
+                if (shift) {
+                    layerSelection.addSelection(top.layerName, top.entityId);
+                    focusSeriesLayer(top.layerName);
+                } else {
+                    layerSelection.removeSelection(top.layerName, top.entityId);
+                }
+                lastFlownKey = selectionFlyKey();
+                return;
+            }
             const candidates = collectDrillCandidates(click.position);
             if (candidates.length === 0) {
                 clearSelection();
@@ -4256,26 +4394,12 @@
             clearCommentSelection();
             pickDismissedKey = "";
             const top = candidates[0]!;
-            if (shift) {
-                layerSelection.addSelection(top.layerName, top.entityId);
-                focusSeriesLayer(top.layerName);
-                lastFlownKey = selectionFlyKey();
-                syncAllSelectionStyles();
-                return;
-            }
-            if (ctrl || cmd) {
-                layerSelection.removeSelection(top.layerName, top.entityId);
-                lastFlownKey = selectionFlyKey();
-                syncAllSelectionStyles();
-                return;
-            }
             pickCandidates = candidates;
             pickIndex = 0;
             pickOpen = true;
             layerSelection.selectSingle(top.layerName, top.entityId);
             focusSeriesLayer(top.layerName);
             lastFlownKey = selectionFlyKey();
-            syncAllSelectionStyles();
             selectedEntity = findEntityByKey(top.key);
             const pos = click.position as { x: number; y: number };
             setPickAnchorFromScreen(pos);
@@ -4396,6 +4520,7 @@
         if (gen !== modelLoadGen) return;
 
         flyHomeOnce();
+        void syncPolygonGroundMode();
         bumpRender();
     }
 
@@ -4460,6 +4585,7 @@
             }
         }
         if (visible) void syncModels(false);
+        void syncPolygonGroundMode();
     }
 
     function toggleModel(hash: string) {
@@ -4470,12 +4596,14 @@
             prim.show = next && dim === "3d";
             if (next) onSelectTileset?.(hash);
             bumpRender();
+            void syncPolygonGroundMode();
             return;
         }
         if (next) {
             onSelectTileset?.(hash);
             void syncModels(false);
         }
+        void syncPolygonGroundMode();
     }
 
     function coverageCtx(gen: number) {
@@ -4564,6 +4692,7 @@
                         viewer,
                         layer.packets,
                         layer.name,
+                        { classifyTiles: classifyTilesActive() },
                     );
                     if (gen !== layerLoadGen) return;
                     ds.__packetCount = packetCount;
@@ -4582,6 +4711,7 @@
 
         if (gen !== layerLoadGen) return;
 
+        appliedClassifyTiles = classifyTilesActive();
         applyLayerViews();
         flyHomeOnce();
         bumpRender();
@@ -4597,13 +4727,26 @@
         );
     }
 
-    function selectionKindFor(
-        layerName: string,
-        entityId: string,
-    ): "primary" | "secondary" | null {
-        const key = toSelectionKey(layerName, entityId);
-        if (!layerSelection.selected.has(key)) return null;
-        return key === layerSelection.primaryKey ? "primary" : "secondary";
+    function classifyTilesActive(): boolean {
+        if (dim !== "3d") return false;
+        return models.some((m) => isModelVisible(m.hash));
+    }
+
+    async function syncPolygonGroundMode(force = false) {
+        if (!Cesium) return;
+        const next = classifyTilesActive();
+        if (!force && appliedClassifyTiles === next) return;
+        appliedClassifyTiles = next;
+        if (layerSources.size === 0) return;
+        const { applyPolygonClassification } = await import("./czmlEntities");
+        for (const ds of layerSources.values()) {
+            try {
+                applyPolygonClassification(Cesium, ds, next);
+            } catch {
+                /* ignore */
+            }
+        }
+        bumpRender();
     }
 
     function applyLayerClustering(ds: any, layerName: string) {
@@ -4748,10 +4891,7 @@
                     } else {
                         applyEntityHeight(entity, meta, null);
                     }
-                    applyEntitySelectionStyle(
-                        entity,
-                        selectionKindFor(meta.layerName, meta.entityId),
-                    );
+                    applyEntitySelectionStyle(entity, null);
                 }
             } catch {
                 /* ignore */
@@ -4765,6 +4905,7 @@
             }
         }
         applyHiddenVisibility();
+        syncAllSelectionStyles();
         bumpRender();
     }
 
@@ -4974,6 +5115,7 @@
             }
         }
         let cancelled = false;
+        unindexDataSource(diffDataSource);
         void syncDiffOverlay(Cesium, viewer, features).then((ds) => {
             if (cancelled) return;
             diffDataSource = ds;
@@ -4982,15 +5124,7 @@
             if (layerSelection.primaryKey) {
                 selectedEntity = findEntityByKey(layerSelection.primaryKey);
             }
-            try {
-                if (ds) viewer.dataSources.raiseToTop(ds);
-                if (awarenessDataSource) {
-                    viewer.dataSources.raiseToTop(awarenessDataSource);
-                }
-            } catch {
-                /* ignore */
-            }
-            raiseDrawHandles();
+            raiseTransientOverlays();
             bumpRender();
         });
         return () => {
@@ -5028,8 +5162,9 @@
         selectionSig;
         appliedHighlight;
         editEnabled;
-        if (!ready || !started || !hasFramed) return;
+        if (!ready || !started) return;
         syncAllSelectionStyles();
+        if (!hasFramed) return;
         const flyKey = selectionFlyKey();
         if (flyKey && flyKey !== lastFlownKey) {
             void flyToSelection(false);
@@ -5193,6 +5328,18 @@
     });
 
     $effect(() => {
+        const size = editBuffer.size;
+        const tip = developCommit;
+        if (size === 0) {
+            sessionBaseCommit = "";
+            return;
+        }
+        if (!sessionBaseCommit && tip) {
+            sessionBaseCommit = tip;
+        }
+    });
+
+    $effect(() => {
         const h = presenceHandle;
         const hidden = presenceHidden;
         const connected = presenceConnected;
@@ -5229,14 +5376,11 @@
         ).then((ds) => {
             awarenessDataSource = ds;
             try {
-                if (ds) {
-                    ds.show = true;
-                    viewer.dataSources.raiseToTop(ds);
-                }
+                if (ds) ds.show = true;
             } catch {
                 /* ignore */
             }
-            raiseDrawHandles();
+            raiseTransientOverlays();
             bumpRender();
         });
     });
@@ -5656,6 +5800,10 @@
             viewer,
             commentDataSource,
         );
+        // Selection/hover only scale the pin — do not resubscribe here or
+        // syncCommentPins rebuilds every polyline/polygon (visible flicker).
+        const hoveredId = untrack(() => hoveredCommentId);
+        const selectedId = untrack(() => selectedCommentId);
         syncCommentPins({
             Cesium,
             viewer,
@@ -5672,8 +5820,8 @@
             ds: commentDataSource,
             comments,
             filter: commentFilter,
-            hoveredId: hoveredCommentId,
-            selectedId: selectedCommentId,
+            hoveredId,
+            selectedId,
             ...commentPinFills(),
         });
         bumpRender();
@@ -5741,7 +5889,7 @@
         // Do not clear shared layerSelection — table view may still use it.
         presenceChrome.clear();
         clearSelectionUi();
-        styledSelectionKeys = new Set();
+        entitiesByKey.clear();
         postRenderRemover?.();
         postRenderRemover = null;
         for (const rm of renderRequestRemovers) {
@@ -5768,6 +5916,14 @@
         for (const hash of [...coverageLayers.keys()]) destroyCoverageLayer(hash);
         for (const name of [...layerSources.keys()]) destroyLayerSource(name);
         void detachDrawDataSource();
+        try {
+            if (selectionDataSource) {
+                destroyDiffOverlay(viewer, selectionDataSource);
+            }
+        } catch {
+            /* ignore */
+        }
+        selectionDataSource = null;
         try {
             destroyDiffOverlay(viewer, diffDataSource);
         } catch {
@@ -6120,7 +6276,6 @@
             layerSelection.applyOp(ids, dragOp);
             suppressNextClick = true;
             lastFlownKey = selectionFlyKey();
-            syncAllSelectionStyles();
         };
 
         // Shift+drag = add; Ctrl/Meta+drag = remove. Plain left-drag keeps camera.
@@ -6749,7 +6904,7 @@
                                         class="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-foreground hover:bg-primary/20 disabled:opacity-50"
                                         disabled={commitBusy ||
                                             !commitMessage.trim()}
-                                        title="Commit to develop (required message)"
+                                        title="Commit (required message). Stale develop parks on a personal ref."
                                     >
                                         <CheckIcon class="size-3" />
                                         {commitBusy ? "Sending…" : "Commit"}
@@ -6771,6 +6926,18 @@
                                     class="font-medium text-foreground underline-offset-2 hover:underline"
                                     href="/{projectSlug}/history"
                                     >history</a
+                                >
+                            </p>
+                        {/if}
+                        {#if commitDoneId && commitDoneStatus === "parked"}
+                            <p
+                                class="shrink-0 border-t border-border px-1.5 py-1 text-[10px] text-muted-foreground"
+                            >
+                                Parked — integrate from
+                                <a
+                                    class="font-medium text-foreground underline-offset-2 hover:underline"
+                                    href="/{projectSlug}/review"
+                                    >review</a
                                 >
                             </p>
                         {/if}

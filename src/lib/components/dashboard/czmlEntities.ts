@@ -44,6 +44,77 @@ function ringHasZ(flat: number[]): boolean {
     return false;
 }
 
+/** Ground polygons: clamp unless a 3D tileset is visible, then classify terrain+tiles. */
+export function polygonGroundMode(
+    useHeights: boolean,
+    classifyTiles: boolean,
+): "absolute" | "classify" | "clamp" {
+    if (useHeights) return "absolute";
+    if (classifyTiles) return "classify";
+    return "clamp";
+}
+
+function polygonGroundProps(
+    Cesium: any,
+    useHeights: boolean,
+    classifyTiles: boolean,
+): Record<string, unknown> {
+    const mode = polygonGroundMode(useHeights, classifyTiles);
+    if (mode === "absolute") return { perPositionHeight: true };
+    if (mode === "classify") {
+        return { classificationType: Cesium.ClassificationType.BOTH };
+    }
+    return {
+        height: 0,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    };
+}
+
+function polygonIsExtruded(entity: any): boolean {
+    try {
+        const h = entity?.polygon?.extrudedHeight;
+        if (h == null) return false;
+        const v = typeof h.getValue === "function" ? h.getValue() : h;
+        return v != null && Number(v) > 0;
+    } catch {
+        return false;
+    }
+}
+
+function polygonHasZ(entity: any): boolean {
+    try {
+        const p = entity?.polygon?.perPositionHeight;
+        if (p == null) return false;
+        return Boolean(typeof p.getValue === "function" ? p.getValue() : p);
+    } catch {
+        return false;
+    }
+}
+
+/** Switch 2D polygons between clamp-to-ground and 3D-tile classification. */
+export function applyPolygonClassification(
+    Cesium: any,
+    ds: any,
+    classifyTiles: boolean,
+): void {
+    if (!Cesium || !ds?.entities) return;
+    for (const entity of ds.entities.values) {
+        if (!entity?.polygon || polygonHasZ(entity) || polygonIsExtruded(entity)) {
+            continue;
+        }
+        if (classifyTiles) {
+            entity.polygon.height = undefined;
+            entity.polygon.heightReference = undefined;
+            entity.polygon.classificationType = Cesium.ClassificationType.BOTH;
+        } else {
+            entity.polygon.classificationType = undefined;
+            entity.polygon.height = 0;
+            entity.polygon.heightReference =
+                Cesium.HeightReference.CLAMP_TO_GROUND;
+        }
+    }
+}
+
 function coordKey(lng: number, lat: number): string {
     return `${lng},${lat}`;
 }
@@ -103,6 +174,7 @@ export async function customDataSourceFromCzml(
     viewer: any,
     packets: Record<string, unknown>[],
     layerName: string,
+    opts?: { classifyTiles?: boolean },
 ): Promise<any> {
     const ds = new Cesium.CustomDataSource(layerName);
     const heightMap = await samplePointHeights(Cesium, viewer, packets);
@@ -214,12 +286,11 @@ export async function customDataSourceFromCzml(
                     outline: polygon.outline !== false,
                     outlineColor: outline,
                     outlineWidth: Number(polygon.outlineWidth) || 2,
-                    ...(useHeights
-                        ? { perPositionHeight: true }
-                        : {
-                              classificationType:
-                                  Cesium.ClassificationType.BOTH,
-                          }),
+                    ...polygonGroundProps(
+                        Cesium,
+                        useHeights,
+                        Boolean(opts?.classifyTiles),
+                    ),
                 },
                 properties: props,
             });

@@ -136,3 +136,74 @@ export function geometriesEqual(
         return false;
     }
 }
+
+export type LonLatBbox = {
+    west: number;
+    south: number;
+    east: number;
+    north: number;
+};
+
+function walkLonLat(c: unknown, acc: number[][]) {
+    if (!Array.isArray(c) || c.length === 0) return;
+    if (typeof c[0] === "number") {
+        acc.push(c as number[]);
+        return;
+    }
+    for (const x of c) walkLonLat(x, acc);
+}
+
+export function bboxFromGeometry(raw: unknown): LonLatBbox | null {
+    const g = asGeometry(raw);
+    if (!g) return null;
+    const coords: number[][] = [];
+    if (g.type === "GeometryCollection" && Array.isArray(g.geometries)) {
+        for (const part of g.geometries) {
+            const child = asGeometry(part);
+            if (child) walkLonLat(child.coordinates, coords);
+        }
+    } else {
+        walkLonLat(g.coordinates, coords);
+    }
+    let west = Infinity;
+    let south = Infinity;
+    let east = -Infinity;
+    let north = -Infinity;
+    for (const [x, y] of coords) {
+        const lon = Number(x);
+        const lat = Number(y);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+        if (lon < west) west = lon;
+        if (lon > east) east = lon;
+        if (lat < south) south = lat;
+        if (lat > north) north = lat;
+    }
+    if (!Number.isFinite(west)) return null;
+    return { west, south, east, north };
+}
+
+export function unionBbox(
+    a: LonLatBbox | null,
+    b: LonLatBbox | null,
+): LonLatBbox | null {
+    if (!a) return b;
+    if (!b) return a;
+    return {
+        west: Math.min(a.west, b.west),
+        south: Math.min(a.south, b.south),
+        east: Math.max(a.east, b.east),
+        north: Math.max(a.north, b.north),
+    };
+}
+
+/** Envelope of after + before geometries (updates include both). */
+export function bboxFromDiffGeoms(
+    features: { geometry?: unknown; oldGeometry?: unknown }[],
+): LonLatBbox | null {
+    let box: LonLatBbox | null = null;
+    for (const f of features) {
+        box = unionBbox(box, bboxFromGeometry(f.geometry));
+        box = unionBbox(box, bboxFromGeometry(f.oldGeometry));
+    }
+    return box;
+}

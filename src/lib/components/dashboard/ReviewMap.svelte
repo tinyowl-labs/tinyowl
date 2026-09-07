@@ -21,8 +21,10 @@
     import {
         DIFF_OP_FILL,
         asGeometry,
+        bboxFromDiffGeoms,
         parseDiffOp,
         type DiffOp,
+        type LonLatBbox,
     } from "$lib/geoDiff";
 
     type Feature = {
@@ -38,9 +40,16 @@
         features: Feature[];
         selectedId: string | null;
         class?: string;
+        /** Fit bounds from this list so toggling visible features does not jump. */
+        envelopeFeatures?: Feature[] | null;
     };
 
-    let { features, selectedId = null, class: klass = "" }: Props = $props();
+    let {
+        features,
+        selectedId = null,
+        class: klass = "",
+        envelopeFeatures = null,
+    }: Props = $props();
 
     let container = $state<HTMLDivElement>();
     let mounted = $state(false);
@@ -51,11 +60,76 @@
     let geoLayer: LeafletGeoJSON | null = null;
     let didFit = false;
     let lastFitKey = "";
+    let lastFitArea = 0;
     let stopResize: (() => void) | undefined;
+    let stopFitResize: (() => void) | undefined;
 
-    function featuresKey(list: Feature[]): string {
-        if (!list.length) return "";
-        return `${list.length}:${list[0]?.id ?? ""}:${list[list.length - 1]?.id ?? ""}`;
+    const MIN_FIT_AREA = 80 * 80;
+
+    function envelopeKey(
+        box: LonLatBbox | null,
+        list: Feature[],
+        focusId: string,
+    ): string {
+        if (!box || list.length === 0) return "";
+        const ids = list.map((f) => f.id).join("|");
+        return `${focusId}:${list.length}:${box.west.toFixed(6)}:${box.south.toFixed(6)}:${box.east.toFixed(6)}:${box.north.toFixed(6)}:${ids}`;
+    }
+
+    function mapArea(m: LeafletMap): number {
+        try {
+            const s = m.getSize();
+            return Math.max(0, s.x) * Math.max(0, s.y);
+        } catch {
+            return 0;
+        }
+    }
+
+    function fitToEnvelope(m: LeafletMap, L: LeafletNS, box: LonLatBbox) {
+        const pad = 0.00015;
+        const west = Math.min(box.west, box.east) - pad;
+        const east = Math.max(box.west, box.east) + pad;
+        const south = Math.min(box.south, box.north) - pad;
+        const north = Math.max(box.south, box.north) + pad;
+        m.fitBounds(L.latLngBounds([south, west], [north, east]), {
+            padding: [36, 36],
+            maxZoom: 19,
+            animate: false,
+        });
+    }
+
+    function tryFit() {
+        const L = Lref;
+        const m = map;
+        if (!L || !m) return;
+        const focus =
+            envelopeFeatures && envelopeFeatures.length > 0
+                ? envelopeFeatures
+                : selectedId != null
+                  ? features.filter((f) => f.id === selectedId)
+                  : features;
+        const fitList = focus.length ? focus : features;
+        const box = bboxFromDiffGeoms(fitList);
+        const key = envelopeKey(box, fitList, envelopeFeatures?.length ? "" : (selectedId ?? ""));
+        const area = mapArea(m);
+        const needFit =
+            Boolean(box) &&
+            area >= 64 &&
+            (!didFit || key !== lastFitKey || lastFitArea < MIN_FIT_AREA);
+        if (!needFit || !box) return;
+        try {
+            m.invalidateSize({ animate: false });
+        } catch {
+            /* ignore */
+        }
+        try {
+            fitToEnvelope(m, L, box);
+            didFit = true;
+            lastFitKey = key;
+            lastFitArea = mapArea(m);
+        } catch {
+            /* empty / invalid bounds */
+        }
     }
 
     onMount(() => {
@@ -194,36 +268,7 @@
             }
         }
 
-        const key = featuresKey(features);
-        if (key !== lastFitKey) {
-            didFit = false;
-        }
-        if (!didFit) {
-            let combined: ReturnType<LeafletMap["getBounds"]> | null = null;
-            try {
-                const bounds = cluster.getBounds();
-                if (bounds.isValid()) combined = bounds;
-            } catch {
-                /* empty cluster */
-            }
-            try {
-                const geoBounds = geoLayer?.getBounds();
-                if (geoBounds?.isValid()) {
-                    combined = combined ? combined.extend(geoBounds) : geoBounds;
-                }
-            } catch {
-                /* empty geo layer */
-            }
-            if (combined?.isValid()) {
-                m.fitBounds(combined, {
-                    padding: [28, 28],
-                    maxZoom: 16,
-                    animate: false,
-                });
-                didFit = true;
-                lastFitKey = key;
-            }
-        }
+        tryFit();
     }
 
     $effect(() => {
@@ -236,6 +281,12 @@
                 if (cancelled || !container) return;
                 const m = createLeafletMap(L, container);
                 stopResize = observeLeafletResize(m, container);
+                const fitRo = new ResizeObserver(() => {
+                    if (!map || !Lref) return;
+                    tryFit();
+                });
+                fitRo.observe(container);
+                stopFitResize = () => fitRo.disconnect();
                 cluster = createClusterGroup(L, {
                     disableClusteringAtZoom: 16,
                     maxClusterRadius: 44,
@@ -246,6 +297,7 @@
                 m.invalidateSize();
                 didFit = false;
                 lastFitKey = "";
+                lastFitArea = 0;
                 redrawFeatures();
                 if (!cancelled) mapReady = true;
             } catch (err) {
@@ -258,11 +310,14 @@
             cancelled = true;
             stopResize?.();
             stopResize = undefined;
+            stopFitResize?.();
+            stopFitResize = undefined;
             cluster = null;
             geoLayer = null;
             Lref = null;
             didFit = false;
             lastFitKey = "";
+            lastFitArea = 0;
             destroyLeafletMap(map);
             map = null;
         };
@@ -271,6 +326,7 @@
     $effect(() => {
         features;
         selectedId;
+        envelopeFeatures;
         if (map && Lref) redrawFeatures();
     });
 

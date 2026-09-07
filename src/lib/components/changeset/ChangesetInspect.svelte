@@ -6,9 +6,10 @@
         geodiff: any[];
         /** When false, only the change list + field table (history scrub supplies the map). */
         showMap?: boolean;
+        onSelect?: (id: string | null) => void;
     };
 
-    let { geodiff, showMap = true }: Props = $props();
+    let { geodiff, showMap = true, onSelect }: Props = $props();
 
     let selectedIdx = $state(0);
     let showMetaTables = $state(false);
@@ -170,6 +171,10 @@
     $effect(() => {
         geodiff;
         selectedIdx = 0;
+    });
+
+    $effect(() => {
+        onSelect?.(selected?.id ?? null);
     });
 </script>
 

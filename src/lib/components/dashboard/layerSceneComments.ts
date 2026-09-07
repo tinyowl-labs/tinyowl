@@ -595,6 +595,41 @@ function lonLatOnEllipsoid(Cesium: CesiumLike, coords: number[][]) {
 	return coords.map((c) => Cesium.Cartesian3.fromDegrees(c[0]!, c[1]!, 0));
 }
 
+function cartesianEqual(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (a && typeof (a as { equals?: (o: unknown) => boolean }).equals === "function") {
+		return (a as { equals: (o: unknown) => boolean }).equals(b);
+	}
+	const p = a as { x?: number; y?: number; z?: number } | null;
+	const q = b as { x?: number; y?: number; z?: number } | null;
+	return p != null && q != null && p.x === q.x && p.y === q.y && p.z === q.z;
+}
+
+function cartesianArrayEqual(a: unknown[] | undefined, b: unknown[]): boolean {
+	if (!a || a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (!cartesianEqual(a[i], b[i])) return false;
+	}
+	return true;
+}
+
+function propertyValue(prop: unknown): unknown {
+	try {
+		return (prop as { getValue?: () => unknown })?.getValue?.();
+	} catch {
+		return undefined;
+	}
+}
+
+function entityCartesians(prop: unknown): unknown[] | undefined {
+	const v = propertyValue(prop);
+	if (Array.isArray(v)) return v;
+	if (v && Array.isArray((v as { positions?: unknown[] }).positions)) {
+		return (v as { positions: unknown[] }).positions;
+	}
+	return undefined;
+}
+
 function upsertPin(
 	Cesium: CesiumLike,
 	viewer: any,
@@ -641,7 +676,9 @@ function upsertPin(
 		ds.entities.add({ id, position, show: true, billboard });
 		return;
 	}
-	entity.position = position;
+	if (!cartesianEqual(propertyValue(entity.position), position)) {
+		entity.position = position;
+	}
 	if (entity.billboard) {
 		if (entity.billboard.image !== image) entity.billboard.image = image;
 		entity.billboard.width = billboard.width;
@@ -670,7 +707,9 @@ function upsertPoint(
 		ds.entities.add({ id, position, point });
 		return;
 	}
-	entity.position = position;
+	if (!cartesianEqual(propertyValue(entity.position), position)) {
+		entity.position = position;
+	}
 	if (entity.point) {
 		entity.point.heightReference = point.heightReference;
 	}
@@ -704,14 +743,19 @@ function upsertLine(
 		return;
 	}
 	if (entity.polyline) {
-		entity.polyline.positions = positions.slice();
+		const sameGeom =
+			cartesianArrayEqual(entityCartesians(entity.polyline.positions), positions) &&
+			propertyValue(entity.polyline.clampToGround) === drape;
+		if (!sameGeom) {
+			entity.polyline.positions = positions.slice();
+			entity.polyline.clampToGround = drape;
+			entity.polyline.disableDepthTestDistance = drape
+				? undefined
+				: Number.POSITIVE_INFINITY;
+			if (!drape && Cesium.ArcType) entity.polyline.arcType = Cesium.ArcType.NONE;
+		}
 		entity.polyline.material = material;
-		entity.polyline.clampToGround = drape;
 		entity.polyline.depthFailMaterial = material;
-		entity.polyline.disableDepthTestDistance = drape
-			? undefined
-			: Number.POSITIVE_INFINITY;
-		if (!drape && Cesium.ArcType) entity.polyline.arcType = Cesium.ArcType.NONE;
 	}
 }
 
@@ -748,22 +792,28 @@ function upsertPoly(
 		return;
 	}
 	if (entity.polygon) {
-		entity.polygon.hierarchy = hierarchy;
-		entity.polygon.material = material;
-		entity.polygon.outlineColor = color;
-		if (drape) {
-			entity.polygon.perPositionHeight = false;
-			entity.polygon.height = undefined;
-			entity.polygon.classificationType = Cesium.ClassificationType?.BOTH;
-		} else {
-			entity.polygon.height = undefined;
-			entity.polygon.perPositionHeight = true;
-			entity.polygon.disableDepthTestDistance = Number.POSITIVE_INFINITY;
-			entity.polygon.classificationType = undefined;
-			if (Cesium.HeightReference) {
-				entity.polygon.heightReference = Cesium.HeightReference.NONE;
+		const sameGeom = cartesianArrayEqual(
+			entityCartesians(entity.polygon.hierarchy),
+			positions,
+		);
+		if (!sameGeom) {
+			entity.polygon.hierarchy = hierarchy;
+			if (drape) {
+				entity.polygon.perPositionHeight = false;
+				entity.polygon.height = undefined;
+				entity.polygon.classificationType = Cesium.ClassificationType?.BOTH;
+			} else {
+				entity.polygon.height = undefined;
+				entity.polygon.perPositionHeight = true;
+				entity.polygon.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+				entity.polygon.classificationType = undefined;
+				if (Cesium.HeightReference) {
+					entity.polygon.heightReference = Cesium.HeightReference.NONE;
+				}
 			}
 		}
+		entity.polygon.material = material;
+		entity.polygon.outlineColor = color;
 	}
 }
 

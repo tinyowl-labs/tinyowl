@@ -23,3 +23,8 @@ export function parseDiffOp(raw: unknown): DiffOp {
     }
     return "head";
 }
+
+/** Insert / update / delete — not snapshot `head`. */
+export function isChangeOp(op: DiffOp): boolean {
+    return op === "insert" || op === "update" || op === "delete";
+}
