@@ -126,6 +126,15 @@
     let tilesetMenuEl = $state<HTMLDivElement>();
 
     const joinedSet = $derived(new Set(joinedKeys));
+    const pendingByLayer = $derived(editBuffer.pendingByTable);
+    const pendingKeys = $derived.by(() => {
+        const s = new Set<string>();
+        for (const e of editBuffer.entries) {
+            if (!e.table || !e.entityId || e.table.startsWith("_")) continue;
+            s.add(toSelectionKey(e.table, e.entityId));
+        }
+        return s;
+    });
     const selectionSig = $derived(
         `${layerSelection.primaryKey ?? ""}|${[...layerSelection.selected].sort().join(",")}|${[...joinedKeys].sort().join(",")}`,
     );
@@ -748,6 +757,13 @@
                         <span class="truncate"
                             >{layerDisplayName(layer.name)}</span
                         >
+                        {#if pendingByLayer[layer.name]}
+                            <span
+                                class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-medium normal-case tracking-normal tabular-nums text-foreground"
+                                title="{pendingByLayer[layer.name]} in session buffer"
+                                >{pendingByLayer[layer.name]}</span
+                            >
+                        {/if}
                         <span class="ml-auto tabular-nums opacity-60"
                             >{ents.length}</span
                         >
@@ -862,6 +878,12 @@
                                     >
                                         {ent.label}
                                     </span>
+                                    {#if pendingKeys.has(ent.key)}
+                                        <span
+                                            class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-normal normal-case tracking-normal text-foreground"
+                                            title="In session buffer">buf</span
+                                        >
+                                    {/if}
                                 </button>
                                 <button
                                     type="button"

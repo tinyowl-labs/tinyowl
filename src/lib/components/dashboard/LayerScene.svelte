@@ -336,6 +336,8 @@
     let drawMode = $state<DrawGeomMode>("Polygon");
     let drawUseHeight = $state(true);
     let snapMode = $state<SnapMode>("mesh");
+    /** Layer the in-progress draw was started on (survives target-layer switch). */
+    let drawBindTable = $state<string | null>(null);
     let vertexSession = $state<{
         table: string;
         entityId: string;
@@ -393,7 +395,7 @@
         ),
     );
     const createFields = $derived(
-        attrFieldsForTable(tables[editLayer ?? ""] ?? []),
+        attrFieldsForTable(tables[drawBindTable ?? editLayer ?? ""] ?? []),
     );
     const attrEditFields = $derived(
         attrFieldsForTable(tables[attrEdit?.table ?? ""] ?? []).filter(
@@ -427,6 +429,35 @@
             table: e.table,
             op: e.op,
         })),
+    );
+    const bufferGroups = $derived.by(() => {
+        const order: string[] = [];
+        const map = new Map<string, typeof bufferEntries>();
+        for (const e of bufferEntries) {
+            if (!map.has(e.table)) {
+                order.push(e.table);
+                map.set(e.table, []);
+            }
+            map.get(e.table)!.push(e);
+        }
+        return order.map((table) => ({
+            table,
+            rows: map.get(table)!,
+        }));
+    });
+    const bufferSummary = $derived(
+        Object.entries(editBuffer.pendingByTable)
+            .map(([t, n]) => `${t} ${n}`)
+            .join(" · "),
+    );
+    const barLayer = $derived(
+        vertexSession?.table ?? drawBindTable ?? editLayer ?? "",
+    );
+    const sessionSummary = $derived(
+        Object.entries(editBuffer.pendingByTable)
+            .filter(([t]) => t !== barLayer)
+            .map(([t, n]) => `${t} ${n}`)
+            .join(" · "),
     );
 
     let Cesium: any;
@@ -1859,6 +1890,7 @@
         drawPartCartesians = [];
         drawVertexCount = 0;
         drawPartCount = 0;
+        drawBindTable = null;
         clearDraftDrawEntitiesOnly();
     }
 
@@ -2023,7 +2055,7 @@
     }
 
     function snapshotPendingGeometry(): GeoJsonGeometry | null {
-        if (!editLayer) return null;
+        if (!(drawBindTable ?? editLayer)) return null;
         return geometryFromDraft(
             drawMode,
             drawVertices,
@@ -2043,7 +2075,8 @@
 
     function confirmCreate(attrs: Record<string, string>) {
         const geom = pendingGeometry ?? snapshotPendingGeometry();
-        if (!geom || !editLayer) {
+        const table = drawBindTable ?? editLayer;
+        if (!geom || !table) {
             pendingGeometry = null;
             createFormOpen = false;
             return;
@@ -2051,7 +2084,7 @@
         const sourceId = attrs.source_id?.trim();
         editBuffer.push({
             op: "insert",
-            table: editLayer,
+            table,
             entityId: sourceId || editBuffer.nextEntityId(),
             geometry: geom,
             attributes: attrs,
@@ -2155,10 +2188,8 @@
         if (vertexSession) {
             add(vertexSession.table, vertexSession.entityId);
         }
-        const layer = editLayer ?? layerFromSelection();
         for (const key of layerSelection.keys()) {
             const { layer: l, id } = parseSelectionKey(key);
-            if (layer && l !== layer) continue;
             add(l, id);
         }
         if (targets.length === 0 && ctxOpen && ctxKind === "entity") {
@@ -2189,6 +2220,9 @@
         drawVertices = drawVertices.slice(0, -1);
         drawCartesians = vertsToCartesians(drawVertices);
         drawVertexCount = drawVertices.length;
+        if (drawVertices.length === 0 && drawParts.length === 0) {
+            drawBindTable = null;
+        }
         if (repaint) paintDraftDraw();
     }
 
@@ -2472,6 +2506,9 @@
             oldGeometry = geom;
         }
         if (!geom || !loadDraftFromGeom(geom)) return false;
+        if (editBuffer.targetLayer !== table) {
+            editBuffer.setTargetLayer(table);
+        }
         vertexSession = { table, entityId, bufferOp, oldGeometry };
         vertexUndoStack = [];
         selectedVertexIndices = new Set();
@@ -2644,7 +2681,7 @@
     function pickEditTarget(
         screenPos: any,
     ): { table: string; entityId: string } | null {
-        if (!viewer || !editLayer || !bufferOverlayVisible) return null;
+        if (!viewer || !bufferOverlayVisible) return null;
         try {
             const picks = viewer.scene.drillPick(screenPos, 24) ?? [];
             for (const picked of picks) {
@@ -2654,13 +2691,8 @@
                         : picked;
                 const info = overlayEntityInfo(entity);
                 if (!info || info.role !== "after") continue;
-                if (info.table !== editLayer) continue;
-                const buf = editBuffer.entries.find(
-                    (e) =>
-                        e.table === info.table && e.entityId === info.entityId,
-                );
-                if (buf) {
-                    if (buf.op === "delete") continue;
+                const buf = editBuffer.entryFor(info.table, info.entityId);
+                if (buf && buf.op !== "delete") {
                     return { table: buf.table, entityId: buf.entityId };
                 }
             }
@@ -2814,6 +2846,9 @@
             if (blockPeerEdit(target.table, target.entityId)) return;
             if (vertexSession) commitVertexEdit();
             else if (drawVertexCount > 0 || drawPartCount > 0) return;
+            if (editBuffer.targetLayer !== target.table) {
+                editBuffer.setTargetLayer(target.table);
+            }
             beginVertexEdit(target.table, target.entityId);
             return;
         }
@@ -2824,6 +2859,7 @@
         }
         const cartesian = pickSnapCartesian(screenPos);
         if (!cartesian) return;
+        if (!drawBindTable && editLayer) drawBindTable = editLayer;
         drawVertices = [...drawVertices, cartesianToVertex(cartesian)];
         drawCartesians = vertsToCartesians(drawVertices);
         drawVertexCount = drawVertices.length;
@@ -3181,18 +3217,10 @@
 
     function enterEditMode(opts?: { skipSelectionLock?: boolean }) {
         if (!canWrite || !active) return;
-        const layer = editLayer ?? layerFromSelection();
+        const target = opts?.skipSelectionLock ? null : selectionEditTarget();
+        if (target && blockPeerEdit(target.table, target.entityId)) return;
+        const layer = target?.table ?? editLayer ?? layerFromSelection();
         if (!layer) return;
-        if (!opts?.skipSelectionLock) {
-            const target = selectionEditTarget();
-            if (
-                target &&
-                target.table === layer &&
-                blockPeerEdit(target.table, target.entityId)
-            ) {
-                return;
-            }
-        }
         if (editBuffer.targetLayer !== layer) {
             editBuffer.setTargetLayer(layer);
         }
@@ -3205,10 +3233,14 @@
         pendingComment = null;
         clearCommentSketch();
         queueMicrotask(() => {
+            if (opts?.skipSelectionLock) return;
             if (!editEnabled || vertexSession) return;
-            const target = selectionEditTarget();
-            if (!target || target.table !== editBuffer.targetLayer) return;
-            beginVertexEdit(target.table, target.entityId);
+            const next = selectionEditTarget();
+            if (!next) return;
+            if (editBuffer.targetLayer !== next.table) {
+                editBuffer.setTargetLayer(next.table);
+            }
+            beginVertexEdit(next.table, next.entityId);
         });
     }
 
@@ -3423,9 +3455,7 @@
     ): PickCandidate {
         const time = Cesium?.JulianDate?.now?.();
         const row = rowByEntityId(rows[layerName], entityId);
-        const buf = editBuffer.entries.find(
-            (e) => e.table === layerName && e.entityId === entityId,
-        );
+        const buf = editBuffer.entryFor(layerName, entityId);
         const fromRow = attrsFromRecord(row);
         const fromBuf = attrsFromRecord(buf?.attributes);
         const fromEntity = attrsFromEntity(entity?.properties, time);
@@ -3441,6 +3471,12 @@
             entityId,
             label: pickCandidateLabel(entityId, attributes),
             attributes,
+            bufferOp:
+                buf?.op === "insert" ||
+                buf?.op === "update" ||
+                buf?.op === "delete"
+                    ? buf.op
+                    : undefined,
         };
     }
 
@@ -6350,7 +6386,7 @@
         {/if}
     </div>
 
-    {#if (canWrite && editEnabled && editLayer) || seriesControls.length > 0}
+    {#if (canWrite && editEnabled && barLayer) || seriesControls.length > 0}
         <div
             class="pointer-events-auto absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-1"
         >
@@ -6363,9 +6399,9 @@
                     onStep={(key) => setSeriesStep(series.name, key)}
                 />
             {/each}
-            {#if canWrite && editEnabled && editLayer}
+            {#if canWrite && editEnabled && barLayer}
                 <EditModeBar
-                    layer={editLayer}
+                    layer={barLayer}
                     mode={drawMode}
                     canFinish={drawCanFinish && !anyFormOpen}
                     canAddPart={drawCanAddPart && !anyFormOpen && !vertexSession}
@@ -6373,6 +6409,7 @@
                     useHeight={drawUseHeight}
                     snap={snapMode}
                     vertexEditing={Boolean(vertexSession)}
+                    sessionSummary={sessionSummary}
                     onMode={setDrawMode}
                     onUseHeight={setDrawUseHeight}
                     onSnap={(m) => (snapMode = m)}
@@ -6554,7 +6591,7 @@
                 />
                 {#if canWrite && createFormOpen}
                     <FeatureCreateForm
-                        layer={editLayer ?? ""}
+                        layer={drawBindTable ?? editLayer ?? ""}
                         geomType={drawMode}
                         fields={createFields}
                         onConfirm={confirmCreate}
@@ -6582,8 +6619,13 @@
                             class="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1.5"
                         >
                             <span
-                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                                >Buffer · {bufferEntries.length}</span
+                                class="min-w-0 truncate text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                                title={bufferSummary}
+                                >Buffer{#if bufferSummary}
+                                    · {bufferSummary}
+                                {:else}
+                                    · {bufferEntries.length}
+                                {/if}</span
                             >
                             <div class="flex items-center gap-0.5">
                                 <button
@@ -6614,7 +6656,16 @@
                             </div>
                         </div>
                         <ul class="min-h-0 flex-1 overflow-y-auto p-1">
-                            {#each bufferEntries as rec (rec.entityId)}
+                            {#each bufferGroups as group (group.table)}
+                                <li
+                                    class="px-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                                >
+                                    {group.table}
+                                    <span class="tabular-nums"
+                                        >· {group.rows.length}</span
+                                    >
+                                </li>
+                                {#each group.rows as rec (`${rec.table}:${rec.entityId}`)}
                                 <li
                                     class="flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-secondary/80 {vertexSession?.entityId ===
                                         rec.entityId &&
@@ -6638,6 +6689,7 @@
                                             ) {
                                                 return;
                                             }
+                                            editBuffer.setTargetLayer(rec.table);
                                             if (!editEnabled) {
                                                 enterEditMode({
                                                     skipSelectionLock: true,
@@ -6656,9 +6708,6 @@
                                                 >delete ·</span
                                             >
                                         {/if}
-                                        <span class="text-muted-foreground"
-                                            >{rec.table} ·</span
-                                        >
                                         <span class="font-medium"
                                             >{rec.entityId}</span
                                         >
@@ -6668,11 +6717,15 @@
                                         class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
                                         title="Remove"
                                         onclick={() =>
-                                            editBuffer.remove(rec.entityId)}
+                                            editBuffer.remove(
+                                                rec.table,
+                                                rec.entityId,
+                                            )}
                                     >
                                         <XIcon class="size-3" />
                                     </button>
                                 </li>
+                                {/each}
                             {/each}
                         </ul>
                         {#if bufferEntries.length > 0}

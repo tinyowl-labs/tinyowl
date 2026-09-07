@@ -71,6 +71,11 @@
     const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
     const diffFeatures = $derived(fromEditBuffer(editBuffer.entries));
+    const bufferSummary = $derived(
+        Object.entries(editBuffer.pendingByTable)
+            .map(([t, n]) => `${t} ${n}`)
+            .join(" · "),
+    );
 
     /** Resolve ?layer= to an actual table name (case-insensitive). */
     const resolvedLayer = $derived.by(() => {
@@ -87,6 +92,7 @@
             value: name,
             label: name,
             count: rows[name]?.length,
+            pending: editBuffer.pendingByTable[name] || undefined,
         })),
     );
 
@@ -226,6 +232,7 @@
             setViewMode("schema");
             return;
         }
+        if (canWrite) editBuffer.setTargetLayer(value);
         if (
             viewMode === "table" &&
             value === activeTab &&
@@ -657,10 +664,11 @@
         // Depend on selectionSig so row styles update when membership changes at same size.
         void selectionSig;
         void joinedKeys;
-        if (selectionSize === 0 && joinedKeys.length === 0) return "";
+        void editBuffer.entries;
         const id = String(row.source_id ?? row.SOURCE_ID ?? "");
         if (!id) return "";
         const key = toSelectionKey(activeTab, id);
+        const buffered = Boolean(editBuffer.entryFor(activeTab, id));
         if (
             tableAttrEdit &&
             tableAttrEdit.table === activeTab &&
@@ -675,6 +683,7 @@
             return "bg-accent/40";
         }
         if (joinedSet.has(key)) return "bg-accent/40";
+        if (buffered) return "bg-primary/10";
         return "";
     }
 
@@ -1149,7 +1158,11 @@
                                         <p
                                             class="shrink-0 pb-2 text-[11px] text-muted-foreground"
                                         >
-                                            {editBuffer.size} in session buffer
+                                            Session buffer · {bufferSummary}
+                                            {#if (editBuffer.pendingByTable[tabValue] ?? 0) > 0}
+                                                · {editBuffer.pendingByTable[tabValue]}
+                                                on this table
+                                            {/if}
                                             ·
                                             <button
                                                 type="button"

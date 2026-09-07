@@ -73,8 +73,10 @@ export const editBuffer = {
 		return last;
 	},
 
-	remove(entityId: string): void {
-		entries = entries.filter((e) => e.entityId !== entityId);
+	remove(table: string, entityId: string): void {
+		entries = entries.filter(
+			(e) => !(e.table === table && e.entityId === entityId),
+		);
 	},
 
 	clear(): void {
