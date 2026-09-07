@@ -1,7 +1,7 @@
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "$lib/supabase/client";
 import type { EditBufferEntry } from "$lib/geoDiff/types";
-import { asGeometry } from "$lib/geoDiff/geometry";
+import { asGeometry, compactGeometry } from "$lib/geoDiff/geometry";
 
 export const PRESENCE_TOPIC_PREFIX = "presence:";
 export const CURSOR_EVENT = "cursor";
@@ -37,6 +37,11 @@ export type PresenceSelection = {
 	geometry?: unknown;
 };
 
+export type PresenceEditing = {
+	table: string;
+	entityId: string;
+};
+
 export type PresencePeer = {
 	userId: string;
 	displayName: string;
@@ -48,6 +53,7 @@ export type PresencePeer = {
 	based_on?: string;
 	selection?: PresenceSelection[];
 	buffer?: EditBufferEntry[];
+	editing?: PresenceEditing | null;
 	/** Client-only: overlay is addressed at a different develop tip. */
 	overlayStale?: boolean;
 };
@@ -57,6 +63,7 @@ export type PresenceOverlay = {
 	based_on: string;
 	selection: PresenceSelection[];
 	buffer: EditBufferEntry[];
+	editing?: PresenceEditing | null;
 };
 
 type CursorTick = {
@@ -102,8 +109,18 @@ function payloadHasOverlay(o: Record<string, unknown>): boolean {
 		"based_on" in o ||
 		"selection" in o ||
 		"buffer" in o ||
-		"tracking_ref" in o
+		"tracking_ref" in o ||
+		"editing" in o
 	);
+}
+
+export function parseEditing(raw: unknown): PresenceEditing | null {
+	if (!raw || typeof raw !== "object") return null;
+	const o = raw as Record<string, unknown>;
+	const table = parseRef(o.table);
+	const entityId = parseRef(o.entityId);
+	if (!table || !entityId || table.startsWith("_")) return null;
+	return { table, entityId };
 }
 
 export function parseSelectionList(raw: unknown): PresenceSelection[] {
@@ -148,6 +165,7 @@ export function parseOverlayPayload(raw: unknown): {
 	based_on: string;
 	selection: PresenceSelection[];
 	buffer: EditBufferEntry[];
+	editing: PresenceEditing | null;
 } | null {
 	if (!raw || typeof raw !== "object") return null;
 	const o = raw as Record<string, unknown>;
@@ -159,6 +177,7 @@ export function parseOverlayPayload(raw: unknown): {
 		based_on: parseRef(o.based_on),
 		selection: parseSelectionList(o.selection),
 		buffer: parseBufferList(o.buffer),
+		editing: parseEditing(o.editing),
 	};
 }
 
@@ -169,16 +188,30 @@ export function slimOverlay(overlay: PresenceOverlay): PresenceOverlay {
 		selection: overlay.selection.slice(0, MAX_OVERLAY_ITEMS).map((s) => ({
 			table: s.table,
 			entityId: s.entityId,
-			geometry: asGeometry(s.geometry) ?? undefined,
 		})),
 		buffer: overlay.buffer.slice(0, MAX_OVERLAY_ITEMS).map((e) => ({
 			op: e.op,
 			table: e.table,
 			entityId: e.entityId,
-			geometry: e.geometry ?? null,
-			oldGeometry: e.oldGeometry ?? null,
+			geometry: compactGeometry(e.geometry),
+			oldGeometry: compactGeometry(e.oldGeometry),
 		})),
+		editing: overlay.editing
+			? {
+					table: overlay.editing.table,
+					entityId: overlay.editing.entityId,
+				}
+			: null,
 	};
+}
+
+function overlayHasContent(overlay: PresenceOverlay | null): boolean {
+	if (!overlay) return false;
+	return (
+		overlay.selection.length > 0 ||
+		overlay.buffer.length > 0 ||
+		Boolean(overlay.editing)
+	);
 }
 
 export function cursorMovedEnough(
@@ -312,11 +345,9 @@ export async function connectMapPresence(opts: {
 	let pageVisible = typeof document === "undefined" ? true : !document.hidden;
 	let lastSent: { lon: number; lat: number } | null = null;
 	let lastSentAt = 0;
-	let lastOverlayAt = 0;
 	let overlayTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingOverlay: PresenceOverlay | null = null;
 	let lastSlimOverlay: PresenceOverlay | null = null;
-	let overlayDirty = false;
 	let staleTimer: ReturnType<typeof setInterval> | null = null;
 	let stopped = false;
 
@@ -363,6 +394,7 @@ export async function connectMapPresence(opts: {
 		based_on: string;
 		selection: PresenceSelection[];
 		buffer: EditBufferEntry[];
+		editing: PresenceEditing | null;
 	}) => {
 		if (overlay.user_id === userId) return;
 		const existing = peers.get(overlay.user_id);
@@ -374,12 +406,14 @@ export async function connectMapPresence(opts: {
 				based_on: overlay.based_on,
 				selection: overlay.selection,
 				buffer: overlay.buffer,
+				editing: overlay.editing,
 			});
 		} else {
 			existing.tracking_ref = overlay.tracking_ref;
 			existing.based_on = overlay.based_on;
 			existing.selection = overlay.selection;
 			existing.buffer = overlay.buffer;
+			existing.editing = overlay.editing;
 		}
 		emit();
 	};
@@ -451,22 +485,32 @@ export async function connectMapPresence(opts: {
 	const flushOverlay = (overlay: PresenceOverlay) => {
 		if (stopped) return;
 		const now = Date.now();
-		lastOverlayAt = now;
 		const slim = slimOverlay(overlay);
 		lastSlimOverlay = slim;
-		overlayDirty = true;
-		void channel.send({
-			type: "broadcast",
-			event: OVERLAY_EVENT,
-			payload: {
-				user_id: userId,
-				t: now,
-				tracking_ref: slim.tracking_ref,
-				based_on: slim.based_on,
-				selection: slim.selection,
-				buffer: slim.buffer,
-			},
-		});
+		const payload = {
+			user_id: userId,
+			t: now,
+			tracking_ref: slim.tracking_ref,
+			based_on: slim.based_on,
+			selection: slim.selection,
+			buffer: slim.buffer,
+			editing: slim.editing ?? null,
+		};
+		void channel
+			.send({
+				type: "broadcast",
+				event: OVERLAY_EVENT,
+				payload,
+			})
+			.then((status) => {
+				if (status !== "ok") {
+					console.warn(
+						"[presence] overlay send failed",
+						status,
+						JSON.stringify(payload).length,
+					);
+				}
+			});
 	};
 
 	const sendOverlay = (overlay: PresenceOverlay, force = false) => {
@@ -494,6 +538,7 @@ export async function connectMapPresence(opts: {
 				based_on: "",
 				selection: [],
 				buffer: [],
+				editing: null,
 			},
 			true,
 		);
@@ -539,12 +584,12 @@ export async function connectMapPresence(opts: {
 				h,
 				t: now,
 			};
-			if (overlayDirty && lastSlimOverlay) {
+			if (overlayHasContent(lastSlimOverlay) && lastSlimOverlay) {
 				payload.tracking_ref = lastSlimOverlay.tracking_ref;
 				payload.based_on = lastSlimOverlay.based_on;
 				payload.selection = lastSlimOverlay.selection;
 				payload.buffer = lastSlimOverlay.buffer;
-				overlayDirty = false;
+				payload.editing = lastSlimOverlay.editing ?? null;
 			}
 			void channel.send({
 				type: "broadcast",
@@ -554,7 +599,7 @@ export async function connectMapPresence(opts: {
 		},
 		publishOverlay: (overlay) => {
 			if (stopped || hidden || !pageVisible) return;
-			sendOverlay(overlay);
+			sendOverlay(overlay, true);
 		},
 		stop: async () => {
 			if (stopped) return;

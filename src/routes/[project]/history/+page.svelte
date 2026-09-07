@@ -1,10 +1,13 @@
 <script lang="ts">
-    import { goto } from "$app/navigation";
+    import { goto, invalidateAll } from "$app/navigation";
     import { page } from "$app/stores";
     import { browser } from "$app/environment";
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
     import ReviewMap from "$lib/components/dashboard/ReviewMap.svelte";
     import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
+    import StepScrubber, {
+        type StepItem,
+    } from "$lib/components/ui/step-scrubber.svelte";
     import { fromListChanges, parseDiffOp } from "$lib/geoDiff";
 
     let { data } = $props();
@@ -36,6 +39,12 @@
     let chain = $state<"main" | "develop">("main");
     const onDevelop = $derived(chain === "develop" && developCommits.length > 0);
     const developOldest = $derived([...developCommits].reverse());
+    const mainCommits = $derived(((data as any)?.mainCommits as any[]) ?? []);
+    const mainOldest = $derived([...mainCommits].reverse());
+    const role = $derived(String((data as any)?.role ?? ""));
+    const canWrite = $derived(
+        role === "owner" || role === "admin" || role === "collaborator",
+    );
 
     const maxSeq = $derived(diffs.length ? Number(diffs[diffs.length - 1].seq) : 0);
     let seq = $state(0);
@@ -204,7 +213,12 @@
     $effect(() => {
         if (!browser) return;
         onlyChanges;
-        if (selectedRev) loadRev(selectedRev);
+        const rev = selectedRev;
+        if (!rev) return;
+        const t = setTimeout(() => {
+            void loadRev(rev);
+        }, 160);
+        return () => clearTimeout(t);
     });
 
     const entitySummary = $derived(
@@ -220,6 +234,103 @@
             hour: "2-digit",
             minute: "2-digit",
         });
+    }
+
+    const historySteps = $derived<StepItem[]>(
+        onDevelop
+            ? developOldest.map((c) => ({
+                  key: String(c.id ?? ""),
+                  label: (c.message as string | undefined)?.trim() || "Untitled",
+                  hint: formatDate(String(c.created_at ?? "")),
+              }))
+            : diffs.map((d) => ({
+                  key: String(d.seq),
+                  label: (d.message as string | undefined)?.trim() || `seq ${d.seq}`,
+                  hint: formatDate(String(d.created_at ?? "")),
+              })),
+    );
+    const historyIndex = $derived(
+        onDevelop
+            ? commitIdx
+            : Math.max(
+                  0,
+                  diffs.findIndex((d) => Number(d.seq) === Number(seq)),
+              ),
+    );
+
+    function setHistoryIndex(i: number) {
+        if (onDevelop) {
+            commitIdx = i;
+            return;
+        }
+        const d = diffs[i];
+        if (d) seq = Number(d.seq);
+    }
+
+    const invertCommitId = $derived(
+        onDevelop
+            ? String(selected?.id ?? "")
+            : mainOldest.length === diffs.length
+              ? String(mainOldest[historyIndex]?.id ?? "")
+              : "",
+    );
+    const invertLabel = $derived(
+        (selected?.message as string | undefined)?.trim() || "this commit",
+    );
+    let invertNote = $state("");
+    let invertBusy = $state(false);
+    let invertErr = $state("");
+
+    $effect(() => {
+        const id = invertCommitId;
+        const msg = invertLabel;
+        invertNote = id ? `Invert ${id.slice(0, 8)}: ${msg}` : "";
+        invertErr = "";
+    });
+
+    function authHeaders(): HeadersInit {
+        const h: Record<string, string> = {
+            "Content-Type": "application/json",
+        };
+        if (accessToken) h["Authorization"] = `Bearer ${accessToken}`;
+        return h;
+    }
+
+    const canInvert = $derived(
+        canWrite && invertCommitId.length > 0 && invertNote.trim().length > 0 && !invertBusy,
+    );
+
+    async function invert() {
+        if (!canInvert) {
+            if (canWrite && invertCommitId && !invertNote.trim()) {
+                invertErr = "An invert message is required.";
+            }
+            return;
+        }
+        invertBusy = true;
+        invertErr = "";
+        try {
+            const res = await fetch(
+                `/api/v1/projects/${slug}/commits/${invertCommitId}/invert`,
+                {
+                    method: "POST",
+                    headers: authHeaders(),
+                    body: JSON.stringify({ message: invertNote.trim() }),
+                },
+            );
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                invertErr = body.error || `Failed (${res.status})`;
+                return;
+            }
+            chain = "develop";
+            await invalidateAll();
+            commitIdx = Math.max(0, developOldest.length - 1);
+        } catch (e: any) {
+            invertErr = e?.message || "Invert failed";
+        } finally {
+            invertBusy = false;
+        }
     }
 </script>
 
@@ -290,43 +401,51 @@
                     >
                 </div>
             {/if}
-            {#if onDevelop && developOldest.length > 0}
-                <label class="text-xs text-muted-foreground shrink-0" for="history-commit"
-                    >{commitIdx + 1}/{developOldest.length}</label
-                >
+            {#if canWrite && invertCommitId}
                 <input
-                    id="history-commit"
-                    type="range"
-                    min="0"
-                    max={developOldest.length - 1}
-                    value={commitIdx}
-                    oninput={(e) =>
-                        (commitIdx = Number(
-                            (e.currentTarget as HTMLInputElement).value,
-                        ))}
-                    class="w-48"
+                    class="h-8 w-56 rounded-md border border-border bg-background px-3 text-xs"
+                    placeholder="Required invert message"
+                    bind:value={invertNote}
+                    disabled={invertBusy}
+                    onkeydown={(e) => {
+                        if (e.key === "Enter") void invert();
+                    }}
                 />
-            {:else if maxSeq > 0}
-                <label
-                    for="history-seq"
-                    class="text-xs text-muted-foreground shrink-0">seq {seq}</label
+                <button
+                    type="button"
+                    class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs text-primary-foreground disabled:opacity-50"
+                    disabled={!canInvert}
+                    onclick={() => void invert()}
                 >
-                <input
-                    id="history-seq"
-                    type="range"
-                    min="1"
-                    max={maxSeq}
-                    value={seq}
-                    oninput={(e) =>
-                        (seq = Number(
-                            (e.currentTarget as HTMLInputElement).value,
-                        ))}
-                    class="w-48"
-                />
+                    {invertBusy ? "Inverting…" : "Invert"}
+                </button>
             {/if}
         {/snippet}
     </WorkspaceToolbar>
 
+    {#if historySteps.length > 0}
+        <div
+            class="flex shrink-0 items-center gap-3 border-b border-border bg-background px-3 py-1.5"
+        >
+            <span class="hidden shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:inline"
+                >{onDevelop ? "Commits" : "Seq"}
+                {historyIndex + 1}/{historySteps.length}</span
+            >
+            <StepScrubber
+                class="min-w-0 flex-1"
+                steps={historySteps}
+                index={historyIndex}
+                onIndex={setHistoryIndex}
+                ariaLabel={onDevelop ? "Develop commits" : "Published history"}
+            />
+        </div>
+    {/if}
+
+    {#if invertErr}
+        <p class="px-4 py-2 text-sm text-destructive border-b border-border">
+            {invertErr}
+        </p>
+    {/if}
     {#if loadErr}
         <p class="px-4 py-2 text-sm text-destructive border-b border-border">
             {loadErr}

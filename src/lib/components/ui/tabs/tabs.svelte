@@ -19,7 +19,7 @@
         orientation = "horizontal",
     }: {
         value?: string;
-        tabs: { value: string; label: string; count?: number; separatorAfter?: boolean }[];
+        tabs: { value: string; label: string; count?: number; pending?: number; separatorAfter?: boolean }[];
         class?: string;
         listClass?: string;
         contentClass?: string;
@@ -79,6 +79,13 @@
                         <span class="ml-1.5 text-xs text-muted-foreground">
                             ({tab.count})
                         </span>
+                    {/if}
+                    {#if tab.pending}
+                        <span
+                            class="ml-1 rounded bg-primary/15 px-1 text-[10px] tabular-nums text-foreground"
+                            title="{tab.pending} in session buffer"
+                            >{tab.pending}</span
+                        >
                     {/if}
                 </BitsTabs.Trigger>
                 {#if tab.separatorAfter}

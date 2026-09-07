@@ -7,6 +7,8 @@ export type PickCandidate = {
 	label: string;
 	/** CZML properties for the popup. */
 	attributes?: Record<string, string>;
+	/** Session buffer op when this entity is already in the buffer. */
+	bufferOp?: "insert" | "update" | "delete" | "head";
 };
 
 export function dedupePickCandidates(

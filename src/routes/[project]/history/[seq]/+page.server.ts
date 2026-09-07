@@ -43,12 +43,28 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	if (!res.ok) throw error(res.status, "Failed to load revision");
 	const payload = await res.json();
 
+	let commit = payload.commit ?? null;
+	if (!isCommit && Number.isInteger(seq) && seq >= 1) {
+		try {
+			const cres = await fetch(
+				`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?ref=main`,
+				{ headers },
+			);
+			if (cres.ok) {
+				const list = await cres.json();
+				if (Array.isArray(list) && list.length >= seq) {
+					commit = list[list.length - seq] ?? commit;
+				}
+			}
+		} catch (_) {}
+	}
+
 	return {
 		accessToken: accessToken ?? "",
 		role,
 		rev,
 		seq: isCommit ? 0 : seq,
-		commit: payload.commit ?? null,
+		commit,
 		diff: payload.diff ?? payload.commit ?? { seq: isCommit ? undefined : seq },
 		changes: payload.changes ?? { geodiff: [] },
 		summary: payload.summary ?? { geodiff_summary: [] },

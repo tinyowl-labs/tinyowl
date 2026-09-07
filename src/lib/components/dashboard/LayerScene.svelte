@@ -119,6 +119,7 @@
         syncDiffOverlay,
         fromPeerAwareness,
         overlayIsLive,
+        peerHoldingEdit,
         PEER_AWARENESS_DS_NAME,
         type DiffFeature,
         type GeoJsonGeometry,
@@ -137,7 +138,7 @@
         type LonLatVertex,
         type SnapMode,
     } from "$lib/stores/editBuffer.svelte";
-    import PresenceDock from "./PresenceDock.svelte";
+    import { presenceChrome } from "$lib/stores/presenceChrome.svelte";
     import PresenceCursors from "./PresenceCursors.svelte";
     import CommentPanel from "./CommentPanel.svelte";
     import CommentBalloons from "./CommentBalloons.svelte";
@@ -441,7 +442,8 @@
             ...p,
             overlayStale: Boolean(
                 ((p.buffer?.length ?? 0) > 0 ||
-                    (p.selection?.length ?? 0) > 0) &&
+                    (p.selection?.length ?? 0) > 0 ||
+                    Boolean(p.editing)) &&
                     !overlayIsLive(p, developCommit),
             ),
         })),
@@ -455,6 +457,7 @@
                     r: p.tracking_ref ?? "",
                     s: p.selection ?? [],
                     f: p.buffer ?? [],
+                    e: p.editing ?? null,
                 }),
             )
             .join("\n") + `|${developCommit}`,
@@ -462,9 +465,11 @@
     const presenceCursorNodes = new Map<string, HTMLElement>();
     let presenceHidden = $state(false);
     let presenceConnected = $state(false);
-    let presenceHandle: MapPresenceHandle | null = null;
+    let presenceHandle = $state<MapPresenceHandle | null>(null);
     let developCommit = $state("");
     let awarenessDataSource: any = null;
+    let editLockHint = $state("");
+    let editLockTimer: ReturnType<typeof setTimeout> | null = null;
 
     const presenceMember = $derived(
         Boolean(($page.data as { isMember?: boolean } | undefined)?.isMember),
@@ -2066,6 +2071,7 @@
 
     function openAttrEdit(table: string, entityId: string) {
         if (!canWrite || !table || !entityId) return;
+        if (blockPeerEdit(table, entityId)) return;
         createFormOpen = false;
         pendingGeometry = null;
         attrEdit = { table, entityId };
@@ -2113,11 +2119,7 @@
         for (const key of layerSelection.keys().slice(0, MAX_OVERLAY_ITEMS)) {
             const { layer, id } = parseSelectionKey(key);
             if (!layer || !id) continue;
-            out.push({
-                table: layer,
-                entityId: id,
-                geometry: geometryForDelete(layer, id),
-            });
+            out.push({ table: layer, entityId: id });
         }
         return out;
     }
@@ -2325,29 +2327,40 @@
         return dropClosingVertex(verts);
     }
 
-    function geometryFromCesiumEntity(entity: any): GeoJsonGeometry | null {
+    function geometryFromCesiumEntity(
+        entity: any,
+        withHeight = drawUseHeight,
+    ): GeoJsonGeometry | null {
         if (!entity || !Cesium || !viewer) return null;
         const time = viewer.clock.currentTime;
         try {
             if (entity.polygon?.hierarchy) {
                 const h = entity.polygon.hierarchy.getValue(time);
-                const pts = h?.positions ?? h;
-                if (!Array.isArray(pts) || pts.length < 3) return null;
+                const raw = h?.positions ?? h;
+                const pts =
+                    raw && typeof raw.length === "number"
+                        ? Array.from(raw)
+                        : [];
+                if (pts.length < 3) return null;
                 return geometryFromDraft(
                     "Polygon",
                     cartesiansToVertices(pts),
                     [],
-                    drawUseHeight,
+                    withHeight,
                 );
             }
             if (entity.polyline?.positions) {
-                const pts = entity.polyline.positions.getValue(time);
-                if (!Array.isArray(pts) || pts.length < 2) return null;
+                const raw = entity.polyline.positions.getValue(time);
+                const pts =
+                    raw && typeof raw.length === "number"
+                        ? Array.from(raw)
+                        : [];
+                if (pts.length < 2) return null;
                 return geometryFromDraft(
                     "LineString",
                     cartesiansToVertices(pts),
                     [],
-                    drawUseHeight,
+                    withHeight,
                 );
             }
             if (entity.position) {
@@ -2357,13 +2370,55 @@
                     "Point",
                     [cartesianToVertex(pos)],
                     [],
-                    drawUseHeight,
+                    withHeight,
                 );
             }
         } catch {
             return null;
         }
         return null;
+    }
+
+    function awarenessGeometry(table: string, entityId: string): GeoJsonGeometry | null {
+        const entity = findEntityByKey(toSelectionKey(table, entityId));
+        const geom = geometryFromCesiumEntity(entity, false);
+        if (geom) return geom;
+        if (!entity || !Cesium) return null;
+        const sphere = entityBoundingSphere(entity);
+        if (!isUsableExtentSphere(sphere)) return null;
+        try {
+            const c = Cesium.Cartographic.fromCartesian(sphere.center);
+            return {
+                type: "Point",
+                coordinates: [
+                    Cesium.Math.toDegrees(c.longitude),
+                    Cesium.Math.toDegrees(c.latitude),
+                ],
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    function showEditLock(peer: PresencePeer) {
+        editLockHint = `${peer.displayName} is editing this feature`;
+        if (editLockTimer) clearTimeout(editLockTimer);
+        editLockTimer = setTimeout(() => {
+            editLockHint = "";
+            editLockTimer = null;
+        }, 4000);
+    }
+
+    function blockPeerEdit(table: string, entityId: string): boolean {
+        const locker = peerHoldingEdit(
+            presencePeers,
+            table,
+            entityId,
+            developCommit,
+        );
+        if (!locker) return false;
+        showEditLock(locker);
+        return true;
     }
 
     function loadDraftFromGeom(
@@ -2398,6 +2453,7 @@
 
     function beginVertexEdit(table: string, entityId: string): boolean {
         if (anyFormOpen) return false;
+        if (blockPeerEdit(table, entityId)) return false;
         const buf = editBuffer.entries.find(
             (e) => e.table === table && e.entityId === entityId,
         );
@@ -2755,6 +2811,7 @@
             ) {
                 return;
             }
+            if (blockPeerEdit(target.table, target.entityId)) return;
             if (vertexSession) commitVertexEdit();
             else if (drawVertexCount > 0 || drawPartCount > 0) return;
             beginVertexEdit(target.table, target.entityId);
@@ -3111,10 +3168,31 @@
         commitVertexEdit();
     }
 
-    function enterEditMode() {
+    function selectionEditTarget(): { table: string; entityId: string } | null {
+        if (layerSelection.size === 0) return null;
+        const key = layerSelection.primaryKey;
+        if (!key) return null;
+        const { layer, id } = parseSelectionKey(key);
+        if (!id) return null;
+        const table = layer || editLayer || layerFromSelection();
+        if (!table) return null;
+        return { table, entityId: id };
+    }
+
+    function enterEditMode(opts?: { skipSelectionLock?: boolean }) {
         if (!canWrite || !active) return;
         const layer = editLayer ?? layerFromSelection();
         if (!layer) return;
+        if (!opts?.skipSelectionLock) {
+            const target = selectionEditTarget();
+            if (
+                target &&
+                target.table === layer &&
+                blockPeerEdit(target.table, target.entityId)
+            ) {
+                return;
+            }
+        }
         if (editBuffer.targetLayer !== layer) {
             editBuffer.setTargetLayer(layer);
         }
@@ -3128,12 +3206,9 @@
         clearCommentSketch();
         queueMicrotask(() => {
             if (!editEnabled || vertexSession) return;
-            if (layerSelection.size === 0) return;
-            const key = layerSelection.primaryKey;
-            if (!key) return;
-            const { layer: l, id } = parseSelectionKey(key);
-            if (!id || l !== editBuffer.targetLayer) return;
-            beginVertexEdit(l, id);
+            const target = selectionEditTarget();
+            if (!target || target.table !== editBuffer.targetLayer) return;
+            beginVertexEdit(target.table, target.entityId);
         });
     }
 
@@ -3463,6 +3538,7 @@
         if (!c) return;
         pickIndex = i;
         layerSelection.selectSingle(c.layerName, c.entityId);
+        focusSeriesLayer(c.layerName);
         lastFlownKey = selectionFlyKey();
         syncAllSelectionStyles();
         selectedEntity = findEntityByKey(c.key);
@@ -4146,6 +4222,7 @@
             const top = candidates[0]!;
             if (shift) {
                 layerSelection.addSelection(top.layerName, top.entityId);
+                focusSeriesLayer(top.layerName);
                 lastFlownKey = selectionFlyKey();
                 syncAllSelectionStyles();
                 return;
@@ -4160,6 +4237,7 @@
             pickIndex = 0;
             pickOpen = true;
             layerSelection.selectSingle(top.layerName, top.entityId);
+            focusSeriesLayer(top.layerName);
             lastFlownKey = selectionFlyKey();
             syncAllSelectionStyles();
             selectedEntity = findEntityByKey(top.key);
@@ -4674,11 +4752,16 @@
         applyLayerViews();
     }
 
+    function focusSeriesLayer(name: string) {
+        if (name) focusedLayerName = name;
+    }
+
     function changeLayerViews(idx: number, next: LayerView[], activeId: string) {
         const layer = layers[idx];
         if (!layer) return;
         layer.views = next;
         layer.activeViewId = activeId;
+        focusSeriesLayer(layer.name);
         applyLayerViews();
         if (canEditViews) onPersistViews?.(layer.name, next);
     }
@@ -4686,7 +4769,7 @@
     function openLayerStyle(idx: number) {
         styleLayerIdx = styleLayerIdx === idx ? null : idx;
         const name = layers[idx]?.name;
-        if (name && styleLayerIdx === idx) focusedLayerName = name;
+        if (name) focusSeriesLayer(name);
     }
 
     onMount(() => {
@@ -4720,16 +4803,11 @@
             )
             .join("|"),
     );
-    let seriesFocusName = $derived.by(() => {
-        const styled =
-            styleLayerIdx !== null ? (layers[styleLayerIdx]?.name ?? "") : "";
-        return (
-            styled ||
-            layerSelection.primaryLayer ||
+    let seriesFocusName = $derived(
+        focusedLayerName ||
             editBuffer.targetLayer ||
-            focusedLayerName
-        );
-    });
+            layerSelection.primaryLayer,
+    );
     let seriesControls = $derived(
         layers.flatMap((layer) => {
             if (layer.name !== seriesFocusName) return [];
@@ -4870,6 +4948,9 @@
             }
             try {
                 if (ds) viewer.dataSources.raiseToTop(ds);
+                if (awarenessDataSource) {
+                    viewer.dataSources.raiseToTop(awarenessDataSource);
+                }
             } catch {
                 /* ignore */
             }
@@ -5026,6 +5107,7 @@
             presenceConnected = false;
             presencePeers = [];
             presenceRoster = [];
+            presenceChrome.clear();
             layer?.destroy();
             try {
                 destroyDiffOverlay(viewer, awarenessDataSource);
@@ -5035,6 +5117,21 @@
             awarenessDataSource = null;
             void handle?.stop();
         };
+    });
+
+    $effect(() => {
+        if (!active || !presenceMember || !presenceConnected) {
+            presenceChrome.clear();
+            return;
+        }
+        const handle = presenceHandle;
+        presenceChrome.publish({
+            peers: presenceDockPeers,
+            hidden: presenceHidden,
+            onToggleHidden: () => {
+                void handle?.setHidden(!presenceHidden);
+            },
+        });
     });
 
     $effect(() => {
@@ -5061,15 +5158,22 @@
 
     $effect(() => {
         const h = presenceHandle;
-        if (!h || presenceHidden || !presenceConnected) return;
-        editBuffer.entries;
-        selectionSig;
-        developCommit;
+        const hidden = presenceHidden;
+        const connected = presenceConnected;
+        const sel = selectionSig;
+        const buf = editBuffer.entries;
+        const base = developCommit;
+        const vs = vertexSession;
+        if (!h || hidden || !connected) return;
+        void sel;
         h.publishOverlay({
             tracking_ref: "develop",
-            based_on: developCommit,
+            based_on: base,
             selection: presenceSelectionPayload(),
-            buffer: editBuffer.entries,
+            buffer: buf,
+            editing: vs
+                ? { table: vs.table, entityId: vs.entityId }
+                : null,
         });
     });
 
@@ -5079,10 +5183,7 @@
         const features = fromPeerAwareness(
             presencePeers,
             developCommit,
-            (table, id) =>
-                geometryFromCesiumEntity(
-                    findEntityByKey(toSelectionKey(table, id)),
-                ),
+            (table, id) => awarenessGeometry(table, id),
         );
         void syncDiffOverlay(
             Cesium,
@@ -5099,6 +5200,7 @@
             } catch {
                 /* ignore */
             }
+            raiseDrawHandles();
             bumpRender();
         });
     });
@@ -5601,6 +5703,7 @@
             morphRemover = null;
         }
         // Do not clear shared layerSelection — table view may still use it.
+        presenceChrome.clear();
         clearSelectionUi();
         styledSelectionKeys = new Set();
         postRenderRemover?.();
@@ -6359,17 +6462,26 @@
         onClose={closeContextMenu}
     />
 
-    {#if hiddenCount > 0 && !isolating}
-        <button
-            type="button"
-            class="absolute {editEnabled
-                ? 'bottom-24'
-                : 'bottom-10'} left-3 z-20 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
-            onclick={showAllHiddenEntities}
-        >
-            {hiddenCount} hidden · Show all
-        </button>
-    {/if}
+    <div
+        class="absolute bottom-3 left-3 z-20 flex flex-col items-start gap-1"
+    >
+        {#if hiddenCount > 0 && !isolating}
+            <button
+                type="button"
+                class="pointer-events-auto rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+                onclick={showAllHiddenEntities}
+            >
+                {hiddenCount} hidden · Show all
+            </button>
+        {/if}
+        {#if ready && Cesium && viewer && dim === "3d"}
+            <EnuCornerWidget {Cesium} {viewer} show={true} />
+        {/if}
+        <CesiumAttribution
+            credits={creditsFor(imageryId, terrainId)}
+            ion={hasIonTerrain}
+        />
+    </div>
 
     {#if !hasFramed && !error}
         <CesiumLoading />
@@ -6397,7 +6509,10 @@
                 {/key}
             {/if}
             <div
-                class="pointer-events-auto flex max-h-full min-h-0 w-60 flex-col gap-2 overflow-hidden"
+                class="pointer-events-auto flex max-h-full min-h-0 flex-col gap-2 overflow-hidden {styleLayerIdx !==
+                null
+                    ? 'w-52'
+                    : 'w-60'}"
             >
             <SceneGraphPanel
                 {layers}
@@ -6413,8 +6528,10 @@
                 onToggleCoverage={toggleCoverage}
                 onToggleLayer={toggleLayer}
                 onOpenStyle={openLayerStyle}
-                onSelectLayer={(name) => (focusedLayerName = name)}
-                styleLayerName={styleLayerIdx !== null}
+                onSelectLayer={(name) => focusSeriesLayer(name)}
+                compact={styleLayerIdx !== null}
+                focusLayerName={seriesFocusName}
+                styleLayerName={styleLayerIdx !== null
                     ? (layers[styleLayerIdx]?.name ?? "")
                     : ""}
                 onApplyHidden={applyHiddenVisibility}
@@ -6513,7 +6630,19 @@
                                             : `Edit ${rec.table} · ${rec.entityId}`}
                                         onclick={() => {
                                             if (rec.op === "delete") return;
-                                            if (!editEnabled) enterEditMode();
+                                            if (
+                                                blockPeerEdit(
+                                                    rec.table,
+                                                    rec.entityId,
+                                                )
+                                            ) {
+                                                return;
+                                            }
+                                            if (!editEnabled) {
+                                                enterEditMode({
+                                                    skipSelectionLock: true,
+                                                });
+                                            }
                                             queueMicrotask(() =>
                                                 beginVertexEdit(
                                                     rec.table,
@@ -6711,27 +6840,13 @@
         />
     {/if}
 
-    {#if ready && Cesium && viewer && dim === "3d"}
-        <EnuCornerWidget {Cesium} {viewer} show={true} />
+    {#if presenceMember && ready && presenceConnected && editLockHint}
+        <div
+            class="absolute bottom-2 right-2 z-20 max-w-[16rem] rounded bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/60"
+        >
+            {editLockHint}
+        </div>
     {/if}
-
-    <div
-        class="absolute bottom-2 right-2 z-20 flex flex-col items-end gap-1"
-    >
-        {#if presenceMember && ready && presenceConnected}
-            <PresenceDock
-                peers={presenceDockPeers}
-                hidden={presenceHidden}
-                onToggleHidden={() => {
-                    void presenceHandle?.setHidden(!presenceHidden);
-                }}
-            />
-        {/if}
-    <CesiumAttribution
-        credits={creditsFor(imageryId, terrainId)}
-        ion={hasIonTerrain}
-    />
-    </div>
 </div>
 
 <style>

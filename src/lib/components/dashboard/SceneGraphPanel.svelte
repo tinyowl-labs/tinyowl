@@ -24,6 +24,7 @@
         activeView,
         contrastColor,
         layerLegendColor,
+        layerLegend,
         rgbaToHex,
         rowByEntityId,
         rowMatchesFilter,
@@ -47,6 +48,10 @@
         /** Layer row clicked in the scene graph (table focus). */
         onSelectLayer?: (name: string) => void;
         styleLayerName?: string;
+        /** Series / legend focus (same as the map scrubber). */
+        focusLayerName?: string;
+        /** Style panel is open — names + legend only, no entity lists. */
+        compact?: boolean;
         onApplyHidden?: () => void;
         onFlyTo?: () => void;
         /** Fly camera to a whole layer's extent without requiring selection. */
@@ -81,6 +86,8 @@
         onOpenStyle,
         onSelectLayer,
         styleLayerName = "",
+        focusLayerName = "",
+        compact = false,
         onApplyHidden,
         onFlyTo,
         onFlyToLayer,
@@ -250,6 +257,7 @@
         }
         layerSelection.selectSingle(layerName, entityId);
         rangeAnchorKey = key;
+        onSelectLayer?.(layerName);
         if (canWrite) editBuffer.setTargetLayer(layerName);
     }
 
@@ -257,6 +265,7 @@
         if (!layerSelection.isSelected(layerName, entityId)) {
             layerSelection.selectSingle(layerName, entityId);
         }
+        onSelectLayer?.(layerName);
         if (canWrite) editBuffer.setTargetLayer(layerName);
         onFlyTo?.();
     }
@@ -411,7 +420,7 @@
 </script>
 
 <div
-    class="flex min-h-0 w-60 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm {klass}"
+    class="flex min-h-0 w-full flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm {klass}"
 >
     <div class="border-b border-border px-2 py-1.5">
         <div class="flex items-center justify-between gap-2 px-0.5">
@@ -420,22 +429,24 @@
                 >Scene</span
             >
             <div class="flex items-center gap-0.5">
-                <button
-                    type="button"
-                    class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    title="Expand all"
-                    onclick={expandAll}
-                >
-                    <ChevronsUpDownIcon class="size-3" />
-                </button>
-                <button
-                    type="button"
-                    class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    title="Collapse all"
-                    onclick={collapseAll}
-                >
-                    <ChevronsDownUpIcon class="size-3" />
-                </button>
+                {#if !compact}
+                    <button
+                        type="button"
+                        class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        title="Expand all"
+                        onclick={expandAll}
+                    >
+                        <ChevronsUpDownIcon class="size-3" />
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        title="Collapse all"
+                        onclick={collapseAll}
+                    >
+                        <ChevronsDownUpIcon class="size-3" />
+                    </button>
+                {/if}
                 <button
                     type="button"
                     class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition-colors {filterToView
@@ -492,7 +503,7 @@
                     {/if}
                 </button>
             </div>
-            {#if modelsOpen}
+            {#if modelsOpen && !compact}
                 <div class="mb-1 space-y-0.5 {childIndent}">
                     {#each filteredModels as m, idx}
                         {@const visible = modelVisible(m.hash)}
@@ -590,7 +601,7 @@
                     >
                 </div>
             </div>
-            {#if coveragesOpen}
+            {#if coveragesOpen && !compact}
                 <div class="mb-1 space-y-0.5 {childIndent}">
                     {#each filteredCoverages as c, idx}
                         {@const visible = coverageVisible(c.hash)}
@@ -676,16 +687,24 @@
             {@const allEnts = entitiesForLayerSorted(layer)}
             {@const ents = filterEntities(layer, allEnts)}
             {@const orderedKeys = ents.map((e) => e.key)}
-            {@const legend = layerLegendColor(
+            {@const swatch = layerLegendColor(
                 layer.views,
                 layer.activeViewId ?? "",
             )}
+            {@const readLegend =
+                layer.name === focusLayerName
+                    ? layerLegend(
+                          activeView(layer.views, layer.activeViewId ?? ""),
+                          rows[layer.name],
+                      )
+                    : null}
             {#if ents.length > 0 || !filterToView}
                 <div
                     class="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {editBuffer.targetLayer ===
                     layer.name
                         ? 'text-foreground'
-                        : styleLayerName === layer.name
+                        : styleLayerName === layer.name ||
+                            focusLayerName === layer.name
                           ? 'text-foreground'
                           : 'text-muted-foreground'}"
                     oncontextmenu={(e) =>
@@ -696,22 +715,24 @@
                             allEnts.map((en) => en.key),
                         )}
                 >
-                    <button
-                        type="button"
-                        class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
-                        title={isLayerExpanded(layer.name)
-                            ? "Collapse"
-                            : "Expand"}
-                        onclick={() => toggleLayerExpanded(layer.name)}
-                    >
-                        <ChevronDownIcon
-                            class="size-3.5 shrink-0 transition-transform {isLayerExpanded(
-                                layer.name,
-                            )
-                                ? ''
-                                : '-rotate-90'}"
-                        />
-                    </button>
+                    {#if !compact}
+                        <button
+                            type="button"
+                            class="shrink-0 rounded p-0.5 hover:bg-secondary hover:text-foreground"
+                            title={isLayerExpanded(layer.name)
+                                ? "Collapse"
+                                : "Expand"}
+                            onclick={() => toggleLayerExpanded(layer.name)}
+                        >
+                            <ChevronDownIcon
+                                class="size-3.5 shrink-0 transition-transform {isLayerExpanded(
+                                    layer.name,
+                                )
+                                    ? ''
+                                    : '-rotate-90'}"
+                            />
+                        </button>
+                    {/if}
                     <button
                         type="button"
                         class="flex min-w-0 flex-1 items-center gap-1 px-0.5 py-0.5 text-left hover:text-foreground"
@@ -720,8 +741,8 @@
                     >
                         <span
                             class="size-3.5 shrink-0 rounded-sm border"
-                            style="background: {rgbaToHex(legend)}; border-color: {rgbaToHex(
-                                contrastColor(legend),
+                            style="background: {rgbaToHex(swatch)}; border-color: {rgbaToHex(
+                                contrastColor(swatch),
                             )}"
                         ></span>
                         <span class="truncate"
@@ -744,7 +765,51 @@
                         {/if}
                     </button>
                 </div>
-                {#if isLayerExpanded(layer.name)}
+                {#if readLegend && (readLegend.ramp || readLegend.classes.length > 0)}
+                    <div class="mb-1 space-y-0.5 {childIndent}">
+                        {#if readLegend.ramp}
+                            <div class="px-0.5 py-0.5">
+                                <div
+                                    class="h-1.5 rounded-full border border-border/50"
+                                    style="background: {readLegend.ramp.css}"
+                                ></div>
+                                <div
+                                    class="mt-0.5 flex justify-between gap-2 text-[9px] font-normal normal-case tracking-normal tabular-nums text-muted-foreground"
+                                >
+                                    <span>{readLegend.ramp.min}</span>
+                                    <span>{readLegend.ramp.max}</span>
+                                </div>
+                            </div>
+                        {:else}
+                            {#each readLegend.classes as cls}
+                                <div
+                                    class="flex min-w-0 items-center gap-1.5 px-0.5 py-0.5"
+                                >
+                                    <span
+                                        class="size-2.5 shrink-0 rounded-sm border"
+                                        style="background: {rgbaToHex(
+                                            cls.color,
+                                        )}; border-color: {rgbaToHex(
+                                            contrastColor(cls.color),
+                                        )}"
+                                    ></span>
+                                    <span
+                                        class="min-w-0 truncate text-[10px] font-normal normal-case tracking-normal text-muted-foreground"
+                                        title={cls.label}>{cls.label}</span
+                                    >
+                                </div>
+                            {/each}
+                            {#if readLegend.more > 0}
+                                <p
+                                    class="px-0.5 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                >
+                                    +{readLegend.more} more
+                                </p>
+                            {/if}
+                        {/if}
+                    </div>
+                {/if}
+                {#if !compact && isLayerExpanded(layer.name)}
                     <div class="mb-1 space-y-0.5 {childIndent}">
                         {#each ents as ent}
                             {@const selected =

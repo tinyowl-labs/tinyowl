@@ -7,11 +7,11 @@ export type {
     ListChangeEntry,
 } from "./types";
 export { DIFF_OP_FILL, DIFF_OP_LEGEND } from "./colors";
-export { asGeometry, geometriesEqual } from "./geometry";
+export { asGeometry, compactGeometry, geometriesEqual } from "./geometry";
 export { entityIdFromChanges, parseDiffOp } from "./identity";
 export { fromListChanges } from "./fromListChanges";
 export { fromEditBuffer } from "./fromEditBuffer";
-export { fromPeerAwareness, overlayIsLive } from "./fromPeerAwareness";
+export { fromPeerAwareness, overlayIsLive, peerHoldingEdit } from "./fromPeerAwareness";
 export {
 	GEO_DIFF_DS_NAME,
 	PEER_AWARENESS_DS_NAME,

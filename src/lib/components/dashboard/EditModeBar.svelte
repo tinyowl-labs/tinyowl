@@ -22,6 +22,8 @@
         useHeight?: boolean;
         snap?: SnapMode;
         vertexEditing?: boolean;
+        /** Other tables with pending buffer rows, e.g. "Finds 2 · Context 1". */
+        sessionSummary?: string;
         showHeight?: boolean;
         showSnap?: boolean;
         onMode?: (mode: DrawGeomMode) => void;
@@ -41,6 +43,7 @@
         useHeight = true,
         snap = "mesh",
         vertexEditing = false,
+        sessionSummary = "",
         showHeight = true,
         showSnap = true,
         onMode,
@@ -109,6 +112,13 @@
         <span class="max-w-[10rem] shrink-0 truncate font-medium text-foreground"
             >{layer}</span
         >
+        {#if sessionSummary}
+            <span
+                class="min-w-0 truncate text-[10px] text-muted-foreground"
+                title="Pending in this session"
+                >session · {sessionSummary}</span
+            >
+        {/if}
 
         <div class="relative shrink-0" bind:this={geomWrap}>
             <button

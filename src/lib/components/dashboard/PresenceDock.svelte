@@ -2,7 +2,7 @@
 	import EyeOffIcon from "@lucide/svelte/icons/eye-off";
 	import EyeIcon from "@lucide/svelte/icons/eye";
 	import UserAvatar from "$lib/components/ui/user-avatar.svelte";
-	import type { PresencePeer } from "$lib/map-presence";
+	import { peerCursorColor, type PresencePeer } from "$lib/map-presence";
 
 	let {
 		peers = [],
@@ -13,42 +13,51 @@
 		hidden?: boolean;
 		onToggleHidden?: () => void;
 	} = $props();
+
+	const shown = $derived(peers.slice(0, 5));
+	const extra = $derived(Math.max(0, peers.length - shown.length));
 </script>
 
-<div
-	class="pointer-events-auto flex items-center gap-1 rounded bg-background/90 py-0.5 pl-1 pr-0.5 shadow-sm ring-1 ring-border/60 backdrop-blur-sm"
->
-	{#if hidden}
-		<span class="px-1 text-[11px] text-muted-foreground">Hidden</span>
-	{:else if peers.length === 0}
-		<span class="px-1 text-[11px] text-muted-foreground">Just you</span>
-	{:else}
-		<div class="flex -space-x-1.5 pl-0.5">
-			{#each peers.slice(0, 6) as peer (peer.userId)}
+<div class="flex items-center gap-0.5">
+	{#if !hidden && shown.length > 0}
+		<div class="flex items-center pl-1">
+			<div class="flex -space-x-2">
+				{#each shown as peer, i (peer.userId)}
+					<span
+						class="relative rounded-full"
+						style="z-index: {shown.length - i}; {peer.editing &&
+						!peer.overlayStale
+							? `box-shadow: 0 0 0 2px ${peerCursorColor(peer.userId)}`
+							: ""}"
+						title={peer.overlayStale
+							? `${peer.displayName} (edits on an older develop tip)`
+							: peer.editing
+								? `${peer.displayName} (editing ${peer.editing.table}/${peer.editing.entityId})`
+								: peer.displayName}
+					>
+						<UserAvatar
+							userId={peer.userId}
+							name={peer.displayName}
+							class="size-6 ring-2 {peer.overlayStale
+								? 'ring-amber-400'
+								: 'ring-background'}"
+						/>
+					</span>
+				{/each}
+			</div>
+			{#if extra > 0}
 				<span
-					title={peer.overlayStale
-						? `${peer.displayName} (edits on an older develop tip)`
-						: peer.displayName}
+					class="ml-1 text-[11px] tabular-nums text-muted-foreground"
+					title="{extra} more"
 				>
-					<UserAvatar
-						userId={peer.userId}
-						name={peer.displayName}
-						class="size-5 ring-2 {peer.overlayStale
-							? 'ring-amber-400'
-							: 'ring-background'}"
-					/>
+					+{extra}
 				</span>
-			{/each}
+			{/if}
 		</div>
-		{#if peers.length > 6}
-			<span class="pr-1 text-[11px] tabular-nums text-muted-foreground"
-				>+{peers.length - 6}</span
-			>
-		{/if}
 	{/if}
 	<button
 		type="button"
-		class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+		class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
 		title={hidden
 			? "Show my cursor and edits to collaborators"
 			: "Hide my cursor and edits from collaborators"}
@@ -57,9 +66,9 @@
 		onclick={() => onToggleHidden?.()}
 	>
 		{#if hidden}
-			<EyeOffIcon class="size-3.5" />
+			<EyeOffIcon class="size-4" />
 		{:else}
-			<EyeIcon class="size-3.5" />
+			<EyeIcon class="size-4" />
 		{/if}
 	</button>
 </div>

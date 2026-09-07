@@ -35,12 +35,26 @@ export const editBuffer = {
 		return entries.length;
 	},
 
+	/** Pending row counts per table (skips `_draw` placeholder). */
+	get pendingByTable(): Record<string, number> {
+		const out: Record<string, number> = {};
+		for (const e of entries) {
+			if (!e.table || e.table.startsWith("_")) continue;
+			out[e.table] = (out[e.table] ?? 0) + 1;
+		}
+		return out;
+	},
+
 	get targetLayer(): string | null {
 		return targetLayer;
 	},
 
 	setTargetLayer(name: string | null): void {
 		targetLayer = name;
+	},
+
+	entryFor(table: string, entityId: string): EditBufferEntry | undefined {
+		return entries.find((e) => e.table === table && e.entityId === entityId);
 	},
 
 	nextEntityId(): string {

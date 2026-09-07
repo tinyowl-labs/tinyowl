@@ -121,7 +121,7 @@
 
 {#if show}
     <div
-        class="pointer-events-none absolute bottom-3 left-3 z-20 select-none {klass}"
+        class="pointer-events-none select-none {klass}"
         aria-hidden="true"
         title="East / North / Up"
     >

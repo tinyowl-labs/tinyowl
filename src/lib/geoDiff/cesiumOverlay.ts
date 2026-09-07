@@ -1,5 +1,5 @@
 import { DIFF_OP_FILL } from "./colors";
-import { asGeometry } from "./geometry";
+import { asGeometry, coordsHaveMeaningfulZ } from "./geometry";
 import type { DiffFeature, DiffOp, GeoJsonGeometry } from "./types";
 
 export const GEO_DIFF_DS_NAME = "tinyowl-geo-diff";
@@ -22,17 +22,6 @@ function findNamedDataSource(viewer: any, name: string): any | null {
         if (ds?.name === name) return ds;
     }
     return null;
-}
-
-function firstPosition(coords: unknown): number[] | null {
-    if (!Array.isArray(coords) || coords.length === 0) return null;
-    if (typeof coords[0] === "number") return coords as number[];
-    return firstPosition(coords[0]);
-}
-
-function coordsHaveZ(coords: unknown): boolean {
-    const p = firstPosition(coords);
-    return Boolean(p && p.length > 2);
 }
 
 function asRings(raw: unknown): unknown[] {
@@ -98,6 +87,8 @@ function overlayStamp(
 type PaintStyle = {
     tint?: string;
     pickable: boolean;
+    outline?: boolean;
+    emphasis?: boolean;
 };
 
 function addPoint(
@@ -118,19 +109,24 @@ function addPoint(
         coords.length > 2 && Number.isFinite(Number(coords[2]))
             ? Number(coords[2])
             : 0;
-    const color = fillColor(Cesium, op, role, style.tint);
+    const stroke = lineColor(Cesium, op, role, style.tint);
+    const fill = style.outline
+        ? Cesium.Color.TRANSPARENT
+        : fillColor(Cesium, op, role, style.tint);
     ds.entities.add({
         id,
         properties: stamp,
         position: Cesium.Cartesian3.fromDegrees(lon, lat, h),
         point: {
-            pixelSize: role === "before" ? 8 : 12,
-            color,
-            outlineColor: Cesium.Color.WHITE.withAlpha(
-                role === "before" ? 0.55 : 0.9,
-            ),
-            outlineWidth: 1,
-            heightReference: coordsHaveZ(coords)
+            pixelSize: style.emphasis ? 16 : role === "before" ? 8 : 12,
+            color: fill,
+            outlineColor: style.outline
+                ? stroke
+                : Cesium.Color.WHITE.withAlpha(
+                      role === "before" ? 0.55 : 0.9,
+                  ),
+            outlineWidth: style.outline ? (style.emphasis ? 3 : 2) : 1,
+            heightReference: coordsHaveMeaningfulZ(coords)
                 ? Cesium.HeightReference.NONE
                 : Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -163,9 +159,9 @@ function addLine(
         properties: stamp,
         polyline: {
             positions,
-            width: role === "before" ? 2 : 3,
+            width: style.emphasis ? 5 : role === "before" ? 2 : 3,
             material,
-            clampToGround: !coordsHaveZ(coords),
+            clampToGround: !coordsHaveMeaningfulZ(coords),
         },
         allowPicking: style.pickable && role === "after",
     });
@@ -189,7 +185,7 @@ function addOutlineRings(
     stamp: OverlayStamp,
     style: PaintStyle,
 ) {
-    const clamp = !coordsHaveZ(rings);
+    const clamp = !coordsHaveMeaningfulZ(rings);
     const color = lineColor(Cesium, op, role, style.tint);
     const material = dashed(op, role)
         ? new Cesium.PolylineDashMaterialProperty({
@@ -197,7 +193,7 @@ function addOutlineRings(
               dashLength: 16,
           })
         : color;
-    const width = role === "before" ? 2 : 3;
+    const width = style.emphasis ? 5 : role === "before" ? 2 : 3;
     let ringIdx = 0;
     for (const raw of rings) {
         const pts = ringToCartesians(Cesium, raw);
@@ -230,7 +226,7 @@ function addPolygon(
     const rings = asRings(coords);
     const outer = ringToCartesians(Cesium, rings[0]);
     if (outer.length < 3) return;
-    if (role === "before") {
+    if (role === "before" || style.outline) {
         addOutlineRings(Cesium, ds, id, rings, op, role, false, stamp, style);
         return;
     }
@@ -242,7 +238,7 @@ function addPolygon(
     const hierarchy = new Cesium.PolygonHierarchy(outer.slice(), holes);
     const fill = fillColor(Cesium, op, role, style.tint);
     const outline = lineColor(Cesium, op, role, style.tint);
-    const withZ = coordsHaveZ(coords);
+    const withZ = coordsHaveMeaningfulZ(coords);
     ds.entities.add({
         id,
         properties: stamp,
@@ -318,6 +314,8 @@ function addFeature(Cesium: any, ds: any, f: DiffFeature) {
     const style: PaintStyle = {
         tint: f.color,
         pickable: f.pickable !== false,
+        outline: Boolean(f.outline),
+        emphasis: Boolean(f.emphasis),
     };
     if (f.oldGeometry) {
         paintGeometry(

@@ -1,5 +1,98 @@
 import type { GeoJsonGeometry } from "./types";
 
+/** Heights at or below this (metres) are treated as ground-clamped, not 3D. */
+export const FLAT_Z_M = 0.5;
+
+/** Cap vertices on awareness / broadcast payloads. */
+export const MAX_OVERLAY_VERTS = 32;
+
+function positionHasMeaningfulZ(pos: unknown): boolean {
+    if (!Array.isArray(pos) || pos.length < 3) return false;
+    const z = Number(pos[2]);
+    return Number.isFinite(z) && Math.abs(z) > FLAT_Z_M;
+}
+
+/** True when any coordinate carries a real height (not 0 / missing). */
+export function coordsHaveMeaningfulZ(coords: unknown): boolean {
+    if (!Array.isArray(coords) || coords.length === 0) return false;
+    if (typeof coords[0] === "number") return positionHasMeaningfulZ(coords);
+    return coords.some((c) => coordsHaveMeaningfulZ(c));
+}
+
+function compactPosition(pos: unknown, keepZ: boolean): number[] | null {
+    if (!Array.isArray(pos) || pos.length < 2) return null;
+    const lon = Number(pos[0]);
+    const lat = Number(pos[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+    if (keepZ && pos.length > 2 && Number.isFinite(Number(pos[2]))) {
+        return [lon, lat, Number(pos[2])];
+    }
+    return [lon, lat];
+}
+
+function downsampleRing(
+    ring: unknown[],
+    maxVerts: number,
+    keepZ: boolean,
+): number[][] {
+    const mapped: number[][] = [];
+    for (const p of ring) {
+        const c = compactPosition(p, keepZ);
+        if (c) mapped.push(c);
+    }
+    if (mapped.length <= maxVerts) return mapped;
+    const last = mapped.length - 1;
+    const step = last / (maxVerts - 1);
+    const out: number[][] = [];
+    for (let i = 0; i < maxVerts - 1; i++) {
+        out.push(mapped[Math.round(i * step)]!);
+    }
+    out.push(mapped[last]!);
+    return out;
+}
+
+function compactCoords(
+    coords: unknown,
+    maxVerts: number,
+    keepZ: boolean,
+): unknown {
+    if (!Array.isArray(coords) || coords.length === 0) return coords;
+    if (typeof coords[0] === "number") {
+        return compactPosition(coords, keepZ) ?? coords;
+    }
+    const first = coords[0];
+    if (Array.isArray(first) && typeof first[0] === "number") {
+        return downsampleRing(coords, maxVerts, keepZ);
+    }
+    return coords.map((c) => compactCoords(c, maxVerts, keepZ));
+}
+
+/**
+ * Drop flat Z and downsample rings so Broadcast payloads stay tiny.
+ * Selection overlays look up local CZML; this is for buffer geometry on the wire.
+ */
+export function compactGeometry(
+    raw: unknown,
+    maxVerts = MAX_OVERLAY_VERTS,
+): GeoJsonGeometry | null {
+    const g = asGeometry(raw);
+    if (!g) return null;
+    if (g.type === "GeometryCollection") {
+        const geometries = Array.isArray(g.geometries)
+            ? g.geometries
+                  .map((child) => compactGeometry(child, maxVerts))
+                  .filter((c): c is GeoJsonGeometry => c != null)
+            : [];
+        return { type: "GeometryCollection", geometries };
+    }
+    if (!Array.isArray(g.coordinates)) return g;
+    const keepZ = coordsHaveMeaningfulZ(g.coordinates);
+    return {
+        type: g.type,
+        coordinates: compactCoords(g.coordinates, maxVerts, keepZ),
+    };
+}
+
 /** Coerce GeoJSON geometry, a Feature, or a JSON string. */
 export function asGeometry(raw: unknown): GeoJsonGeometry | null {
     if (raw == null || raw === "") return null;

@@ -76,6 +76,18 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		}
 	} catch (_) {}
 
+	let mainCommits: any[] = [];
+	try {
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?ref=main`,
+			{ headers },
+		);
+		if (res.ok) {
+			const data = await res.json();
+			mainCommits = Array.isArray(data) ? data : [];
+		}
+	} catch (_) {}
+
 	let conflictedCommits: any[] = [];
 	try {
 		const res = await fetch(
@@ -95,6 +107,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		tables,
 		pendingChangesets,
 		commits,
+		mainCommits,
 		conflictedCommits,
 	};
 };

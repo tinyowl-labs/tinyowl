@@ -26,7 +26,7 @@
 </script>
 
 <div
-    class="pointer-events-auto flex items-center gap-1.5 rounded bg-background/90 px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-sm ring-1 ring-border/60 backdrop-blur-sm {klass}"
+    class="pointer-events-auto flex max-w-[11rem] flex-wrap items-center gap-x-1 gap-y-0 rounded bg-background/80 px-1 py-0.5 text-[9px] leading-tight text-muted-foreground backdrop-blur-[2px] {klass}"
 >
     {#each shown as c, i}
         {#if i > 0}

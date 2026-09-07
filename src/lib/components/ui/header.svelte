@@ -21,6 +21,8 @@
     import EchidnaLogo from "$lib/components/ui/echidna-logo.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import { searchOverlay } from "$lib/stores/searchOverlay.svelte";
+    import { presenceChrome } from "$lib/stores/presenceChrome.svelte";
+    import PresenceDock from "$lib/components/dashboard/PresenceDock.svelte";
 
     let {
         subtitle = "",
@@ -174,6 +176,13 @@
                 class="absolute size-4 scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
             />
         </button>
+        {#if presenceChrome.active}
+            <PresenceDock
+                peers={presenceChrome.peers}
+                hidden={presenceChrome.hidden}
+                onToggleHidden={() => presenceChrome.onToggleHidden?.()}
+            />
+        {/if}
         {#if hasSession}
             <div class="group/profile relative">
                 <a

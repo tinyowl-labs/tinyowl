@@ -1,4 +1,4 @@
-import { DEFAULT_COLOR_RAMP, sampleRamp } from "./colorRamps";
+import { DEFAULT_COLOR_RAMP, rampCss, sampleRamp } from "./colorRamps";
 
 export type LayerViewFilter = {
 	field: string;
@@ -161,6 +161,81 @@ export function layerLegendColor(
 		if (first) return [...first];
 	}
 	return view.style.fillColor?.length ? [...view.style.fillColor] : [...DEFAULT_FILL];
+}
+
+const legendNum = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
+
+export function formatLegendNum(n: number): string {
+	return legendNum.format(n);
+}
+
+export const LEGEND_CLASS_CAP = 8;
+
+export type LayerLegendClass = {
+	label: string;
+	color: number[];
+};
+
+export type LayerLegend = {
+	renderer: StyleRenderer;
+	classes: LayerLegendClass[];
+	more: number;
+	ramp?: { css: string; min: string; max: string; field: string };
+};
+
+/** Compact read-only legend for the focused scene-graph layer. */
+export function layerLegend(
+	view: LayerView | undefined,
+	rows?: Record<string, unknown>[],
+	cap = LEGEND_CLASS_CAP,
+): LayerLegend | null {
+	if (!view) return null;
+	const renderer = styleRenderer(view.style);
+	if (renderer === "single") {
+		return { renderer, classes: [], more: 0 };
+	}
+	if (renderer === "continuous") {
+		const field = view.style.colorField ?? "";
+		const range = field ? numericRange(rows, field) : null;
+		return {
+			renderer,
+			classes: [],
+			more: 0,
+			ramp: {
+				css: rampCss(
+					view.style.colorRamp,
+					Boolean(view.style.colorRampReverse),
+				),
+				min: range ? formatLegendNum(range.min) : "min",
+				max: range ? formatLegendNum(range.max) : "max",
+				field,
+			},
+		};
+	}
+	const field = view.style.categoryField ?? "";
+	const cats = view.style.categories ?? {};
+	const noneKey = field ? noneCategoryKey(field) : "";
+	const items: Array<LayerLegendClass & { none: boolean }> = [];
+	for (const [key, color] of Object.entries(cats)) {
+		if (!color?.length) continue;
+		if (key === noneKey) {
+			items.push({ label: "No value", color: [...color], none: true });
+			continue;
+		}
+		const prefix = field ? `${field}=` : "";
+		const label = prefix && key.startsWith(prefix) ? key.slice(prefix.length) : key;
+		items.push({ label, color: [...color], none: false });
+	}
+	items.sort((a, b) => {
+		if (a.none !== b.none) return a.none ? 1 : -1;
+		return a.label.localeCompare(b.label, undefined, { numeric: true });
+	});
+	const more = Math.max(0, items.length - cap);
+	return {
+		renderer,
+		classes: items.slice(0, cap).map(({ label, color }) => ({ label, color })),
+		more,
+	};
 }
 
 /** FNV-1a 32-bit → hue 0–359 (stable per layer name). */

@@ -182,6 +182,11 @@
                     class="truncate text-[10px] uppercase tracking-wide text-muted-foreground"
                 >
                     {current.layerName.replace(/_/g, " ")}
+                    {#if current.bufferOp}
+                        <span class="normal-case text-foreground"
+                            >· in session buffer ({current.bufferOp})</span
+                        >
+                    {/if}
                 </div>
                 {#if idDistinct}
                     <button
