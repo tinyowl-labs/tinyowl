@@ -246,6 +246,189 @@ function guessJunctionOtherTable(junctionName: string, factTable: string): strin
 	return junctionName;
 }
 
+function guessJunctionFact(
+	junctionName: string,
+	schemaTables: SchemaTableKind[],
+): string {
+	const lower = junctionName.toLowerCase();
+	for (const t of schemaTables) {
+		if (tableKind(t) === "junction") continue;
+		if (lower.startsWith(`${t.name.toLowerCase()}_`)) return t.name;
+	}
+	const i = junctionName.indexOf("_");
+	return i > 0 ? junctionName.slice(0, i) : junctionName;
+}
+
+function rowValue(
+	row: Record<string, unknown> | undefined,
+	col: string,
+): unknown {
+	if (!row || !col) return undefined;
+	if (Object.prototype.hasOwnProperty.call(row, col)) return row[col];
+	const lower = col.toLowerCase();
+	for (const [k, v] of Object.entries(row)) {
+		if (k.toLowerCase() === lower) return v;
+	}
+	return undefined;
+}
+
+/** Split a confirmed FK / ValueRelation cell into target ids. */
+export function cellIds(raw: unknown, allowMulti = false): string[] {
+	if (raw == null || raw === "") return [];
+	if (Array.isArray(raw)) return raw.flatMap((v) => cellIds(v, true));
+	if (typeof raw === "number" || typeof raw === "boolean") return [String(raw)];
+	const s = String(raw).trim();
+	if (!s) return [];
+	if (s.startsWith("[")) {
+		try {
+			const parsed = JSON.parse(s);
+			if (Array.isArray(parsed)) return cellIds(parsed, true);
+		} catch {
+			/* fall through */
+		}
+	}
+	const wrapped = s.startsWith("{") && s.endsWith("}") && !s.startsWith('{"');
+	if (allowMulti || wrapped || s.includes(",") || s.includes(";")) {
+		const inner = wrapped ? s.slice(1, -1) : s;
+		return inner
+			.split(/[,;]/)
+			.map((t) => t.trim().replace(/^["']|["']$/g, ""))
+			.filter(Boolean);
+	}
+	return [s];
+}
+
+export type EntityHop = {
+	key: string;
+	dir: "out" | "in";
+	kind: "fk" | "junction";
+	via: string;
+	table: string;
+	id: string;
+	label: string;
+};
+
+const HOP_IN_CAP = 24;
+
+/** One-hop FKs + junctions around an entity (not `_relations` / instance graph). */
+export function hopsForEntity(opts: {
+	table: string;
+	entityId: string;
+	attributes?: Record<string, string>;
+	schemaEdges: SchemaFieldEdge[];
+	schemaTables: SchemaTableKind[];
+	rowsByTable: Record<string, Record<string, unknown>[]>;
+}): EntityHop[] {
+	const table = opts.table.trim();
+	const entityId = opts.entityId.trim();
+	if (!table || !entityId) return [];
+	const out: EntityHop[] = [];
+	const seen = new Set<string>();
+	const push = (hop: Omit<EntityHop, "key">) => {
+		if (!hop.table || !hop.id) return;
+		if (
+			hop.id === entityId &&
+			hop.table.toLowerCase() === table.toLowerCase()
+		) {
+			return;
+		}
+		const key = `${hop.dir}:${hop.kind}:${hop.table}:${hop.id}:${hop.via}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		out.push({ ...hop, key });
+	};
+
+	const selfRow =
+		rowBySourceId(opts.rowsByTable[table], entityId) ??
+		(opts.attributes as Record<string, unknown> | undefined);
+
+	for (const e of opts.schemaEdges) {
+		if ((e.kind ?? "fk") !== "fk") continue;
+		if (e.source.toLowerCase() !== table.toLowerCase()) continue;
+		const raw = selfRow
+			? rowValue(selfRow, e.source_column)
+			: opts.attributes?.[e.source_column];
+		for (const id of cellIds(raw, Boolean(e.allow_multi))) {
+			const disp = resolveFkDisplay(id, e, opts.rowsByTable);
+			push({
+				dir: "out",
+				kind: "fk",
+				via: e.source_column,
+				table: e.target,
+				id,
+				label: disp?.label ?? id,
+			});
+		}
+	}
+
+	for (const jt of opts.schemaTables) {
+		if (tableKind(jt) !== "junction") continue;
+		const fact = guessJunctionFact(jt.name, opts.schemaTables);
+		const other = guessJunctionOtherTable(jt.name, fact);
+		for (const row of opts.rowsByTable[jt.name] ?? []) {
+			const from = String(row.from_id ?? row.FROM_ID ?? "").trim();
+			const to = String(row.to_id ?? row.TO_ID ?? "").trim();
+			if (from === entityId) {
+				const otherRow = rowBySourceId(opts.rowsByTable[other], to);
+				push({
+					dir: "out",
+					kind: "junction",
+					via: jt.name,
+					table: other,
+					id: to,
+					label: lookupLabel(otherRow, to),
+				});
+			} else if (to === entityId) {
+				const otherRow = rowBySourceId(opts.rowsByTable[fact], from);
+				push({
+					dir: "in",
+					kind: "junction",
+					via: jt.name,
+					table: fact,
+					id: from,
+					label: lookupLabel(otherRow, from),
+				});
+			}
+		}
+	}
+
+	let inbound = 0;
+	for (const e of opts.schemaEdges) {
+		if (inbound >= HOP_IN_CAP) break;
+		if ((e.kind ?? "fk") !== "fk") continue;
+		if (e.target.toLowerCase() !== table.toLowerCase()) continue;
+		if (e.source.toLowerCase() === table.toLowerCase()) continue;
+		for (const row of opts.rowsByTable[e.source] ?? []) {
+			if (inbound >= HOP_IN_CAP) break;
+			const sid = String(row.source_id ?? row.SOURCE_ID ?? "").trim();
+			if (!sid) continue;
+			const ids = cellIds(rowValue(row, e.source_column), Boolean(e.allow_multi));
+			if (!ids.includes(entityId)) continue;
+			push({
+				dir: "in",
+				kind: "fk",
+				via: e.source_column,
+				table: e.source,
+				id: sid,
+				label: lookupLabel(row, sid),
+			});
+			inbound += 1;
+		}
+	}
+
+	return out;
+}
+
+export function hopsByDir(hops: EntityHop[]): {
+	out: EntityHop[];
+	in: EntityHop[];
+} {
+	return {
+		out: hops.filter((h) => h.dir === "out"),
+		in: hops.filter((h) => h.dir === "in"),
+	};
+}
+
 export type AttrTableGroup = {
 	key: "lookup" | "junction" | "attribute";
 	label: string;

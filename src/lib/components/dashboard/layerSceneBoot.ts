@@ -92,6 +92,9 @@ export async function createLayerViewer(
         /* ignore */
     }
     viewer.scene.globe.depthTestAgainstTerrain = false;
+    // Photogrammetry / 3D Tiles often don't write opaque depth; without this,
+    // pickPosition falls through to the globe (terrain) under the mesh.
+    viewer.scene.pickTranslucentDepth = true;
     try {
         viewer.screenSpaceEventHandler.removeInputAction(
             Cesium.ScreenSpaceEventType.LEFT_CLICK,

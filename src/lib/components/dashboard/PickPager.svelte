@@ -6,11 +6,16 @@
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import XIcon from "@lucide/svelte/icons/x";
     import { popupAttrFields, type PickCandidate } from "./pickCandidates";
+    import PickRelations from "./PickRelations.svelte";
+    import PickMediaCarousel from "./PickMediaCarousel.svelte";
     import {
         fkEdgeForColumn,
+        hopsForEntity,
         resolveFkDisplay,
         type SchemaFieldEdge,
+        type SchemaTableKind,
     } from "$lib/project/schemaFields";
+    import { browserMediaUrl } from "$lib/project/mediaUrl";
 
     type EntityMedia = { url: string; media_type: string };
 
@@ -34,8 +39,10 @@
         canEdit?: boolean;
         onEdit?: (candidate: PickCandidate) => void;
         schemaEdges?: SchemaFieldEdge[];
+        schemaTables?: SchemaTableKind[];
         rows?: Record<string, Record<string, unknown>[]>;
         mediaByEntity?: Record<string, EntityMedia[]>;
+        accessToken?: string;
         onSelectRelated?: (table: string, id: string) => void;
     };
 
@@ -52,8 +59,10 @@
         canEdit = false,
         onEdit,
         schemaEdges = [],
+        schemaTables = [],
         rows = {},
         mediaByEntity = {},
+        accessToken = "",
         onSelectRelated,
     }: Props = $props();
 
@@ -73,13 +82,33 @@
         }),
     );
 
+    const hops = $derived.by(() => {
+        const c = current;
+        if (!c) return [];
+        return hopsForEntity({
+            table: c.layerName,
+            entityId: c.entityId,
+            attributes: c.attributes,
+            schemaEdges,
+            schemaTables,
+            rowsByTable: rows,
+        });
+    });
+
     const media = $derived.by(() => {
         const c = current;
         if (!c) return [];
-        return mediaByEntity[`${c.layerName}:${c.entityId}`] ?? [];
+        const token = accessToken;
+        return (mediaByEntity[`${c.layerName}:${c.entityId}`] ?? []).map(
+            (m) => ({
+                url: browserMediaUrl(m.url, { accessToken: token }),
+                media_type: m.media_type,
+            }),
+        );
     });
 
     let expanded = $state<EntityMedia | null>(null);
+    let expandedI = $state(0);
 
     $effect(() => {
         if (!open) expanded = null;
@@ -168,7 +197,7 @@
 
 {#if open && current}
     <div
-        class="pointer-events-auto z-[1100] w-64 max-w-[min(16rem,calc(100%-1.5rem))] overflow-hidden rounded-lg border border-border bg-background/98 text-xs shadow-lg backdrop-blur-sm {placement ===
+        class="pointer-events-auto z-[1100] w-72 max-w-[min(18rem,calc(100%-1.5rem))] overflow-hidden rounded-lg border border-border bg-background/98 text-xs shadow-lg backdrop-blur-sm {placement ===
         'pinned'
             ? 'absolute bottom-12 left-3'
             : 'absolute'}"
@@ -261,42 +290,21 @@
         </div>
 
         {#if media.length > 0}
-            <div class="flex gap-1 overflow-x-auto border-b border-border px-2.5 py-1.5">
-                {#each media as item, i (item.url + i)}
-                    <button
-                        type="button"
-                        class="size-10 shrink-0 overflow-hidden rounded border border-border bg-secondary/40"
-                        title={item.media_type}
-                        onclick={() => {
-                            if (
-                                item.media_type.startsWith("image") ||
-                                item.media_type.startsWith("video")
-                            ) {
-                                expanded = item;
-                            } else {
-                                window.open(item.url, "_blank");
-                            }
+            <div class="border-b border-border px-2.5 py-1.5">
+                {#key current.entityId}
+                    <PickMediaCarousel
+                        items={media}
+                        onOpen={(item, i) => {
+                            expanded = item;
+                            expandedI = i;
                         }}
-                    >
-                        {#if item.media_type.startsWith("image")}
-                            <img
-                                src={item.url}
-                                alt=""
-                                class="size-full object-cover"
-                            />
-                        {:else}
-                            <span
-                                class="flex size-full items-center justify-center text-[9px] uppercase text-muted-foreground"
-                                >{item.media_type.split("/")[0] ?? "file"}</span
-                            >
-                        {/if}
-                    </button>
-                {/each}
+                    />
+                {/key}
             </div>
         {/if}
 
         {#if fields.length > 0}
-            <div class="max-h-52 space-y-1.5 overflow-y-auto px-2.5 py-2">
+            <div class="max-h-40 space-y-1.5 overflow-y-auto px-2.5 py-2">
                 {#each fields as field (field.column)}
                     {@const edge = current
                         ? fkEdgeForColumn(
@@ -332,6 +340,14 @@
                 {/each}
             </div>
         {/if}
+
+        {#key current.entityId}
+            <PickRelations
+                {hops}
+                centerLabel={current.label}
+                onSelect={onSelectRelated}
+            />
+        {/key}
 
         {#if candidates.length > 1}
             <div
@@ -369,6 +385,20 @@
         onclick={() => (expanded = null)}
         onkeydown={(e) => {
             if (e.key === "Escape") expanded = null;
+            if (media.length < 2) return;
+            if (e.key === "ArrowLeft" || e.key === "[") {
+                e.preventDefault();
+                e.stopPropagation();
+                const n = (expandedI - 1 + media.length) % media.length;
+                expandedI = n;
+                expanded = media[n] ?? null;
+            } else if (e.key === "ArrowRight" || e.key === "]") {
+                e.preventDefault();
+                e.stopPropagation();
+                const n = (expandedI + 1) % media.length;
+                expandedI = n;
+                expanded = media[n] ?? null;
+            }
         }}
         role="dialog"
         aria-label="Media"
@@ -382,6 +412,34 @@
         >
             <XIcon class="size-5" />
         </button>
+        {#if media.length > 1}
+            <button
+                type="button"
+                class="absolute left-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-white/80 hover:bg-white/10"
+                aria-label="Previous"
+                onclick={(e) => {
+                    e.stopPropagation();
+                    const n = (expandedI - 1 + media.length) % media.length;
+                    expandedI = n;
+                    expanded = media[n] ?? null;
+                }}
+            >
+                <ChevronLeftIcon class="size-6" />
+            </button>
+            <button
+                type="button"
+                class="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-white/80 hover:bg-white/10"
+                aria-label="Next"
+                onclick={(e) => {
+                    e.stopPropagation();
+                    const n = (expandedI + 1) % media.length;
+                    expandedI = n;
+                    expanded = media[n] ?? null;
+                }}
+            >
+                <ChevronRightIcon class="size-6" />
+            </button>
+        {/if}
         {#if expanded.media_type.startsWith("image")}
             <img
                 src={expanded.url}
@@ -398,6 +456,13 @@
                 autoplay
                 onpointerdown={(e) => e.stopPropagation()}
             ></video>
+        {/if}
+        {#if media.length > 1}
+            <p
+                class="absolute bottom-4 left-0 right-0 text-center text-xs tabular-nums text-white/80"
+            >
+                {expandedI + 1} of {media.length}
+            </p>
         {/if}
     </div>
 {/if}

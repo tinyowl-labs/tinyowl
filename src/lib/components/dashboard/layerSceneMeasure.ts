@@ -4,18 +4,26 @@
  */
 import { cesiumMapLabel } from "$lib/components/cesiumBoot";
 import {
+    applyVolumeKind,
     computeMeasureValue,
+    formatAreaSubtext,
     formatLengthSubtext,
     formatMeasureValue,
+    formatVolumeHero,
     measureHint,
     minVertices,
     newMeasureId,
     type MeasureMode,
     type MeasureRecord,
     type MeasureVertex,
+    type ProfilePoint,
+    type VolumeBreakdown,
 } from "$lib/measure";
 
 const MEASURE_COLOR = "#ca8a04";
+const VOLUME_COLOR = "#22d3ee";
+const VOLUME_CUT_COLOR = "#3b82f6";
+const VOLUME_FILL_COLOR = "#22c55e";
 const MEASURE_DS_NAME = "tinyowl-measure";
 
 export type MeasureSession = {
@@ -35,6 +43,12 @@ export type LayerSceneMeasureCtx = {
     bumpRender: () => void;
     pickMeasureCartesian: (position: any) => any | null;
     cartesianToVertex: (cartesian: any) => MeasureVertex;
+    /** Length chart only — click vertices stay the 3D length. */
+    sampleLengthProfile?: (vertices: MeasureVertex[]) => ProfilePoint[] | null;
+    /** Area 3D surface from interior picks; hero uses this when present. */
+    sampleAreaSurface?: (vertices: MeasureVertex[]) => number | null;
+    /** Volume cut/fill vs mean edge Z. */
+    sampleVolume?: (vertices: MeasureVertex[]) => VolumeBreakdown | null;
     getRecords: () => MeasureRecord[];
     setRecords: (next: MeasureRecord[]) => void;
     setStatus: (msg: string) => void;
@@ -50,8 +64,9 @@ export function createMeasureSession(): MeasureSession {
     };
 }
 
-function measureColor(Cesium: any) {
-    return Cesium.Color.fromCssColorString(MEASURE_COLOR);
+function measureColor(Cesium: any, mode?: MeasureMode) {
+    const css = mode === "volume" ? VOLUME_COLOR : MEASURE_COLOR;
+    return Cesium.Color.fromCssColorString(css);
 }
 
 function lengthValue(
@@ -67,9 +82,21 @@ function formatLengthStatus(
 ): string {
     const value = lengthValue(measureMode, vertices);
     const hero = formatMeasureValue(measureMode, value, vertices);
-    if (measureMode !== "length") return hero;
-    const sub = formatLengthSubtext(vertices);
-    return sub ? `${hero} · ${sub}` : hero;
+    if (measureMode === "length") {
+        const sub = formatLengthSubtext(vertices);
+        return sub ? `${hero} · ${sub}` : hero;
+    }
+    if (measureMode === "area") {
+        const sub = formatAreaSubtext(vertices);
+        return sub ? `${hero} · ${sub}` : hero;
+    }
+    if (measureMode === "volume") return "Finish for cut/fill";
+    return hero;
+}
+
+/** Measure graphics are vis only — never a GPU pick hit for mesh sampling. */
+function addMeasureEntity(ds: any, opts: Record<string, unknown>) {
+    return ds.entities.add({ allowPicking: false, ...opts });
 }
 
 function getOrCreateMeasureDs(ctx: LayerSceneMeasureCtx) {
@@ -118,10 +145,10 @@ function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
     const ds = getOrCreateMeasureDs(ctx);
     if (!ds || !Cesium) return;
     clearDraftEntitiesOnly(ctx);
-    const color = measureColor(Cesium);
+    const color = measureColor(Cesium, measureMode);
     const drafts = session.draftCartesians;
     for (let i = 0; i < drafts.length; i++) {
-        ds.entities.add({
+        addMeasureEntity(ds, {
             id: `draft:pt:${i}`,
             position: drafts[i],
             point: {
@@ -134,7 +161,7 @@ function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
         });
     }
     if (drafts.length >= 2) {
-        ds.entities.add({
+        addMeasureEntity(ds, {
             id: "draft:line",
             polyline: {
                 positions: drafts.slice(),
@@ -146,8 +173,11 @@ function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
             },
         });
     }
-    if (measureMode === "area" && drafts.length >= 3) {
-        ds.entities.add({
+    if (
+        (measureMode === "area" || measureMode === "volume") &&
+        drafts.length >= 3
+    ) {
+        addMeasureEntity(ds, {
             id: "draft:poly",
             polygon: {
                 hierarchy: new Cesium.PolygonHierarchy(drafts.slice()),
@@ -159,17 +189,20 @@ function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
         });
     }
     if (drafts.length >= minVertices(measureMode)) {
-        const value = lengthValue(measureMode, session.draftVertices);
         const mid = drafts[Math.floor(drafts.length / 2)];
-        ds.entities.add({
+        const text =
+            measureMode === "volume"
+                ? "Finish for cut/fill"
+                : formatMeasureValue(
+                      measureMode,
+                      lengthValue(measureMode, session.draftVertices),
+                      session.draftVertices,
+                  );
+        addMeasureEntity(ds, {
             id: "draft:label",
             position: mid,
             label: {
-                ...cesiumMapLabel(
-                    Cesium,
-                    formatMeasureValue(measureMode, value, session.draftVertices),
-                    { pixelOffsetY: -12 },
-                ),
+                ...cesiumMapLabel(Cesium, text, { pixelOffsetY: -12 }),
             },
         });
     }
@@ -183,19 +216,33 @@ async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
     const need = minVertices(measureMode);
     if (session.draftCartesians.length < need) return;
 
-    const value = lengthValue(measureMode, session.draftVertices);
     const id = newMeasureId();
-    const label = formatMeasureValue(
-        measureMode,
-        value,
-        session.draftVertices,
-    );
-    const color = measureColor(Cesium);
+    const color = measureColor(Cesium, measureMode);
     const positions = [...session.draftCartesians];
+    const vertices = [...session.draftVertices];
 
     clearDraftEntitiesOnly(ctx);
+
+    const profile =
+        measureMode === "length"
+            ? (ctx.sampleLengthProfile?.(vertices) ?? null)
+            : undefined;
+    const surface3d =
+        measureMode === "area"
+            ? (ctx.sampleAreaSurface?.(vertices) ?? null)
+            : undefined;
+    const volume =
+        measureMode === "volume"
+            ? (ctx.sampleVolume?.(vertices) ?? null)
+            : undefined;
+    const value = computeMeasureValue(measureMode, vertices, {
+        surface3d,
+        volume,
+    });
+    const label = formatMeasureValue(measureMode, value, vertices, { volume });
+
     for (let i = 0; i < positions.length; i++) {
-        ds.entities.add({
+        addMeasureEntity(ds, {
             id: `${id}:pt:${i}`,
             position: positions[i],
             point: {
@@ -207,8 +254,8 @@ async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
             },
         });
     }
-    if (measureMode === "area") {
-        ds.entities.add({
+    if (measureMode === "area" || measureMode === "volume") {
+        addMeasureEntity(ds, {
             id: `${id}:poly`,
             polygon: {
                 hierarchy: new Cesium.PolygonHierarchy(positions.slice()),
@@ -218,8 +265,11 @@ async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
                 perPositionHeight: true,
             },
         });
+        if (measureMode === "volume" && volume) {
+            paintVolumeSamples(ctx, id, volume);
+        }
     } else if (measureMode === "length") {
-        ds.entities.add({
+        addMeasureEntity(ds, {
             id: `${id}:line`,
             polyline: {
                 positions: positions.slice(),
@@ -230,7 +280,7 @@ async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
         });
     }
     const mid = positions[Math.floor(positions.length / 2)];
-    ds.entities.add({
+    addMeasureEntity(ds, {
         id: `${id}:label`,
         position: mid,
         label: {
@@ -245,7 +295,10 @@ async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
             mode: measureMode,
             label,
             value,
-            vertices: [...session.draftVertices],
+            vertices,
+            ...(profile ? { profile } : {}),
+            ...(surface3d != null ? { surface3d } : {}),
+            ...(volume ? { volume } : {}),
         },
     ]);
     session.draftVertices = [];
@@ -275,6 +328,65 @@ export async function removeMeasurement(
         }
     }
     ctx.setRecords(ctx.getRecords().filter((r) => r.id !== id));
+    ctx.bumpRender();
+}
+
+function paintVolumeSamples(
+    ctx: LayerSceneMeasureCtx,
+    id: string,
+    volume: VolumeBreakdown,
+) {
+    const { Cesium } = ctx;
+    const ds = ctx.session.dataSource;
+    if (!ds || !Cesium) return;
+    const cut = Cesium.Color.fromCssColorString(VOLUME_CUT_COLOR);
+    const fill = Cesium.Color.fromCssColorString(VOLUME_FILL_COLOR);
+    for (let i = 0; i < volume.samples.length; i++) {
+        const s = volume.samples[i]!;
+        const color = s.height >= volume.rim ? fill : cut;
+        addMeasureEntity(ds, {
+            id: `${id}:vs:${i}`,
+            position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.height),
+            point: {
+                pixelSize: 6,
+                color,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 1,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+        });
+    }
+}
+
+export function setVolumeKind(
+    ctx: LayerSceneMeasureCtx,
+    id: string,
+    kind: "cut" | "fill",
+) {
+    const rec = ctx.getRecords().find((r) => r.id === id);
+    if (!rec?.volume) return;
+    const volume = applyVolumeKind(rec.volume, kind);
+    const label = formatVolumeHero(volume);
+    ctx.setRecords(
+        ctx.getRecords().map((r) =>
+            r.id === id
+                ? { ...r, volume, value: volume.hero, label }
+                : r,
+        ),
+    );
+    const ds = ctx.session.dataSource;
+    const ent = ds?.entities.getById(`${id}:label`);
+    if (ent?.label) {
+        try {
+            if (typeof ent.label.text?.setValue === "function") {
+                ent.label.text.setValue(label);
+            } else {
+                ent.label.text = label;
+            }
+        } catch {
+            /* ignore */
+        }
+    }
     ctx.bumpRender();
 }
 

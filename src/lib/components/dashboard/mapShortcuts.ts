@@ -17,6 +17,7 @@ export type MapShortcutAction =
 	| { type: "measure-mode"; mode: MeasureMode }
 	| { type: "comments-toggle" }
 	| { type: "edit-toggle" }
+	| { type: "graph-toggle" }
 	| { type: "delete-feature" };
 
 export function isTypingTarget(target: EventTarget | null): boolean {
@@ -80,6 +81,10 @@ export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
 			return { type: "measure-mode", mode: "length" };
 		case "a":
 			return { type: "measure-mode", mode: "area" };
+		case "v":
+			return { type: "measure-mode", mode: "volume" };
+		case "g":
+			return { type: "graph-toggle" };
 		default:
 			return null;
 	}

@@ -71,12 +71,17 @@ export type SceneKeyCtx = {
     setMeasureMode: (mode: MeasureMode) => void;
     setMeasureStatus: (msg: string) => void;
     clearPendingComment: () => void;
+    graphOpen: boolean;
+    graphFullscreen: boolean;
+    setGraphOpen: (on: boolean) => void;
+    setGraphFullscreen: (on: boolean) => void;
 };
 
 const DRAW_FROM_MEASURE: Record<string, DrawGeomMode> = {
     point: "Point",
     length: "LineString",
     area: "Polygon",
+    volume: "Polygon",
 };
 
 export function handleSceneKey(ev: KeyboardEvent, ctx: SceneKeyCtx): void {
@@ -192,6 +197,11 @@ export function handleSceneKey(ev: KeyboardEvent, ctx: SceneKeyCtx): void {
             ctx.closePickPager();
             return;
         }
+        if (ctx.graphFullscreen) {
+            ev.preventDefault();
+            ctx.setGraphFullscreen(false);
+            return;
+        }
         if (ctx.stylePanelOpen) {
             ctx.closeStylePanel();
             return;
@@ -258,6 +268,13 @@ export function handleSceneKey(ev: KeyboardEvent, ctx: SceneKeyCtx): void {
         if (!ctx.editLayer && !ctx.layerFromSelection()) return;
         ev.preventDefault();
         ctx.enterEditMode();
+        return;
+    }
+    if (action.type === "graph-toggle") {
+        ev.preventDefault();
+        const next = !ctx.graphOpen;
+        ctx.setGraphOpen(next);
+        if (!next) ctx.setGraphFullscreen(false);
         return;
     }
     if (action.type === "measure-mode") {

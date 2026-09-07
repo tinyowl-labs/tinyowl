@@ -21,6 +21,7 @@
     } from "$lib/stores/layerSelection.svelte";
     import MapToolsRail from "./MapToolsRail.svelte";
     import MapViewChrome from "./MapViewChrome.svelte";
+    import InstanceGraph from "$lib/instance-graph/InstanceGraph.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
     import LayerStylePanel from "./LayerStylePanel.svelte";
@@ -41,10 +42,12 @@
         finishDraft3d as finishDraft3dImpl,
         popLastMeasureVertex as popLastMeasureVertexImpl,
         removeMeasurement as removeMeasurementImpl,
+        setVolumeKind as setVolumeKindImpl,
         setupMeasureHandler as setupMeasureHandlerImpl,
         teardownMeasureHandler as teardownMeasureHandlerImpl,
         type LayerSceneMeasureCtx,
     } from "./layerSceneMeasure";
+    import { sampleLengthProfileOnGlobe, sampleAreaSurfaceOnGlobe, sampleVolumeOnGlobe } from "./layerSceneMeasureSample";
     import {
         createDrawSession,
         setupDrawHandler as setupDrawHandlerImpl,
@@ -349,6 +352,11 @@
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
+    let sceneRoot = $state<HTMLDivElement>();
+    let showGraph = $state(false);
+    let graphFullscreen = $state(false);
+    let splitAt = $state(55);
+    let splitting = $state(false);
     let creditSink = $state<HTMLDivElement>();
     let error = $state("");
     let ready = $state(false);
@@ -1138,6 +1146,24 @@
             bumpRender,
             pickMeasureCartesian,
             cartesianToVertex,
+            sampleLengthProfile: (vertices) =>
+                sampleLengthProfileOnGlobe(Cesium, viewer, vertices, {
+                    snap: snapMode,
+                    isGlobePick,
+                    overlay: measureSession.dataSource,
+                }),
+            sampleAreaSurface: (vertices) =>
+                sampleAreaSurfaceOnGlobe(Cesium, viewer, vertices, {
+                    snap: snapMode,
+                    isGlobePick,
+                    overlay: measureSession.dataSource,
+                }),
+            sampleVolume: (vertices) =>
+                sampleVolumeOnGlobe(Cesium, viewer, vertices, {
+                    snap: snapMode,
+                    isGlobePick,
+                    overlay: measureSession.dataSource,
+                }),
             getRecords: () => measureRecords,
             setRecords: (next) => {
                 measureRecords = next;
@@ -1249,25 +1275,8 @@
     }
 
     function pickMeasureCartesian(position: any): any | null {
-        if (!viewer || !Cesium) return null;
-        try {
-            if (viewer.scene.pickPositionSupported) {
-                const hit = viewer.scene.pickPosition(position);
-                if (Cesium.defined(hit)) return hit;
-            }
-        } catch {
-            /* fall through */
-        }
-        try {
-            const ray = viewer.camera.getPickRay(position);
-            if (ray) {
-                const globeHit = viewer.scene.globe.pick(ray, viewer.scene);
-                if (Cesium.defined(globeHit)) return globeHit;
-            }
-        } catch {
-            /* ignore */
-        }
-        return null;
+        // Same snap as draw: mesh (tileset) → terrain → ellipsoid.
+        return pickSnapCartesian(position);
     }
 
     function pickEllipsoidCartesian(position: any): any | null {
@@ -1298,15 +1307,34 @@
         return null;
     }
 
+    function isGlobePick(obj: any): boolean {
+        if (!obj || !viewer) return false;
+        const prim = obj.primitive ?? obj;
+        return prim === viewer.scene.globe;
+    }
+
+    /** Tileset / glTF along the camera ray, ignoring globe depth. */
     function pickMeshCartesian(position: any): any | null {
         if (!viewer || !Cesium) return null;
+        const scene = viewer.scene;
+        if (scene.mode !== Cesium.SceneMode.SCENE3D) return null;
         try {
-            if (viewer.scene.pickPositionSupported) {
-                const hit = viewer.scene.pickPosition(position);
-                if (Cesium.defined(hit)) return hit;
+            const ray = viewer.camera.getPickRay(position);
+            if (!ray) return null;
+            const exclude = [scene.globe];
+            const hits = scene.drillPickFromRay
+                ? scene.drillPickFromRay(ray, 8, exclude)
+                : scene.pickFromRay
+                  ? [scene.pickFromRay(ray, exclude)].filter(Boolean)
+                  : [];
+            for (const hit of hits ?? []) {
+                if (!hit || hit.exclude) continue;
+                if (!Cesium.defined(hit.position)) continue;
+                if (isGlobePick(hit.object)) continue;
+                return hit.position;
             }
         } catch {
-            /* ignore */
+            /* 2D / no depth texture */
         }
         return null;
     }
@@ -1334,6 +1362,10 @@
 
     async function removeMeasurement(id: string) {
         await removeMeasurementImpl(measureCtx(), id);
+    }
+
+    function setVolumeKind(id: string, kind: "cut" | "fill") {
+        setVolumeKindImpl(measureCtx(), id, kind);
     }
 
     function popLastMeasureVertex(repaint = true) {
@@ -4070,6 +4102,14 @@
                 pendingComment = null;
                 commentAdding = false;
             },
+            graphOpen: showGraph,
+            graphFullscreen,
+            setGraphOpen: (on) => {
+                showGraph = on;
+            },
+            setGraphFullscreen: (on) => {
+                graphFullscreen = on;
+            },
         });
     }
 
@@ -4359,6 +4399,10 @@
 
     $effect(() => {
         measureMode;
+        if (dim === "2d" && measureMode === "volume") {
+            measureMode = "area";
+            return;
+        }
         if (!measureEnabled || !ready) return;
         clearDraftMeasure();
         measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
@@ -4383,14 +4427,22 @@
     });
 </script>
 
-<div class="relative h-full w-full min-h-0 overflow-hidden">
-    <div class="absolute top-2 left-2 z-20 flex items-start gap-2">
+<div
+    bind:this={sceneRoot}
+    class="relative h-full w-full min-h-0 overflow-hidden"
+>
+    <div
+        class="absolute top-2 left-2 z-20 flex items-start gap-2 {graphFullscreen
+            ? 'hidden'
+            : ''}"
+    >
         <MapToolsRail
             bind:enabled={measureEnabled}
             bind:mode={measureMode}
             bind:selectionTool={selectionToolLocal}
             bind:commentsEnabled
             bind:editEnabled
+            bind:showGraph
             showComments={presenceMember}
             showEdit={canWrite}
             canEnterEdit={canEdit}
@@ -4429,6 +4481,7 @@
             onClear={() => void clearMeasurements()}
             onFinish={finishDraft3d}
             onRemove={(id) => void removeMeasurement(id)}
+            onVolumeKind={setVolumeKind}
         >
             {#snippet extraRail()}
                 <MapViewChrome
@@ -4629,7 +4682,12 @@
 
     {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
         <div
-            class="pointer-events-none absolute top-2 right-2 bottom-2 z-10 flex items-start gap-2"
+            class="pointer-events-none absolute top-2 bottom-2 z-10 flex items-start gap-2 {graphFullscreen
+                ? 'hidden'
+                : ''}"
+            style:right={showGraph
+                ? `calc(${100 - splitAt}% + 0.5rem)`
+                : "0.5rem"}
         >
             {#if styleLayerIdx !== null && layers[styleLayerIdx]}
                 {@const styleLayer = layers[styleLayerIdx]}
@@ -4975,8 +5033,70 @@
 
     <div
         bind:this={el}
-        class="cesium-scene absolute inset-0 z-0 bg-neutral-900"
+        class="cesium-scene absolute top-0 left-0 bottom-0 z-0 bg-neutral-900"
+        style:right={showGraph
+            ? graphFullscreen
+                ? "100%"
+                : `${100 - splitAt}%`
+            : "0"}
     ></div>
+    {#if showGraph}
+        {#if !graphFullscreen}
+            <div
+                class="absolute top-0 bottom-0 z-30 w-1.5 -translate-x-1/2 cursor-col-resize bg-border hover:bg-primary/50"
+                style:left="{splitAt}%"
+                role="separator"
+                aria-orientation="vertical"
+                aria-valuenow={Math.round(splitAt)}
+                aria-valuemin={20}
+                aria-valuemax={80}
+                aria-label="Resize graph"
+                onpointerdown={(ev) => {
+                    splitting = true;
+                    (ev.currentTarget as HTMLElement).setPointerCapture(
+                        ev.pointerId,
+                    );
+                }}
+                onpointermove={(ev) => {
+                    if (!splitting || !sceneRoot) return;
+                    const rect = sceneRoot.getBoundingClientRect();
+                    if (rect.width <= 0) return;
+                    const pct =
+                        ((ev.clientX - rect.left) / rect.width) * 100;
+                    splitAt = Math.min(80, Math.max(20, pct));
+                }}
+                onpointerup={(ev) => {
+                    splitting = false;
+                    try {
+                        (ev.currentTarget as HTMLElement).releasePointerCapture(
+                            ev.pointerId,
+                        );
+                    } catch {
+                        /* ignore */
+                    }
+                }}
+            ></div>
+        {/if}
+        <div
+            class="absolute top-0 right-0 bottom-0 z-20 min-w-0"
+            style:left={graphFullscreen ? "0" : `${splitAt}%`}
+        >
+            <InstanceGraph
+                slug={projectSlug}
+                {accessToken}
+                {schemaTables}
+                {schemaEdges}
+                {rows}
+                fullscreen={graphFullscreen}
+                onToggleFullscreen={() =>
+                    (graphFullscreen = !graphFullscreen)}
+                onClose={() => {
+                    showGraph = false;
+                    graphFullscreen = false;
+                }}
+            />
+        </div>
+    {/if}
     <PresenceCursors roster={presenceRoster} nodes={presenceCursorNodes} />
     {#if presenceMember}
         <CommentBalloons
@@ -5018,8 +5138,10 @@
             canEdit={canWrite}
             onEdit={(c) => openAttrEdit(c.layerName, c.entityId)}
             schemaEdges={schemaEdges}
+            schemaTables={schemaTables}
             {rows}
             {mediaByEntity}
+            {accessToken}
             onSelectRelated={(table, id) => {
                 layerSelection.selectSingle(table, id);
                 const spatial = (tables[table] ?? []).some((c) =>

@@ -17,11 +17,14 @@
     import EyeIcon from "@lucide/svelte/icons/eye";
     import FocusIcon from "@lucide/svelte/icons/focus";
     import CopyIcon from "@lucide/svelte/icons/copy";
+    import NetworkIcon from "@lucide/svelte/icons/network";
     import type { Snippet } from "svelte";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
     import {
         elevationProfile,
+        formatAreaSubtext,
         formatLengthSubtext,
+        formatVolumeSubtext,
         measureHint,
     } from "$lib/measure";
     import ElevationProfile from "$lib/measure/ElevationProfile.svelte";
@@ -51,6 +54,7 @@
         onClear?: () => void;
         onFinish?: () => void;
         onRemove?: (id: string) => void;
+        onVolumeKind?: (id: string, kind: "cut" | "fill") => void;
         /** Members-only comments toggle. */
         showComments?: boolean;
         commentsEnabled?: boolean;
@@ -62,6 +66,8 @@
         onExitEdit?: () => void;
         /** Extra rail stacked under zoom / home (view chrome). */
         extraRail?: Snippet;
+        /** Split instance graph vs globe. */
+        showGraph?: boolean;
     };
 
     let {
@@ -88,6 +94,7 @@
         onClear,
         onFinish,
         onRemove,
+        onVolumeKind,
         showComments = false,
         commentsEnabled = $bindable(false),
         showEdit = false,
@@ -96,22 +103,29 @@
         onEnterEdit,
         onExitEdit,
         extraRail,
+        showGraph = $bindable(false),
     }: Props = $props();
 
     let selectionOpen = $state(false);
     let copiedId = $state<string | null>(null);
 
-    const measureModes: { id: MeasureMode; label: string; shortcut: string }[] =
-        [
+    const measureModes = $derived.by(() => {
+        const modes: { id: MeasureMode; label: string; shortcut: string }[] = [
             { id: "point", label: "Point", shortcut: "P" },
             { id: "length", label: "Length", shortcut: "L" },
             { id: "area", label: "Area", shortcut: "A" },
         ];
+        if (dim === "3d") {
+            modes.push({ id: "volume", label: "Vol", shortcut: "V" });
+        }
+        return modes;
+    });
 
     const modeLabel: Record<MeasureMode, string> = {
         point: "Point",
         length: "Length",
         area: "Area",
+        volume: "Vol",
     };
 
     const selectTools: {
@@ -148,6 +162,10 @@
     const inSelectMode = $derived(
         !enabled && !commentsEnabled && !editEnabled,
     );
+
+    function toggleGraph() {
+        showGraph = !showGraph;
+    }
     const editTitle = $derived(
         editEnabled
             ? "Stop drawing (Tab)"
@@ -201,9 +219,21 @@
     }
 
     function setMeasureMode(next: MeasureMode) {
+        if (next === "volume" && dim !== "3d") return;
         mode = next;
         selectionOpen = false;
         if (!enabled) enabled = true;
+    }
+
+    function recordSub(rec: MeasureRecord): string | null {
+        if (rec.mode === "length") return formatLengthSubtext(rec.vertices);
+        if (rec.mode === "area") {
+            return formatAreaSubtext(rec.vertices, rec.surface3d);
+        }
+        if (rec.mode === "volume" && rec.volume) {
+            return formatVolumeSubtext(rec.volume);
+        }
+        return null;
     }
 
     function setSelectTool(id: SelectionToolMode) {
@@ -211,8 +241,7 @@
     }
 
     async function copyRecord(rec: MeasureRecord) {
-        const sub =
-            rec.mode === "length" ? formatLengthSubtext(rec.vertices) : null;
+        const sub = recordSub(rec);
         const text =
             rec.mode === "point"
                 ? rec.label
@@ -303,6 +332,19 @@
                     <MessageCircleIcon class="size-3.5" />
                 </button>
             {/if}
+
+            <button
+                type="button"
+                class="{railBtn} {showGraph
+                    ? 'bg-primary/15 text-foreground'
+                    : ''}"
+                title={showGraph ? "Hide graph (G)" : "Graph (G)"}
+                aria-label="Graph"
+                aria-pressed={showGraph}
+                onclick={toggleGraph}
+            >
+                <NetworkIcon class="size-3.5" />
+            </button>
         </div>
 
         <div
@@ -515,7 +557,7 @@
 
     {#if enabled}
         <div
-            class="flex w-64 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-2 text-xs shadow-lg backdrop-blur-sm"
+            class="flex w-72 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-2 text-xs shadow-lg backdrop-blur-sm"
         >
             <div
                 class="flex items-center overflow-hidden rounded-md border border-border"
@@ -570,13 +612,11 @@
                     </div>
                     <ul class="max-h-72 space-y-1 overflow-y-auto">
                         {#each records as rec, i (rec.id)}
-                            {@const sub =
-                                rec.mode === "length"
-                                    ? formatLengthSubtext(rec.vertices)
-                                    : null}
+                            {@const sub = recordSub(rec)}
                             {@const profile =
                                 rec.mode === "length"
-                                    ? elevationProfile(rec.vertices)
+                                    ? (rec.profile ??
+                                          elevationProfile(rec.vertices))
                                     : null}
                             <li
                                 class="rounded-md px-1 py-1 hover:bg-secondary/80"
@@ -620,6 +660,32 @@
                                     >
                                         {sub}
                                     </p>
+                                {/if}
+                                {#if rec.mode === "volume" && rec.volume && onVolumeKind}
+                                    <div
+                                        class="mt-0.5 flex gap-0.5 pl-5"
+                                    >
+                                        <button
+                                            type="button"
+                                            class="rounded px-1.5 py-0.5 text-[10px] {rec.volume.kind === 'cut'
+                                                ? 'bg-[#3b82f6]/25 font-medium text-foreground'
+                                                : 'text-muted-foreground hover:text-foreground'}"
+                                            title="Cut — below the ring"
+                                            onclick={() =>
+                                                onVolumeKind(rec.id, "cut")}
+                                            >Cut</button
+                                        >
+                                        <button
+                                            type="button"
+                                            class="rounded px-1.5 py-0.5 text-[10px] {rec.volume.kind === 'fill'
+                                                ? 'bg-[#22c55e]/25 font-medium text-foreground'
+                                                : 'text-muted-foreground hover:text-foreground'}"
+                                            title="Fill — above the ring"
+                                            onclick={() =>
+                                                onVolumeKind(rec.id, "fill")}
+                                            >Fill</button
+                                        >
+                                    </div>
                                 {/if}
                                 {#if profile}
                                     <div class="pl-5">

@@ -42,6 +42,7 @@
     } from "$lib/project/schemaFields";
     import { fromEditBuffer } from "$lib/geoDiff";
     import { isTypingTarget } from "$lib/components/dashboard/mapShortcuts";
+    import { browserMediaUrl } from "$lib/project/mediaUrl";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
     import {
         DEFAULT_SEARCH_RADIUS,
@@ -62,18 +63,28 @@
     const rows = $derived(
         (data?.rows as Record<string, Record<string, unknown>[]> | null) ?? {},
     );
-    const mediaByEntity = $derived(
-        (data?.mediaByEntity as Record<
-            string,
-            { url: string; media_type: string }[]
-        >) ?? {},
-    );
+    const accessToken = $derived((data?.accessToken as string) ?? "");
+    const mediaByEntity = $derived.by(() => {
+        const raw =
+            (data?.mediaByEntity as Record<
+                string,
+                { url: string; media_type: string }[]
+            >) ?? {};
+        const token = accessToken;
+        const out: Record<string, { url: string; media_type: string }[]> = {};
+        for (const [key, items] of Object.entries(raw)) {
+            out[key] = items.map((m) => ({
+                url: browserMediaUrl(m.url, { accessToken: token }),
+                media_type: m.media_type,
+            }));
+        }
+        return out;
+    });
     const layerParam = $derived((data?.layer as string) ?? "");
     const highlightId = $derived((data?.highlight as string) ?? "");
     const highlightPage = $derived((data?.highlightPage as number) ?? 0);
     const viewParam = $derived((data?.view as string) ?? "");
     const dimParam = $derived((data?.dim as string) ?? "");
-    const accessToken = $derived((data?.accessToken as string) ?? "");
     const tableNames = $derived(Object.keys(tables));
     const diffFeatures = $derived(fromEditBuffer(editBuffer.entries));
     const bufferSummary = $derived(

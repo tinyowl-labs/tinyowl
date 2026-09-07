@@ -93,7 +93,9 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
           const key = `${link.entity_type}:${link.entity_id}`;
           if (!mediaByEntity[key]) mediaByEntity[key] = [];
           mediaByEntity[key].push({
-            url: `${TINYOWL_CORE_URL}${m.url}`,
+            url: m.url?.startsWith("/")
+              ? m.url
+              : `/media/${m.hash}`,
             media_type: m.media_type,
           });
         }
