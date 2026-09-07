@@ -29,7 +29,7 @@
             class="flex w-full items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1 md:w-48 md:shrink-0 md:flex-col md:items-stretch md:gap-0.5 md:overflow-visible md:rounded-none md:bg-transparent md:p-0"
             aria-label="Project settings"
         >
-            {#each SETTINGS_PAGES as item}
+            {#each SETTINGS_PAGES as item (item.id)}
                 {#if canAdminSettings || item.id === "qfieldcloud"}
                     {#if "separatorBefore" in item && item.separatorBefore && canAdminSettings}
                         <span

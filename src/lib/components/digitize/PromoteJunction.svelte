@@ -15,58 +15,35 @@
 
     let { accessToken, slug, tables, onSaved }: Props = $props();
 
-    let sourceTable = $state("");
-    let sourceColumn = $state("");
-    let targetTable = $state("");
     let junctionTable = $state("");
     let message = $state("");
     let busy = $state(false);
     let error = $state("");
     let ok = $state("");
 
-    let addTable = $state("");
     let fromId = $state("");
     let toId = $state("");
     let addMessage = $state("");
 
-    $effect(() => {
-        if (!sourceTable && tables.length) sourceTable = tables[0].name;
-    });
-
+    let sourceTable = $derived(tables[0]?.name ?? "");
     const sourceCols = $derived(
         tables.find((t) => t.name === sourceTable)?.columns ?? [],
     );
-
-    $effect(() => {
-        if (
-            sourceCols.length &&
-            !sourceCols.some((c) => c.name === sourceColumn)
-        ) {
-            const pick =
-                sourceCols.find(
-                    (c) =>
-                        !c.pk &&
-                        c.name !== "entity_type" &&
-                        c.name !== "source_id" &&
-                        c.name !== "geom" &&
-                        c.name !== "geometry" &&
-                        c.name !== "from_id" &&
-                        c.name !== "to_id",
-                ) ?? sourceCols[0];
-            sourceColumn = pick?.name ?? "";
-        }
+    let sourceColumn = $derived.by(() => {
+        const pick =
+            sourceCols.find(
+                (c) =>
+                    !c.pk &&
+                    c.name !== "entity_type" &&
+                    c.name !== "source_id" &&
+                    c.name !== "geom" &&
+                    c.name !== "geometry" &&
+                    c.name !== "from_id" &&
+                    c.name !== "to_id",
+            ) ?? sourceCols[0];
+        return pick?.name ?? "";
     });
-
-    $effect(() => {
-        if (!targetTable && sourceTable) targetTable = sourceTable;
-        if (
-            targetTable &&
-            tables.length &&
-            !tables.some((t) => t.name === targetTable)
-        ) {
-            targetTable = sourceTable || tables[0]?.name || "";
-        }
-    });
+    let targetTable = $derived(sourceTable);
 
     const junctionTables = $derived(
         tables.filter((t) => {
@@ -74,11 +51,7 @@
             return names.has("from_id") && names.has("to_id");
         }),
     );
-
-    $effect(() => {
-        if (!addTable && junctionTables.length)
-            addTable = junctionTables[0].name;
-    });
+    let addTable = $derived(junctionTables[0]?.name ?? "");
 
     async function promote() {
         error = "";

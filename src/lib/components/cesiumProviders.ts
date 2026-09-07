@@ -145,7 +145,7 @@ export function imageryOption(id: ImageryId): ImageryOption {
 	return IMAGERY_OPTIONS.find((o) => o.id === id) ?? IMAGERY_OPTIONS[0]!;
 }
 
-export function terrainOption(id: TerrainId): TerrainOption {
+function terrainOption(id: TerrainId): TerrainOption {
 	return TERRAIN_OPTIONS.find((o) => o.id === id) ?? TERRAIN_OPTIONS[0]!;
 }
 

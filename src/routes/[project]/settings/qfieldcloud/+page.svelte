@@ -73,11 +73,6 @@
         ((data as any)?.developCommit as string) || "",
     );
 
-    let fieldBaseCommit = $state("");
-    $effect(() => {
-        if (!fieldBaseCommit && developCommit) fieldBaseCommit = developCommit;
-    });
-
     let qfcAccountId = $state("");
     let qfcProjects = $state<
         {
@@ -228,7 +223,7 @@
                     <Input
                         id="field-base"
                         name="base_commit"
-                        bind:value={fieldBaseCommit}
+                        value={developCommit}
                         placeholder="from tinyowl.json"
                         required
                     />

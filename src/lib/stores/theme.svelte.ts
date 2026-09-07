@@ -20,7 +20,7 @@ const DEFAULTS: ThemePreferences = {
 	blur: 'glass'
 };
 
-export const BG_L: Record<BgBase, number> = {
+const BG_L: Record<BgBase, number> = {
 	pitch: 0.07,
 	dark: 0.12,
 	dim: 0.2,
@@ -244,7 +244,7 @@ export function isDark(): boolean {
 }
 
 /** Read a live CSS custom property from :root (post-applyTheme). */
-export function readCssVar(name: string, fallback = ''): string {
+function readCssVar(name: string, fallback = ''): string {
 	if (typeof document === 'undefined') return fallback;
 	const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	return v || fallback;
@@ -254,7 +254,7 @@ export function readCssVar(name: string, fallback = ''): string {
  * Resolve any CSS color (incl. oklch / var()) to rgb()/rgba() for Leaflet SVG fills,
  * which are unreliable with modern color functions in some browsers.
  */
-export function resolveCssColor(cssColor: string, fallback = '#3b82f6'): string {
+function resolveCssColor(cssColor: string, fallback = '#3b82f6'): string {
 	if (typeof document === 'undefined' || !cssColor) return fallback;
 	const probe = document.createElement('span');
 	probe.style.color = cssColor;

@@ -4,7 +4,7 @@ import { getOrAttachOverlayDs } from "$lib/geoDiff";
 import { cesiumPropValue } from "./czmlLoad";
 import { SELECTION_PRIMARY, SELECTION_SECONDARY } from "./selectionStyle";
 
-export const SELECTION_DS_NAME = "tinyowl-selection";
+const SELECTION_DS_NAME = "tinyowl-selection";
 
 export type SelectionOverlayItem = {
 	entity: any;

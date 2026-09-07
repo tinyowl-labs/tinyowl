@@ -24,7 +24,7 @@ let entries = $state<EditBufferEntry[]>([]);
 let targetLayer = $state<string | null>(null);
 
 /** Fallback layer name while drawing with no table selected. */
-export const PLACEHOLDER_TABLE = "_draw";
+const PLACEHOLDER_TABLE = "_draw";
 
 export const editBuffer = {
 	get entries(): EditBufferEntry[] {
@@ -39,7 +39,7 @@ export const editBuffer = {
 	get pendingByTable(): Record<string, number> {
 		const out: Record<string, number> = {};
 		for (const e of entries) {
-			if (!e.table || e.table.startsWith("_")) continue;
+			if (!e.table || e.table === PLACEHOLDER_TABLE || e.table.startsWith("_")) continue;
 			out[e.table] = (out[e.table] ?? 0) + 1;
 		}
 		return out;
@@ -316,7 +316,7 @@ function closedRing(verts: LonLatVertex[], withHeight: boolean): number[][] {
 }
 
 /** Closed GeoJSON Polygon from click vertices (first point repeated). */
-export function polygonFromVertices(
+function polygonFromVertices(
 	verts: LonLatVertex[],
 	withHeight = true,
 ): {

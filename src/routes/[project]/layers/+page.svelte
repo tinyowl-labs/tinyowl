@@ -1376,16 +1376,16 @@
                     <aside
                         class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-4"
                     >
-                        <div>
-                            <h2 class="text-sm font-semibold text-foreground">
-                                Schema tools
-                            </h2>
-                            <p class="text-xs text-muted-foreground mt-0.5">
-                                Turn imported columns into lookups, foreign
-                                keys, or many-to-many links.
-                            </p>
-                        </div>
                         {#if canWrite && accessToken}
+                            <div>
+                                <h2 class="text-sm font-semibold text-foreground">
+                                    Schema tools
+                                </h2>
+                                <p class="text-xs text-muted-foreground mt-0.5">
+                                    Turn imported columns into lookups, foreign
+                                    keys, or many-to-many links.
+                                </p>
+                            </div>
                             <div
                                 class="grid grid-cols-2 gap-1 rounded-md border border-border p-1"
                                 role="tablist"

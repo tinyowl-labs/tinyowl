@@ -35,6 +35,18 @@
     import { computeInViewKeys } from "./layerSceneInView";
     import { paintLayerViews } from "./layerSceneViews";
     import {
+        clearDraftMeasure as clearDraftMeasureImpl,
+        clearMeasurements as clearMeasurementsImpl,
+        createMeasureSession,
+        finishDraft3d as finishDraft3dImpl,
+        paintDraftMeasure as paintDraftMeasureImpl,
+        popLastMeasureVertex as popLastMeasureVertexImpl,
+        removeMeasurement as removeMeasurementImpl,
+        setupMeasureHandler as setupMeasureHandlerImpl,
+        teardownMeasureHandler as teardownMeasureHandlerImpl,
+        type LayerSceneMeasureCtx,
+    } from "./layerSceneMeasure";
+    import {
         createCameraSession,
         flyCameraToSphere as flyCameraToSphereImpl,
         flyHome as flyHomeImpl,
@@ -333,12 +345,8 @@
     let measureMode = $state<MeasureMode>("length");
     let measureStatus = $state("");
     let measureRecords = $state<MeasureRecord[]>([]);
-    let draftVertices: MeasureVertex[] = [];
-    let draftCartesians: any[] = [];
-    let measureDataSource: any = null;
-    let measureDsAdd: Promise<unknown> | null = null;
+    const measureSession = createMeasureSession();
     let diffDataSource: any = null;
-    const MEASURE_COLOR = "#ca8a04";
 
     let editEnabled = $state(false);
     let bufferOverlayVisible = $state(true);
@@ -391,7 +399,7 @@
     const canFinish = $derived(
         measureEnabled &&
             measureMode !== "point" &&
-            draftCartesians.length >= minVertices(measureMode),
+            measureSession.draftCartesians.length >= minVertices(measureMode),
     );
     const DRAW_COLOR = DIFF_OP_FILL.insert;
     const DRAFT_MID_CROSS = `data:image/svg+xml,${encodeURIComponent(

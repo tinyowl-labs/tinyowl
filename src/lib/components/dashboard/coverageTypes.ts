@@ -88,7 +88,7 @@ export function shouldUseCogProvider(cov: ProjectCoverage): boolean {
 }
 
 /** Raster coverages only (exclude tilesets/models — those use Cesium3DTileset). */
-export function rasterCoverages(list: ProjectCoverage[]): ProjectCoverage[] {
+function rasterCoverages(list: ProjectCoverage[]): ProjectCoverage[] {
     return list.filter((c) => c.role !== "tileset" && c.role !== "model");
 }
 

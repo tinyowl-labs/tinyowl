@@ -45,7 +45,7 @@ function ringHasZ(flat: number[]): boolean {
 }
 
 /** Ground polygons: clamp unless a 3D tileset is visible, then classify terrain+tiles. */
-export function polygonGroundMode(
+function polygonGroundMode(
     useHeights: boolean,
     classifyTiles: boolean,
 ): "absolute" | "classify" | "clamp" {

@@ -109,7 +109,7 @@ export const COLOR_RAMPS: ColorRamp[] = [
 
 export const DEFAULT_COLOR_RAMP: ColorRampId = "viridis";
 
-export function colorRampById(id: string | undefined): ColorRamp {
+function colorRampById(id: string | undefined): ColorRamp {
     return COLOR_RAMPS.find((r) => r.id === id) ?? COLOR_RAMPS[0]!;
 }
 
