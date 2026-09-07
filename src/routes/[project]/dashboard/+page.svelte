@@ -394,7 +394,7 @@
                 <a
                     href="/{slug}/review"
                     class="ml-auto text-xs text-primary hover:underline"
-                    >Publish</a
+                    >Review</a
                 >
                 <a
                     href="/{slug}/history"

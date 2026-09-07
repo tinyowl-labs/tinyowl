@@ -4,6 +4,7 @@
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
     import ReviewMap from "$lib/components/dashboard/ReviewMap.svelte";
     import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
+    import { asGeometry, geometriesEqual } from "$lib/geoDiff";
 
     let { data } = $props();
 
@@ -41,6 +42,9 @@
     let conflictTake = $state<Record<string, "ours" | "theirs">>({});
     let selectedConflict = $state(0);
     let mapSide = $state<"theirs" | "ours">("theirs");
+    let selectedAheadId = $state("");
+    let commitChanges = $state<Record<string, any[]>>({});
+    let commitBusy = $state("");
 
     function conflictKey(e: any): string {
         return `${e?.table ?? ""}/${e?.source_id ?? ""}`;
@@ -125,6 +129,73 @@
         conflictMapEnvelope.filter((f) => f.id === mapSide),
     );
 
+    function conflictHasAnyGeom(e: any): boolean {
+        return Boolean(
+            asGeometry(e?.theirs?.geometry) || asGeometry(e?.ours?.geometry),
+        );
+    }
+
+    function conflictHasGeomEdit(e: any): boolean {
+        const a = asGeometry(e?.theirs?.geometry);
+        const b = asGeometry(e?.ours?.geometry);
+        if (!a && !b) return false;
+        return !geometriesEqual(a, b);
+    }
+
+    const selectedConflictEntry = $derived(
+        conflictEntries[selectedConflict] ?? null,
+    );
+    const showConflictMap = $derived(conflictHasAnyGeom(selectedConflictEntry));
+    const showMapToggle = $derived(conflictHasGeomEdit(selectedConflictEntry));
+
+    const inspectGeodiff = $derived.by(() => {
+        if (selectedAheadId && commitChanges[selectedAheadId]) {
+            return commitChanges[selectedAheadId];
+        }
+        return geodiff;
+    });
+
+    function geodiffFromChangesPayload(body: any): any[] {
+        const raw = body?.changes;
+        if (Array.isArray(raw?.geodiff)) return raw.geodiff;
+        if (Array.isArray(raw)) return raw;
+        return [];
+    }
+
+    async function selectAhead(id: string) {
+        if (!id || busy || integrateBusy) return;
+        clearConflicts();
+        if (selectedAheadId === id) {
+            selectedAheadId = "";
+            return;
+        }
+        selectedAheadId = id;
+        if (commitChanges[id]) return;
+        commitBusy = id;
+        errorMsg = "";
+        try {
+            const res = await fetch(
+                `/api/v1/projects/${slug}/commits/${id}/changes`,
+                { headers: authHeaders() },
+            );
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                errorMsg = body.error || `Failed to load commit (${res.status})`;
+                selectedAheadId = "";
+                return;
+            }
+            commitChanges = {
+                ...commitChanges,
+                [id]: geodiffFromChangesPayload(body),
+            };
+        } catch (e: any) {
+            errorMsg = e?.message || "Failed to load commit";
+            selectedAheadId = "";
+        } finally {
+            commitBusy = "";
+        }
+    }
+
     function clearConflicts() {
         conflictFrom = "";
         conflictEntries = [];
@@ -180,6 +251,7 @@
                 return;
             }
             note = "";
+            selectedAheadId = "";
             await invalidateAll();
         } catch (e: any) {
             errorMsg = e?.message || "Publish failed";
@@ -251,6 +323,7 @@
                 return;
             }
             clearConflicts();
+            selectedAheadId = "";
             await invalidateAll();
         } catch (e: any) {
             errorMsg = e?.message || "Resolve failed";
@@ -261,7 +334,7 @@
 </script>
 
 <svelte:head>
-    <title>Publish — {slug} — echidna</title>
+    <title>Review — {slug} — echidna</title>
 </svelte:head>
 
 <article class="flex h-full min-h-0 flex-col overflow-hidden">
@@ -271,7 +344,7 @@
                 {#if inSync}
                     main and develop are in sync
                 {:else}
-                    Publish develop → main
+                    Review develop → main
                     {#if ahead.length}
                         <span class="text-muted-foreground"
                             >· {ahead.length} commit{ahead.length === 1
@@ -333,11 +406,18 @@
         <div
             class="min-h-0 flex flex-col border-b lg:border-b-0 lg:border-r border-border max-h-[32vh] lg:max-h-none"
         >
-            <div
-                class="px-3 py-2 text-xs text-muted-foreground border-b border-border"
+            <button
+                type="button"
+                class="px-3 py-2 text-xs text-left w-full border-b border-border hover:bg-accent/40 {selectedAheadId
+                    ? 'text-muted-foreground'
+                    : 'text-foreground'}"
+                onclick={() => (selectedAheadId = "")}
             >
                 Develop vs main
-            </div>
+                {#if selectedAheadId}
+                    <span class="text-muted-foreground"> · all unpublished</span>
+                {/if}
+            </button>
             <div class="flex-1 min-h-0 overflow-y-auto">
                 {#if inSync && leftover.length === 0 && conflictedCommits.length === 0 && heads.length === 0}
                     <p class="p-4 text-sm text-muted-foreground">
@@ -347,9 +427,16 @@
                     <ul class="divide-y divide-border">
                         {#each ahead as c}
                             <li>
-                                <a
-                                    href="/{slug}/history/{c.id}"
-                                    class="block px-3 py-2.5 hover:bg-accent/40"
+                                <button
+                                    type="button"
+                                    class="block w-full text-left px-3 py-2.5 hover:bg-accent/40 {selectedAheadId ===
+                                    c.id
+                                        ? 'bg-accent/50'
+                                        : ''}"
+                                    disabled={busy ||
+                                        integrateBusy !== "" ||
+                                        commitBusy !== ""}
+                                    onclick={() => void selectAhead(c.id)}
                                 >
                                     <div
                                         class="flex items-center gap-2 text-xs"
@@ -371,9 +458,11 @@
                                     <p
                                         class="mt-0.5 text-[11px] text-muted-foreground"
                                     >
-                                        {formatDate(c.created_at)}
+                                        {commitBusy === c.id
+                                            ? "Loading changes…"
+                                            : formatDate(c.created_at)}
                                     </p>
-                                </a>
+                                </button>
                             </li>
                         {/each}
                         {#each leftover as cs}
@@ -561,12 +650,14 @@
                         <div class="min-h-0 overflow-y-auto p-3 space-y-3">
                             {#if conflictEntries[selectedConflict]}
                                 {@const e = conflictEntries[selectedConflict]}
+                                {#if showConflictMap}
                                 <div class="relative h-56 rounded-md border border-border overflow-hidden">
                                     <ReviewMap
                                         features={conflictMapFeatures}
                                         envelopeFeatures={conflictMapEnvelope}
                                         selectedId={mapSide}
                                     />
+                                    {#if showMapToggle}
                                     <div
                                         class="absolute top-2 left-2 z-[1100] flex rounded-md border border-border bg-background/90 shadow-sm overflow-hidden"
                                     >
@@ -591,7 +682,9 @@
                                             Parked
                                         </button>
                                     </div>
+                                    {/if}
                                 </div>
+                                {/if}
                                 <table class="w-full text-xs">
                                     <thead>
                                         <tr class="text-muted-foreground">
@@ -639,7 +732,7 @@
                     </div>
                 </div>
             {:else}
-                <ChangesetInspect {geodiff} />
+                <ChangesetInspect geodiff={inspectGeodiff} />
             {/if}
         </div>
     </div>

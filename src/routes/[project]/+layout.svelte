@@ -123,7 +123,7 @@
                         icon: GaugeIcon,
                     },
                     {
-                        label: "Publish",
+                        label: "Review",
                         href: `/${slug}/review`,
                         icon: GitPullRequestIcon,
                     },
