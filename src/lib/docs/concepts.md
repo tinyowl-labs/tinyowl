@@ -222,7 +222,7 @@ Every column can carry optional annotations that enable data harmonisation:
 | `range` | CIDOC CRM range class | `"crm:E62_String"` |
 | `references` | Foreign key to another table's `source_id` | `"Contexts.source_id"` |
 
-During push, the server upserts annotations into `column_annotations` (TOML-owned, `source: "toml"`) and scans distinct values into `value_mappings` for columns that declare a vocabulary (including local names). Unmapped-concept warnings fire only for **shared** vocabularies (`periodo`, `aat`, `crm`). Bare enums and local namespaces are QField dropdowns, not a failed PeriodO task.
+During push, the server upserts annotations into `column_annotations` (TOML-owned, `source: "toml"`) and indexes `value_mappings` for columns that declare a vocabulary (including local names). After promote-to-lookup, those rows are **lookup labels**, not fact FK `source_id`s. Undecomposed columns still scan fact distincts. Unmapped-concept warnings fire only for **shared** vocabularies (`periodo`, `aat`, `crm`). Bare enums and local namespaces are QField dropdowns, not a failed PeriodO task.
 
 ### System columns
 
@@ -274,14 +274,14 @@ Each media item can carry consent flags, managed via the web UI (Artefacts → c
 | Kind | Example | TOML | Hub |
 |---|---|---|---|
 | Recording protocol | compaction, excavation method, `BLK` | `type = "enum"`, no `vocabulary`, no `values` list | Dropdown hint. Distincts live in the table. **Promote to lookup** (Layers → schema → Lists) copies those distincts into a `{column}_types` table; the fact column becomes `id` + `references`. New terms are lookup row inserts. A delimited relation cell (e.g. `below = "104, 105"`) **Promotes to junction** (Many-to-many): named `from_id`/`to_id` rows; the cell is frozen. N:1 stays a foreign key. |
-| Shared meaning | period, ware, site type | `vocabulary = "periodo"` / `"aat"` / `"crm"` | Distinct values → `value_mappings`. A URI makes the value comparable across projects. |
+| Shared meaning | period, ware, site type | `vocabulary = "periodo"` / `"aat"` / `"crm"` | Lookup labels (or undecomposed distincts) → `value_mappings`. A URI makes the value comparable across projects. |
 
 Local namespaces such as `find-type` are **not** PeriodO/AAT. They may still be scanned for in-project counts; they do not raise unmapped-vocabulary warnings unless you later map a value to an AAT or PeriodO URI yourself.
 
 ### How it works
 
 1. **Opt in** — set `vocabulary = "periodo"` (or AAT / CRM) on the column in TOML, or in Mappings → Columns
-2. **On push**, the server scans distinct values into `value_mappings`
+2. **On push**, the server indexes lookup labels (or fact distincts if the column is still undecomposed) into `value_mappings`. `mappings.toml` may name the lookup (`entity_type` + `label`) or the fact column; URIs copy onto the annotated FK so the Mappings UI shows terms, not `source_id`s.
 3. **In the web UI** (Mappings → Values), link the local label to a concept URI:
    - Project A `"barrow"` → `http://vocab.getty.edu/aat/300387599`
    - Project B `"burial mound"` → the same URI

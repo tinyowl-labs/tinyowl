@@ -34,12 +34,12 @@
     } from "./selectionStyle";
     import { computeInViewKeys } from "./layerSceneInView";
     import { paintLayerViews } from "./layerSceneViews";
+    import { createLayerViewer } from "./layerSceneBoot";
     import {
         clearDraftMeasure as clearDraftMeasureImpl,
         clearMeasurements as clearMeasurementsImpl,
         createMeasureSession,
         finishDraft3d as finishDraft3dImpl,
-        paintDraftMeasure as paintDraftMeasureImpl,
         popLastMeasureVertex as popLastMeasureVertexImpl,
         removeMeasurement as removeMeasurementImpl,
         setupMeasureHandler as setupMeasureHandlerImpl,
@@ -109,26 +109,19 @@
         entityIdFromPacketId,
     } from "./czmlLoad";
     import {
-        computeMeasureValue,
-        formatMeasureValue,
         measureHint,
         minVertices,
-        newMeasureId,
         type MeasureMode,
         type MeasureRecord,
         type MeasureVertex,
     } from "$lib/measure";
-    import { cesiumMapLabel } from "$lib/components/cesiumBoot";
     import {
         createImageryProvider,
-        createOsmImageryProvider,
         createTerrainProvider,
         creditsFor,
         imageryOption,
         persistImageryId,
         persistTerrainId,
-        readStoredImageryId,
-        readStoredTerrainId,
         replaceBasemapLayer,
         resolveImageryId,
         resolveTerrainId,
@@ -345,7 +338,7 @@
     let measureMode = $state<MeasureMode>("length");
     let measureStatus = $state("");
     let measureRecords = $state<MeasureRecord[]>([]);
-    const measureSession = createMeasureSession();
+    const measureSession = $state(createMeasureSession());
     let diffDataSource: any = null;
 
     let editEnabled = $state(false);
@@ -485,7 +478,6 @@
     let Cesium: any;
     let viewer: any;
     let clickHandler: any;
-    let measureHandler: any;
     let postRenderRemover: (() => void) | null = null;
     let renderRequestRemovers: Array<() => void> = [];
     let presencePeers = $state<PresencePeer[]>([]);
@@ -658,11 +650,6 @@
     function isCoverageVisible(hash: string) {
         if (hash in coverageVis) return coverageVis[hash]!;
         return true;
-    }
-
-    async function loadCesium() {
-        const { loadCesiumGlobal } = await import("$lib/components/cesiumBoot");
-        return loadCesiumGlobal();
     }
 
     async function applyImagery(id: ImageryId) {
@@ -1128,24 +1115,24 @@
         ctxOpen = true;
     }
 
-    function measureColor() {
-        return Cesium.Color.fromCssColorString(MEASURE_COLOR);
-    }
-
-    function getOrCreateMeasureDs() {
-        if (!viewer || !Cesium) return null;
-        if (measureDataSource) return measureDataSource;
-        measureDataSource = new Cesium.CustomDataSource("tinyowl-measure");
-        measureDsAdd = viewer.dataSources.add(measureDataSource);
-        void measureDsAdd?.then(() => bumpRender());
-        return measureDataSource;
-    }
-
-    async function ensureMeasureDs() {
-        const ds = getOrCreateMeasureDs();
-        if (!ds) return null;
-        if (measureDsAdd) await measureDsAdd;
-        return ds;
+    function measureCtx(): LayerSceneMeasureCtx {
+        return {
+            Cesium,
+            viewer,
+            session: measureSession,
+            measureMode,
+            dim,
+            bumpRender,
+            pickMeasureCartesian,
+            cartesianToVertex,
+            getRecords: () => measureRecords,
+            setRecords: (next) => {
+                measureRecords = next;
+            },
+            setStatus: (msg) => {
+                measureStatus = msg;
+            },
+        };
     }
 
     function cartesianToVertex(cartesian: any): MeasureVertex {
@@ -1237,257 +1224,24 @@
         );
     }
 
-    function pathLength3d(cartesians: any[]): number {
-        let sum = 0;
-        for (let i = 1; i < cartesians.length; i++) {
-            sum += Cesium.Cartesian3.distance(cartesians[i - 1], cartesians[i]);
-        }
-        return sum;
-    }
-
     function clearDraftMeasure() {
-        draftVertices = [];
-        draftCartesians = [];
-        clearDraftEntitiesOnly();
-    }
-
-    function clearDraftEntitiesOnly() {
-        if (!measureDataSource) return;
-        const ids = [
-            "draft:line",
-            "draft:poly",
-            "draft:label",
-            ...Array.from({ length: 32 }, (_, i) => `draft:pt:${i}`),
-        ];
-        for (const id of ids) {
-            try {
-                measureDataSource.entities.removeById(id);
-            } catch {
-                /* ignore */
-            }
-        }
-    }
-
-    function paintDraftMeasure() {
-        const ds = getOrCreateMeasureDs();
-        if (!ds || !Cesium) return;
-        clearDraftEntitiesOnly();
-        const color = measureColor();
-        for (let i = 0; i < draftCartesians.length; i++) {
-            ds.entities.add({
-                id: `draft:pt:${i}`,
-                position: draftCartesians[i],
-                point: {
-                    pixelSize: 8,
-                    color,
-                    outlineColor: Cesium.Color.BLACK,
-                    outlineWidth: 1,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                },
-            });
-        }
-        if (draftCartesians.length >= 2) {
-            ds.entities.add({
-                id: "draft:line",
-                polyline: {
-                    positions: draftCartesians.slice(),
-                    width: 3,
-                    material: new Cesium.PolylineDashMaterialProperty({
-                        color,
-                    }),
-                    clampToGround: false,
-                },
-            });
-        }
-        if (measureMode === "area" && draftCartesians.length >= 3) {
-            ds.entities.add({
-                id: "draft:poly",
-                polygon: {
-                    hierarchy: new Cesium.PolygonHierarchy(
-                        draftCartesians.slice(),
-                    ),
-                    material: color.withAlpha(0.18),
-                    outline: true,
-                    outlineColor: color,
-                    perPositionHeight: true,
-                },
-            });
-        }
-        if (draftCartesians.length >= minVertices(measureMode)) {
-            const value =
-                measureMode === "point"
-                    ? 0
-                    : measureMode === "area"
-                      ? computeMeasureValue(measureMode, draftVertices)
-                      : pathLength3d(draftCartesians);
-            const mid = draftCartesians[Math.floor(draftCartesians.length / 2)];
-            ds.entities.add({
-                id: "draft:label",
-                position: mid,
-                label: {
-                    ...cesiumMapLabel(
-                        Cesium,
-                        formatMeasureValue(measureMode, value, draftVertices),
-                        { pixelOffsetY: -12 },
-                    ),
-                },
-            });
-        }
-        bumpRender();
-    }
-
-    async function commitMeasure3d() {
-        const ds = await ensureMeasureDs();
-        if (!ds || !Cesium) return;
-        const need = minVertices(measureMode);
-        if (draftCartesians.length < need) return;
-
-        const value =
-            measureMode === "point"
-                ? 0
-                : measureMode === "area"
-                  ? computeMeasureValue(measureMode, draftVertices)
-                  : pathLength3d(draftCartesians);
-        const id = newMeasureId();
-        const label = formatMeasureValue(measureMode, value, draftVertices);
-        const color = measureColor();
-        const positions = [...draftCartesians];
-
-        clearDraftEntitiesOnly();
-        for (let i = 0; i < positions.length; i++) {
-            ds.entities.add({
-                id: `${id}:pt:${i}`,
-                position: positions[i],
-                point: {
-                    pixelSize: measureMode === "point" ? 10 : 7,
-                    color,
-                    outlineColor: Cesium.Color.BLACK,
-                    outlineWidth: 1,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                },
-            });
-        }
-        if (measureMode === "area") {
-            ds.entities.add({
-                id: `${id}:poly`,
-                polygon: {
-                    hierarchy: new Cesium.PolygonHierarchy(positions.slice()),
-                    material: color.withAlpha(0.22),
-                    outline: true,
-                    outlineColor: color,
-                    perPositionHeight: true,
-                },
-            });
-        } else if (measureMode === "length") {
-            ds.entities.add({
-                id: `${id}:line`,
-                polyline: {
-                    positions: positions.slice(),
-                    width: 3,
-                    material: color,
-                    clampToGround: false,
-                },
-            });
-        }
-        const mid = positions[Math.floor(positions.length / 2)];
-        ds.entities.add({
-            id: `${id}:label`,
-            position: mid,
-            label: {
-                ...cesiumMapLabel(Cesium, label, { pixelOffsetY: -12 }),
-            },
-        });
-
-        measureRecords = [
-            ...measureRecords,
-            {
-                id,
-                mode: measureMode,
-                label,
-                value,
-                vertices: [...draftVertices],
-            },
-        ];
-        draftVertices = [];
-        draftCartesians = [];
-        measureStatus = `${label} saved · ${measureHint(measureMode, dim === "2d" ? "2d" : "3d")}`;
-        bumpRender();
+        clearDraftMeasureImpl(measureCtx());
     }
 
     async function removeMeasurement(id: string) {
-        if (measureDataSource) {
-            const ents = [...measureDataSource.entities.values];
-            for (const ent of ents) {
-                const eid = String(ent.id ?? "");
-                if (eid === id || eid.startsWith(`${id}:`)) {
-                    try {
-                        measureDataSource.entities.remove(ent);
-                    } catch {
-                        /* ignore */
-                    }
-                }
-            }
-        }
-        measureRecords = measureRecords.filter((r) => r.id !== id);
-        bumpRender();
+        await removeMeasurementImpl(measureCtx(), id);
     }
 
     function popLastMeasureVertex(repaint = true) {
-        if (draftCartesians.length === 0) return;
-        draftCartesians = draftCartesians.slice(0, -1);
-        draftVertices = draftVertices.slice(0, -1);
-        if (repaint) paintDraftMeasure();
-    }
-
-    async function onMeasurePick(screenPos: any) {
-        const cartesian = pickMeasureCartesian(screenPos);
-        if (!cartesian) {
-            measureStatus = "Could not pick a point — try the mesh or terrain";
-            return;
-        }
-        draftCartesians = [...draftCartesians, cartesian];
-        draftVertices = [...draftVertices, cartesianToVertex(cartesian)];
-        if (measureMode === "point") {
-            paintDraftMeasure();
-            await commitMeasure3d();
-            return;
-        }
-        paintDraftMeasure();
-        const n = draftCartesians.length;
-        measureStatus =
-            n < minVertices(measureMode)
-                ? `${n} point${n === 1 ? "" : "s"} · ${measureHint(measureMode, dim === "2d" ? "2d" : "3d")}`
-                : `${formatMeasureValue(
-                      measureMode,
-                      measureMode === "area"
-                          ? computeMeasureValue(measureMode, draftVertices)
-                          : pathLength3d(draftCartesians),
-                      draftVertices,
-                  )} · Finish, double-click, or Enter`;
+        popLastMeasureVertexImpl(measureCtx(), repaint);
     }
 
     async function clearMeasurements() {
-        clearDraftMeasure();
-        clearDraftEntitiesOnly();
-        if (measureDataSource && viewer) {
-            try {
-                viewer.dataSources.remove(measureDataSource, true);
-            } catch {
-                /* ignore */
-            }
-        }
-        measureDataSource = null;
-        measureDsAdd = null;
-        measureRecords = [];
-        measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
+        await clearMeasurementsImpl(measureCtx());
     }
 
     function finishDraft3d(): boolean {
-        if (draftCartesians.length >= minVertices(measureMode)) {
-            void commitMeasure3d();
-            return true;
-        }
-        return false;
+        return finishDraft3dImpl(measureCtx());
     }
 
     function zoomIn3d() {
@@ -1507,27 +1261,11 @@
     }
 
     function teardownMeasureHandler() {
-        try {
-            measureHandler?.destroy?.();
-        } catch {
-            /* ignore */
-        }
-        measureHandler = null;
+        teardownMeasureHandlerImpl(measureCtx());
     }
 
     function setupMeasureHandler() {
-        if (!viewer || !Cesium) return;
-        teardownMeasureHandler();
-        measureHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-        measureHandler.setInputAction((click: { position: unknown }) => {
-            void onMeasurePick(click.position);
-        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-        measureHandler.setInputAction(() => {
-            if (measureMode === "point") return;
-            popLastMeasureVertex(false);
-            if (!finishDraft3d()) paintDraftMeasure();
-        }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
-        getOrCreateMeasureDs();
+        setupMeasureHandlerImpl(measureCtx);
     }
 
     function drawColor() {
@@ -2047,7 +1785,7 @@
             return;
         }
         if (measureEnabled) {
-            if (draftCartesians.length > 0) {
+            if (measureSession.draftCartesians.length > 0) {
                 popLastMeasureVertex();
                 return;
             }
@@ -3764,78 +3502,21 @@
 
     async function boot() {
         if (!browser || !el || !creditSink) return;
-        Cesium = await loadCesium();
-        scratchSphere = new Cesium.BoundingSphere();
-        const token = publicEnv.PUBLIC_CESIUM_ION_ACCESS_TOKEN ?? "";
-        if (token) Cesium.Ion.defaultAccessToken = token;
-        ionAvailable = Boolean(token);
-        const nextImagery = resolveImageryId(readStoredImageryId(), ionAvailable);
-        const nextTerrain = resolveTerrainId(readStoredTerrainId(), ionAvailable);
-
-        // Viewer first on ellipsoid — same as injalak. Do NOT pass
-        // Terrain.fromWorldTerrain() here: that helper swaps the provider
-        // asynchronously after ready, so early height samples land at Z≈0.
-        const initialImagery =
-            nextImagery === "none"
-                ? false
-                : new Cesium.ImageryLayer(createOsmImageryProvider(Cesium));
-        viewer = new Cesium.Viewer(el, {
-            animation: false,
-            timeline: false,
-            baseLayerPicker: false,
-            geocoder: false,
-            homeButton: false,
-            sceneModePicker: false,
-            selectionIndicator: false,
-            navigationHelpButton: false,
-            fullscreenButton: false,
-            infoBox: false,
-            creditContainer: creditSink,
-            requestRenderMode: true,
-            maximumRenderTimeChange: Infinity,
-            skyBox: false,
-            // Default true → 1× CSS pixels (soft/aliased on HiDPI).
-            useBrowserRecommendedResolution: false,
-            msaaSamples: 4,
-            baseLayer: initialImagery,
+        const created = await createLayerViewer({
+            container: el,
+            creditSink,
+            ionToken: publicEnv.PUBLIC_CESIUM_ION_ACCESS_TOKEN ?? "",
+            bumpRender,
         });
-        if (nextImagery === "none") {
-            while (viewer.imageryLayers.length > 0) {
-                viewer.imageryLayers.remove(viewer.imageryLayers.get(0), true);
-            }
-            basemapLayer = null;
-        } else {
-            basemapLayer = viewer.imageryLayers.length
-                ? viewer.imageryLayers.get(0)
-                : null;
-        }
-        try {
-            viewer.resize();
-            viewer.scene.postProcessStages.fxaa.enabled = true;
-        } catch {
-            /* ignore */
-        }
+        Cesium = created.Cesium;
+        viewer = created.viewer;
+        scratchSphere = created.scratchSphere;
+        ionAvailable = created.ionAvailable;
+        basemapLayer = created.basemapLayer;
+        renderRequestRemovers.push(...created.renderRequestRemovers);
+        const { nextImagery, nextTerrain } = created;
+
         applyBasemapTheme();
-        viewer.scene.globe.depthTestAgainstTerrain = false;
-        try {
-            viewer.screenSpaceEventHandler.removeInputAction(
-                Cesium.ScreenSpaceEventType.LEFT_CLICK,
-            );
-        } catch {
-            /* ignore */
-        }
-        try {
-            renderRequestRemovers.push(
-                viewer.camera.changed.addEventListener(bumpRender),
-            );
-            renderRequestRemovers.push(
-                viewer.scene.globe.tileLoadProgressEvent.addEventListener(
-                    bumpRender,
-                ),
-            );
-        } catch {
-            /* ignore */
-        }
 
         if (nextImagery !== "osm" && nextImagery !== "none") {
             await applyImagery(nextImagery);
@@ -5639,18 +5320,28 @@
     $effect(() => {
         if (!ready || !viewer) return;
         if (measureEnabled) {
-            measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
-            clearDraftMeasure();
-            setupMeasureHandler();
-            viewer.canvas.style.cursor = "crosshair";
+            const mode = measureMode;
+            const d = dim;
+            // measureCtx reads the $state session; untrack so picks don't
+            // re-run this effect and wipe the draft.
+            untrack(() => {
+                measureStatus = measureHint(mode, d === "2d" ? "2d" : "3d");
+                clearDraftMeasure();
+                setupMeasureHandler();
+                viewer.canvas.style.cursor = "crosshair";
+            });
             return;
         }
-        teardownMeasureHandler();
-        clearDraftMeasure();
-        measureStatus = "";
-        if (!editEnabled && !commentAdding && viewer?.canvas) {
-            viewer.canvas.style.cursor = "";
-        }
+        editEnabled;
+        commentAdding;
+        untrack(() => {
+            teardownMeasureHandler();
+            clearDraftMeasure();
+            measureStatus = "";
+            if (!editEnabled && !commentAdding && viewer?.canvas) {
+                viewer.canvas.style.cursor = "";
+            }
+        });
     });
 
     $effect(() => {

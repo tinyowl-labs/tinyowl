@@ -78,7 +78,7 @@ async function ensureMeasureDs(ctx: LayerSceneMeasureCtx) {
     return ds;
 }
 
-export function clearDraftEntitiesOnly(ctx: LayerSceneMeasureCtx) {
+function clearDraftEntitiesOnly(ctx: LayerSceneMeasureCtx) {
     const ds = ctx.session.dataSource;
     if (!ds) return;
     const ids = [
@@ -102,7 +102,7 @@ export function clearDraftMeasure(ctx: LayerSceneMeasureCtx) {
     clearDraftEntitiesOnly(ctx);
 }
 
-export function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
+function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
     const { Cesium, session, measureMode } = ctx;
     const ds = getOrCreateMeasureDs(ctx);
     if (!ds || !Cesium) return;
@@ -170,7 +170,7 @@ export function paintDraftMeasure(ctx: LayerSceneMeasureCtx) {
     ctx.bumpRender();
 }
 
-export async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
+async function commitMeasure3d(ctx: LayerSceneMeasureCtx) {
     const { Cesium, session, measureMode } = ctx;
     const ds = await ensureMeasureDs(ctx);
     if (!ds || !Cesium) return;
@@ -288,7 +288,7 @@ export function popLastMeasureVertex(
     if (repaint) paintDraftMeasure(ctx);
 }
 
-export async function onMeasurePick(
+async function onMeasurePick(
     ctx: LayerSceneMeasureCtx,
     screenPos: any,
 ) {

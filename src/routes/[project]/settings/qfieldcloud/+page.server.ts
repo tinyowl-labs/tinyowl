@@ -1,9 +1,6 @@
 import type { PageServerLoad, Actions } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
 
-import type { PageServerLoad, Actions } from "./$types";
-import { TINYOWL_CORE_URL } from "$env/static/private";
-
 export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     const accessToken = await locals.getAccessToken();
     const slug = params.project;

@@ -30,6 +30,9 @@
         ((preview.summary?.geodiff_summary as any[]) ?? []) as any[],
     );
     const leftover = $derived(((data as any)?.changesets as any[]) ?? []);
+    const careHidden = $derived(
+        Number((preview as any)?.care?.hidden_from_public) || 0,
+    );
     const conflictedCommits = $derived(
         ((data as any)?.conflictedCommits as any[]) ?? [],
     );
@@ -358,6 +361,15 @@
         {#if errorMsg}
             <p class="px-4 py-2 text-sm text-destructive border-b border-border">
                 {errorMsg}
+            </p>
+        {/if}
+        {#if careHidden > 0}
+            <p class="px-4 py-2 text-sm border-b border-border bg-muted/40">
+                {careHidden} media file{careHidden === 1 ? "" : "s"} on develop
+                {careHidden === 1 ? "is" : "are"} marked not for public view.
+                Publishing keeps the recording rows; public listing, globe, and
+                artefacts will omit {careHidden === 1 ? "it" : "them"}. Members
+                still see {careHidden === 1 ? "it" : "them"}.
             </p>
         {/if}
     {/snippet}

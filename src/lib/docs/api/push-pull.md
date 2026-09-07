@@ -191,7 +191,7 @@ Pull continues to serve only **approved** `diffs` (unchanged). Review UI: `/{slu
 
 After applying the pending diff, the server asynchronously:
 
-1. **Indexes mappings** — Upserts `column_annotations` from TOML; scans distinct values into `value_mappings`
+1. **Indexes mappings** — Upserts `column_annotations` from TOML; indexes lookup labels (or fact distincts if undecomposed) into `value_mappings`
 2. **Applies TOML annotations** — Vocabulary / CRM property / range on columns (`source: "toml"`, skips manual annotations)
 3. **Generates warnings** — Flags unmapped vocab columns without value-level concept URIs
 4. **Indexes values** — Distinct data values for vocabulary / `arch_date` / array columns

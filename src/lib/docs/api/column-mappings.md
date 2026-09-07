@@ -13,7 +13,7 @@ Two tables after migration `019` / `024`:
 | `value_mappings` | Distinct cell values → optional `concept_uri` (project-canonical) |
 | `column_annotations` | Per-column `vocabulary`, `crm_property`, `crm_range` (mostly TOML-owned) |
 
-On push the server upserts annotations from TOML, scans distinct values into `value_mappings` for columns that declare any vocabulary, and never clears manual `concept_uri` on auto re-scan. Unmapped-concept warnings apply only to shared vocabs (`periodo`, `aat`, `crm`). TOML / auto upserts skip rows with `source = 'manual'`. Search (`vocab=` and mapped `q=` hits) joins on `concept_uri`, not identical local strings.
+On push the server upserts annotations from TOML, indexes `value_mappings` for columns that declare any vocabulary (lookup labels once decomposed; otherwise fact distincts), and never clears manual `concept_uri` on auto re-scan. Unmapped-concept warnings apply only to shared vocabs (`periodo`, `aat`, `crm`). TOML / auto upserts skip rows with `source = 'manual'`. Search (`vocab=` and mapped `q=` hits) joins on `concept_uri`, not identical local strings.
 
 ---
 
@@ -147,6 +147,6 @@ CLI: `tinyowl mappings list|map|export` (uses `/value-mappings`).
 
 ## How rows are populated
 
-1. **Push / reindex** — TOML → `column_annotations`; scan vocab / `arch_date` / array columns → `value_mappings` (`source=auto`).
+1. **Push / reindex** — TOML → `column_annotations`; index lookup labels (or fact distincts for undecomposed vocab / `arch_date` / array columns) → `value_mappings` (`source=auto`).
 2. **Optional `mappings.toml`** — seed with `source=toml` where not manual.
 3. **Settings UI / API** — manual concept links (`source=manual`).
