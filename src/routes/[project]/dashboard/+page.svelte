@@ -183,6 +183,13 @@
                         <DownloadIcon class="size-4" />
                         Download GPKG
                     </a>
+                    <a
+                        href={`/api/v1/projects/${slug}/field-package?ref=develop${accessToken ? `&token=${encodeURIComponent(accessToken)}` : ""}`}
+                        class="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors no-underline"
+                    >
+                        <DownloadIcon class="size-4" />
+                        Download field package
+                    </a>
                 </div>
             {/if}
         </div>

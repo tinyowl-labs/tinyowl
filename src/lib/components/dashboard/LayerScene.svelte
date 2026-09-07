@@ -35,6 +35,20 @@
     import { computeInViewKeys } from "./layerSceneInView";
     import { paintLayerViews } from "./layerSceneViews";
     import {
+        createCameraSession,
+        flyCameraToSphere as flyCameraToSphereImpl,
+        flyHome as flyHomeImpl,
+        flyHomeOnce as flyHomeOnceImpl,
+        flySearchInterop as flySearchInteropImpl,
+        flyToLayerExtent as flyToLayerExtentImpl,
+        flyToSelection as flyToSelectionImpl,
+        flyTopDown as flyTopDownImpl,
+        lockNorthUp as lockNorthUpImpl,
+        refocusAfterMorph as refocusAfterMorphImpl,
+        selectionFlyKey as selectionFlyKeyImpl,
+        type LayerSceneCameraCtx,
+    } from "./layerSceneCamera";
+    import {
         bboxFromEntity,
         collectKeysAtScreenPoint,
         collectKeysInScreenPolygon,
@@ -80,10 +94,7 @@
     } from "./layerSceneCoverage";
     import {
         cesiumPropValue,
-        collectPacketLonLats,
         entityIdFromPacketId,
-        preferRealLonLats,
-        type PacketLonLat,
     } from "./czmlLoad";
     import {
         computeMeasureValue,
@@ -576,9 +587,8 @@
     let started = false;
     /** Frame the project/tileset extent once on boot. Reactive — gates loading overlay. */
     let hasFramed = $state(false);
-    let homeFlyStarted = false;
+    const cameraSession = createCameraSession();
     let lastFlownKey = "";
-    let lastInteropFlyKey = "";
     let filterToView = $state(false);
     let styleLayerIdx = $state<number | null>(null);
     let focusedLayerName = $state("");
@@ -586,12 +596,6 @@
     let inViewEntityKeys = $state<string[]>([]);
     let inViewModelHashes = $state<string[]>([]);
     let inViewThrottle: ReturnType<typeof setTimeout> | null = null;
-    let homeView: {
-        destination: any;
-        orientation: { heading: number; pitch: number; roll: number };
-    } | null = null;
-    /** Project extent used by Home — preferred over a one-shot camera pose. */
-    let homeSphere: any | null = null;
     let scratchSphere: any;
     let selectionDataSource: any = null;
     let appliedClassifyTiles: boolean | null = null;
@@ -756,324 +760,66 @@
         applyTilesetHeightOffsetImpl(Cesium, prim, offsetM);
     }
 
-    function sphereFromBboxWgs84(
-        bbox: number[],
-        heightM: number,
-    ): any | null {
-        if (
-            bbox.length !== 4 ||
-            !bbox.every((n) => Number.isFinite(n)) ||
-            !Cesium
-        ) {
-            return null;
-        }
-        const [west, south, east, north] = bbox;
-        if (!(west < east && south < north)) return null;
-        const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
-        const sphere = Cesium.BoundingSphere.fromRectangle3D(
-            rect,
-            Cesium.Ellipsoid.WGS84,
-            heightM,
-        );
-        // Site-scale meshes need a floor so the camera doesn't bury the trench.
-        sphere.radius = Math.max(sphere.radius * 1.5, 30);
-        return sphere;
-    }
-
-    /** Home from packet lon/lat — not Cesium getBoundingSphere (often 0,0). */
-    function sphereFromLonLats(pts: PacketLonLat[]): any | null {
-        if (!Cesium || pts.length === 0) return null;
-        const cartesians = pts.map((p) =>
-            Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0),
-        );
-        const sphere = Cesium.BoundingSphere.fromPoints(cartesians);
-        if (!sphere?.center || !(sphere.radius >= 0)) return null;
-        sphere.radius = Math.max(sphere.radius * 1.5, 30);
-        return sphere;
-    }
-
-    function sphereFromPackets(
-        packets: Record<string, unknown>[] | undefined,
-    ): any | null {
-        return sphereFromLonLats(
-            preferRealLonLats(collectPacketLonLats(packets)),
-        );
-    }
-
-    function sphereFromVisibleLayerPackets(): any | null {
-        const pts: PacketLonLat[] = [];
-        for (const layer of layers) {
-            if (!layer.visible) continue;
-            pts.push(...collectPacketLonLats(layer.packets));
-        }
-        return sphereFromLonLats(preferRealLonLats(pts));
-    }
-
-    function frameHeightM(prim: any | undefined): number {
-        const c = prim?.boundingSphere?.center;
-        if (c && Cesium) {
-            const h = Cesium.Cartographic.fromCartesian(c).height;
-            if (Number.isFinite(h)) return h;
-        }
-        return 100;
-    }
-
-    function poseForSphere(
-        sphere: any,
-    ): { destination: any; orientation: any } | null {
-        if (!viewer || !Cesium || !sphere?.center) return null;
-        const mag = Cesium.Cartesian3.magnitude(sphere.center);
-        if (!Number.isFinite(mag) || mag < 1_000_000) return null;
-        try {
-            const c = Cesium.Cartographic.fromCartesian(sphere.center);
-            const lon = Cesium.Math.toDegrees(c.longitude);
-            const lat = Cesium.Math.toDegrees(c.latitude);
-            if (Math.abs(lon) < 1e-4 && Math.abs(lat) < 1e-4) return null;
-        } catch {
-            return null;
-        }
-        const is3d = viewer.scene.mode === Cesium.SceneMode.SCENE3D;
-        const pitch = is3d
-            ? Cesium.Math.toRadians(-45)
-            : Cesium.Math.toRadians(-90);
-        const range = Math.max(
-            sphere.radius * (is3d ? 2.5 : 2.2),
-            is3d ? 40 : 800,
-        );
-        const a = Math.abs(pitch);
-        const local = new Cesium.Cartesian3(
-            0,
-            -range * Math.cos(a),
-            range * Math.sin(a),
-        );
-        const enu = Cesium.Transforms.eastNorthUpToFixedFrame(sphere.center);
-        const destination = Cesium.Matrix4.multiplyByPoint(
-            enu,
-            local,
-            new Cesium.Cartesian3(),
-        );
+    function cameraCtx(): LayerSceneCameraCtx {
         return {
-            destination,
-            orientation: { heading: 0, pitch, roll: 0 },
+            Cesium,
+            viewer,
+            layers,
+            models,
+            tilesetPrims,
+            layerSources,
+            bumpRender,
+            pushExtentSphere,
+            findEntitiesByKey,
+            session: cameraSession,
+            searchQ,
+            placeBBox,
+            placeLat,
+            placeLng,
+            placeRadius,
+            focusLayer,
+            selectionKeys: () => [...layerSelection.selected, ...joinedKeys],
+            loading,
+            getLastFlownKey: () => lastFlownKey,
+            setLastFlownKey: (key) => {
+                lastFlownKey = key;
+            },
+            setHasFramed: (framed) => {
+                hasFramed = framed;
+            },
         };
     }
 
-    /** World-frame fly/setView — never lookAt / flyToBoundingSphere (those snap to 0,0). */
     async function flyCameraToSphere(sphere: any, duration = 1.0) {
-        if (!viewer || !Cesium || !sphere) return;
-        const pose = poseForSphere(sphere);
-        if (!pose) return;
-        try {
-            viewer.camera.cancelFlight();
-        } catch {
-            /* ignore */
-        }
-        try {
-            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-        } catch {
-            /* ignore */
-        }
-        if (duration <= 0) {
-            viewer.camera.setView(pose);
-            bumpRender();
-            return;
-        }
-        const restoreRR = viewer.scene.requestRenderMode;
-        viewer.scene.requestRenderMode = false;
-        await new Promise<void>((resolve) => {
-            viewer.camera.flyTo({
-                ...pose,
-            duration,
-                complete: () => resolve(),
-                cancel: () => resolve(),
-            });
-        });
-        viewer.scene.requestRenderMode = restoreRR;
-        bumpRender();
+        await flyCameraToSphereImpl(cameraCtx(), sphere, duration);
     }
 
-    /** After 2D↔3D morph, reset camera frame and reframe to project data. */
     async function refocusAfterMorph(is3d: boolean) {
-        if (!viewer || !Cesium) return;
-        try {
-            viewer.camera.cancelFlight();
-        } catch {
-            /* ignore */
-        }
-        // Morph from SCENE2D can leave a non-identity transform; 3D flies then miss.
-        try {
-            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-        } catch {
-            /* ignore */
-        }
-        // Let the scene settle one frame after morphComplete.
-        await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        if (!viewer || viewer.isDestroyed?.()) return;
-        await flyHome(is3d ? 0.85 : 0.5);
-    }
-
-    function captureHomeView() {
-        if (!viewer || !Cesium) return;
-        try {
-            homeView = {
-                destination: Cesium.Cartesian3.clone(viewer.camera.positionWC),
-                orientation: {
-                    heading: viewer.camera.heading,
-                    pitch: viewer.camera.pitch,
-                    roll: viewer.camera.roll,
-                },
-            };
-        } catch {
-            homeView = null;
-        }
-    }
-
-    /** Entity-layer extent for Home. Tilesets are backdrop only — not part of home. */
-    function computeHomeSphere(): any | null {
-        if (!viewer || !Cesium) return null;
-        const fromPackets = sphereFromVisibleLayerPackets();
-        if (fromPackets) return fromPackets;
-        // Visualizer spheres are not used — clamp-to-ground reports 0,0.
-        // Tileset-only projects: fall back to mesh / bbox.
-        const hasEntityLayers = layers.some(
-            (l) =>
-                (l.packets?.length ?? 0) > 0 ||
-                (l.entityIds?.length ?? 0) > 0,
-        );
-        if (hasEntityLayers) return null;
-        for (const [hash, prim] of tilesetPrims) {
-            if (!prim?.show) continue;
-            try {
-                if (prim.boundingSphere?.radius > 0) {
-                    return Cesium.BoundingSphere.clone(prim.boundingSphere);
-                }
-            } catch {
-                /* ignore */
-            }
-            const m = models.find((x) => x.hash === hash);
-            const bbox = m?.bbox_wgs84;
-            if (Array.isArray(bbox)) {
-                const s = sphereFromBboxWgs84(bbox, frameHeightM(prim));
-                if (s) return s;
-            }
-        }
-        return null;
+        await refocusAfterMorphImpl(cameraCtx(), is3d);
     }
 
     async function flyHome(duration = 1.0) {
-        if (!viewer || !Cesium) return;
-        const sphere = computeHomeSphere() ?? homeSphere;
-        if (sphere) {
-            homeSphere = Cesium.BoundingSphere.clone(sphere);
-            await flyCameraToSphere(sphere, duration);
-            captureHomeView();
-            return;
-        }
-        if (homeView) {
-            viewer.camera.flyTo({
-                destination: homeView.destination,
-                orientation: homeView.orientation,
-                duration,
-            });
-        }
+        await flyHomeImpl(cameraCtx(), duration);
     }
 
     async function flyToLayerExtent(layerName: string) {
-        if (!viewer || !Cesium) return;
-        const layer = layers.find((l) => l.name === layerName);
-        const fromPackets = sphereFromPackets(layer?.packets);
-        if (fromPackets) {
-            await flyCameraToSphere(fromPackets, 1.0);
-            return;
-        }
-        const ds = layerSources.get(layerName);
-        if (!ds) return;
-        const spheres: any[] = [];
-        for (const entity of ds.entities.values) {
-            pushExtentSphere(spheres, entity);
-        }
-        if (spheres.length === 0) return;
-        const combined =
-            spheres.length === 1
-                ? spheres[0]
-                : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
-        await flyCameraToSphere(combined, 1.0);
-    }
-
-    function searchInteropFlyKey(): string {
-        if (searchQ.trim()) return "";
-        if (placeBBox) {
-            return `bbox:${placeBBox.west},${placeBBox.south},${placeBBox.east},${placeBBox.north}`;
-        }
-        if (placeLat != null && placeLng != null) {
-            return `pt:${placeLat},${placeLng},${placeRadius ?? 0}`;
-        }
-        if (focusLayer) return `layer:${focusLayer}`;
-        return "";
-    }
-
-    async function flyToSearchPlace(duration = 1.0) {
-        if (!viewer || !Cesium) return;
-        if (placeBBox) {
-            const sphere = sphereFromBboxWgs84(
-                [
-                    placeBBox.west,
-                    placeBBox.south,
-                    placeBBox.east,
-                    placeBBox.north,
-                ],
-                0,
-            );
-            if (sphere) await flyCameraToSphere(sphere, duration);
-            return;
-        }
-        if (placeLat == null || placeLng == null) return;
-        const center = Cesium.Cartesian3.fromDegrees(placeLng, placeLat);
-        const radiusM = Math.max(placeRadius ?? 5000, 80);
-        await flyCameraToSphere(
-            new Cesium.BoundingSphere(center, radiusM),
-            duration,
-        );
+        await flyToLayerExtentImpl(cameraCtx(), layerName);
     }
 
     async function flySearchInterop(force = false) {
-        if (searchQ.trim()) return;
-        const key = searchInteropFlyKey();
-        // Layer extent is scene-graph / user only — never an automatic follow-up fly.
-        if (!key || key.startsWith("layer:")) return;
-        if (!force && key === lastInteropFlyKey) return;
-        lastInteropFlyKey = key;
-        await flyToSearchPlace();
+        await flySearchInteropImpl(cameraCtx(), force);
     }
 
     function flyTopDown() {
-        if (!viewer || !Cesium) return;
-        viewer.camera.flyTo({
-            destination: viewer.camera.position,
-            orientation: {
-                heading: 0,
-                pitch: Cesium.Math.toRadians(-90),
-                roll: 0,
-            },
-            duration: 1.0,
-        });
+        flyTopDownImpl(cameraCtx());
     }
 
     function lockNorthUp() {
-        if (!viewer || !Cesium) return;
-        viewer.camera.flyTo({
-            destination: viewer.camera.position,
-            orientation: {
-                heading: 0,
-                pitch: viewer.camera.pitch,
-                roll: 0,
-            },
-            duration: 1.0,
-        });
+        lockNorthUpImpl(cameraCtx());
     }
 
     function selectionFlyKey(): string {
-        return [...layerSelection.selected, ...joinedKeys].sort().join("|");
+        return selectionFlyKeyImpl([...layerSelection.selected, ...joinedKeys]);
     }
 
     function allSelectableEntities(): SelectableEntity[] {
@@ -1124,44 +870,12 @@
     }
 
     async function flyToSelection(force = true) {
-        const keys = [...layerSelection.selected, ...joinedKeys].sort();
-        if (keys.length === 0) return;
-        const flyKey = keys.join("|");
-        if (!force && flyKey && flyKey === lastFlownKey) return;
-
-        const spheres: any[] = [];
-        for (const key of keys) {
-            for (const entity of findEntitiesByKey(key)) {
-                pushExtentSphere(spheres, entity);
-            }
-        }
-        if (spheres.length === 0) return;
-        const combined =
-            spheres.length === 1
-                ? spheres[0]
-                : Cesium.BoundingSphere.fromBoundingSpheres(spheres);
-        lastFlownKey = flyKey;
-        await flyCameraToSphere(combined, 1.0);
+        await flyToSelectionImpl(cameraCtx(), force);
     }
 
     /** Once after load: same flyHome() as the toolbar button. */
     function flyHomeOnce() {
-        if (homeFlyStarted || !viewer || !Cesium || loading) return;
-        if (computeHomeSphere()) {
-            homeFlyStarted = true;
-            lastFlownKey = selectionFlyKey();
-            void flyHome(1.0).then(() => {
-            hasFramed = true;
-            });
-            return;
-        }
-        const expect =
-            layers.some((l) => (l.packets?.length ?? 0) > 0) ||
-            models.length > 0;
-        if (!expect) {
-            homeFlyStarted = true;
-            hasFramed = true;
-        }
+        flyHomeOnceImpl(cameraCtx());
     }
 
     function destroyLayerSource(name: string) {
@@ -4789,7 +4503,7 @@
     });
 
     $effect(() => {
-        if (!ready || !started || loading || homeFlyStarted) return;
+        if (!ready || !started || loading || cameraSession.homeFlyStarted) return;
         layerContentKey;
         modelKey;
         flyHomeOnce();

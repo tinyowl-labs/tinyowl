@@ -3,7 +3,7 @@ export const SETTINGS_PAGES = [
     { id: "visibility", label: "Visibility" },
     { id: "licence", label: "Licence" },
     { id: "embargo", label: "Embargo" },
-    { id: "qfieldcloud", label: "QFieldCloud", separatorBefore: true },
+    { id: "qfieldcloud", label: "QField", separatorBefore: true },
     { id: "members", label: "Members" },
 ] as const;
 

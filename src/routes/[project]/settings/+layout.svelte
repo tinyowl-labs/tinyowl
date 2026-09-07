@@ -8,6 +8,10 @@
     const slug = $derived(
         ((data as { slug?: string }).slug ?? $page.params.project) as string,
     );
+    const role = $derived(
+        ((data as { role?: string }).role ?? "viewer") as string,
+    );
+    const canAdminSettings = $derived(role === "owner" || role === "admin");
     const pathname = $derived($page.url.pathname);
 
     function href(id: string) {
@@ -26,25 +30,27 @@
             aria-label="Project settings"
         >
             {#each SETTINGS_PAGES as item}
-                {#if "separatorBefore" in item && item.separatorBefore}
-                    <span
-                        class="mx-0.5 h-4 w-px shrink-0 bg-border md:mx-0 md:my-1.5 md:h-px md:w-full"
-                        aria-hidden="true"
-                    ></span>
+                {#if canAdminSettings || item.id === "qfieldcloud"}
+                    {#if "separatorBefore" in item && item.separatorBefore && canAdminSettings}
+                        <span
+                            class="mx-0.5 h-4 w-px shrink-0 bg-border md:mx-0 md:my-1.5 md:h-px md:w-full"
+                            aria-hidden="true"
+                        ></span>
+                    {/if}
+                    <a
+                        href={href(item.id)}
+                        aria-current={isActive(item.id) ? "page" : undefined}
+                        class={cn(
+                            "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium no-underline ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                            "md:w-full md:justify-start md:px-2.5 md:shadow-none",
+                            isActive(item.id)
+                                ? "bg-background text-foreground shadow-sm md:bg-accent md:shadow-none"
+                                : "text-muted-foreground hover:text-foreground md:hover:bg-accent md:hover:text-foreground",
+                        )}
+                    >
+                        {item.label}
+                    </a>
                 {/if}
-                <a
-                    href={href(item.id)}
-                    aria-current={isActive(item.id) ? "page" : undefined}
-                    class={cn(
-                        "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium no-underline ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                        "md:w-full md:justify-start md:px-2.5 md:shadow-none",
-                        isActive(item.id)
-                            ? "bg-background text-foreground shadow-sm md:bg-accent md:shadow-none"
-                            : "text-muted-foreground hover:text-foreground md:hover:bg-accent md:hover:text-foreground",
-                    )}
-                >
-                    {item.label}
-                </a>
             {/each}
         </nav>
         <div class="mt-4 min-w-0 flex-1 md:mt-0">

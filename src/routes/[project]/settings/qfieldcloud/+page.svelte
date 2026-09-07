@@ -68,6 +68,15 @@
             label?: string | null;
         }[],
     );
+    const accessToken = $derived(((data as any)?.accessToken as string) || "");
+    const developCommit = $derived(
+        ((data as any)?.developCommit as string) || "",
+    );
+
+    let fieldBaseCommit = $state("");
+    $effect(() => {
+        if (!fieldBaseCommit && developCommit) fieldBaseCommit = developCommit;
+    });
 
     let qfcAccountId = $state("");
     let qfcProjects = $state<
@@ -124,16 +133,16 @@
 </script>
 
 <svelte:head>
-    <title>QFieldCloud — {projectTitle} — echidna</title>
+    <title>QField — {projectTitle} — echidna</title>
 </svelte:head>
 
 <section>
     <div class="flex items-start justify-between gap-4 mb-4">
         <div>
-            <h2 class="text-sm font-medium text-foreground">QFieldCloud link</h2>
+            <h2 class="text-sm font-medium text-foreground">QField</h2>
             <p class="mt-1 text-sm text-muted-foreground">
-                Keep field sync on Cloud; TinyOwl ingests after delta apply via
-                the bridge.
+                Hosted package tracks develop without a laptop CLI. QFieldCloud
+                born-link / snapshot stay as landed.
             </p>
         </div>
     </div>
@@ -154,11 +163,102 @@
             {:else if form.qfieldAction === "sync_requested"}
                 Sync requested. The bridge will force re-pull the Cloud package
                 on its next pass.
+            {:else if form.qfieldAction === "field_pushed"}
+                Field package landed on develop{#if form.develop}
+                    {" "}({String(form.develop).slice(0, 12)}){/if}. Public main
+                is unchanged until promote.
             {:else}
                 Unlinked from QFieldCloud.
             {/if}
         </p>
     {/if}
+
+    <div class="rounded-lg border border-border p-4 bg-card space-y-3 mb-8">
+        <div>
+            <h3 class="text-sm font-medium text-foreground">
+                Hosted field package
+            </h3>
+            <p class="mt-1 text-sm text-muted-foreground">
+                Checkout a QField/QGIS zip at
+                <span class="font-mono">develop</span> (GPKG at that commit, no
+                presence overlays). Push sends
+                <span class="font-mono">base_commit</span> +
+                <span class="font-mono">target_ref</span> — same envelope as
+                CLI. Born-link / snapshot below stay available.
+            </p>
+        </div>
+        {#if developCommit}
+            <p class="text-xs text-muted-foreground font-mono">
+                tracking develop @ {developCommit.slice(0, 12)}
+            </p>
+        {/if}
+        <div class="flex flex-wrap gap-2">
+            <Button
+                href={`/api/v1/projects/${slug}/field-package?ref=develop${accessToken ? `&token=${encodeURIComponent(accessToken)}` : ""}`}
+                size="sm"
+            >
+                Download field package
+            </Button>
+        </div>
+        {#if canLinkQField}
+            <form
+                method="POST"
+                action="?/pushFieldPackage"
+                enctype="multipart/form-data"
+                use:enhance
+                class="space-y-3 pt-2 border-t border-border"
+            >
+                <Field>
+                    <FieldLabel for="field-gpkg">Edited GPKG or zip</FieldLabel>
+                    <input
+                        id="field-gpkg"
+                        name="gpkg"
+                        type="file"
+                        accept=".gpkg,.zip,application/zip,application/geopackage+sqlite3"
+                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm file:border-0 file:bg-transparent file:text-sm"
+                        required
+                    />
+                    <FieldDescription>
+                        Upload <span class="font-mono">project.gpkg</span> or
+                        the whole field zip after QField edits.
+                    </FieldDescription>
+                </Field>
+                <Field>
+                    <FieldLabel for="field-base">Parent commit</FieldLabel>
+                    <Input
+                        id="field-base"
+                        name="base_commit"
+                        bind:value={fieldBaseCommit}
+                        placeholder="from tinyowl.json"
+                        required
+                    />
+                    <FieldDescription>
+                        Must match the package’s
+                        <span class="font-mono">base_commit</span>. If develop
+                        moved, the commit parks on your personal ref.
+                    </FieldDescription>
+                </Field>
+                <Field>
+                    <FieldLabel for="field-msg">Message</FieldLabel>
+                    <Input
+                        id="field-msg"
+                        name="message"
+                        placeholder="qfield: trench 12"
+                        required
+                    />
+                </Field>
+                <Button type="submit" size="sm" variant="outline">
+                    Push to develop
+                </Button>
+            </form>
+        {/if}
+    </div>
+
+    <h3 class="text-sm font-medium text-foreground mb-3">QFieldCloud link</h3>
+    <p class="mb-4 text-sm text-muted-foreground">
+        Optional. Keep field sync on Cloud; TinyOwl ingests after delta apply
+        via the bridge.
+    </p>
 
     {#if displayQfield}
         <div class="rounded-lg border border-border p-4 bg-card space-y-3">

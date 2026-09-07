@@ -1,9 +1,4 @@
 <script lang="ts">
-    import {
-        suggestForeignKeys,
-        type FkSuggestion,
-    } from "$lib/project/licences";
-
     type SchemaTable = {
         name: string;
         label?: string;
@@ -53,7 +48,6 @@
     let targetColumn = $state("source_id");
     let matchOn = $state("source_id");
     let displayColumn = $state("");
-    let allowMulti = $state(false);
     let saveLinkAfterNormalize = $state(true);
     let busy = $state(false);
     let error = $state("");
@@ -73,18 +67,6 @@
     );
     const targetCols = $derived(
         tables.find((t) => t.name === targetTable)?.columns ?? [],
-    );
-
-    const suggestions = $derived(
-        suggestForeignKeys(
-            tables.map((t) => ({ name: t.name, columns: t.columns })),
-            edges
-                .filter((e) => e.kind !== "inferred")
-                .map((e) => ({
-                    source: e.source,
-                    source_column: e.source_column,
-                })),
-        ),
     );
 
     $effect(() => {
@@ -161,26 +143,8 @@
             target_key: targetColumn || "source_id",
             overrides,
             references_value: displayColumn || undefined,
-            allow_multi: allowMulti,
             ...extra,
         };
-    }
-
-    function applySuggestion(s: FkSuggestion) {
-        sourceTable = s.sourceTable;
-        sourceColumn = s.sourceColumn;
-        targetTable = s.targetTable;
-        targetColumn = s.targetColumn;
-        matchOn = s.targetColumn;
-        report = null;
-        overrides = {};
-        error = "";
-        ok = `Filled — pick how values match, then Validate`;
-    }
-
-    async function confirmSuggestion(s: FkSuggestion) {
-        applySuggestion(s);
-        await validate();
     }
 
     async function save() {
@@ -198,7 +162,6 @@
                 column_name: sourceColumn,
                 references,
                 references_value: displayColumn || undefined,
-                allow_multi: allowMulti,
             });
             ok = `Linked ${sourceTable}.${sourceColumn} → ${references}`;
             onSaved?.();
@@ -352,72 +315,25 @@
     <div class="flex flex-col gap-4">
         <div>
             <h3 class="text-sm font-semibold text-foreground">
-                Link &amp; normalize foreign keys
+                Link a foreign key
             </h3>
-            <p class="text-xs text-muted-foreground mt-0.5 max-w-xl">
-                TinyOwl always mints a new
-                <code class="font-mono">source_id</code>
-                (e.g. <code class="font-mono">SP-0001-web</code>). Your file’s
-                id stays as a normal column (<code class="font-mono">fid</code>,
-                <code class="font-mono">id</code>, …). Match the FK column
-                (<code class="font-mono">chunk_id</code>) to that natural key,
-                validate (exact / digits / suffix soft match), then rewrite
-                cells to the target’s <code class="font-mono">source_id</code>.
+            <p class="text-xs text-muted-foreground mt-0.5">
+                One parent per row. Match the column to the other table’s
+                <code class="font-mono">fid</code> /
+                <code class="font-mono">id</code>, then rewrite cells to
+                <code class="font-mono">source_id</code>. Several parents? Use
+                Many-to-many.
             </p>
         </div>
 
-        {#if suggestions.length}
-            <div class="rounded-lg border border-border overflow-hidden">
-                <div
-                    class="border-b border-border bg-secondary/40 px-3 py-2 text-xs font-medium text-muted-foreground"
-                >
-                    Suggested links (name conventions)
-                </div>
-                <ul class="divide-y divide-border">
-                    {#each suggestions as s}
-                        <li
-                            class="flex flex-wrap items-center gap-2 px-3 py-2.5 text-sm"
-                        >
-                            <span
-                                class="font-mono text-xs text-foreground min-w-0 truncate"
-                            >
-                                {s.sourceTable}.{s.sourceColumn} → {s.targetTable}.{s.targetColumn}
-                            </span>
-                            <span class="text-[11px] text-muted-foreground truncate"
-                                >{s.reason}</span
-                            >
-                            <span class="ml-auto flex gap-1.5 shrink-0">
-                                <button
-                                    type="button"
-                                    disabled={busy}
-                                    class="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
-                                    onclick={() => applySuggestion(s)}
-                                >
-                                    Fill
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={busy}
-                                    class="rounded bg-primary/90 px-2 py-1 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
-                                    onclick={() => void confirmSuggestion(s)}
-                                >
-                                    Fill + validate
-                                </button>
-                            </span>
-                        </li>
-                    {/each}
-                </ul>
-            </div>
-        {/if}
-
-        <div class="grid gap-3 sm:grid-cols-2">
+        <div class="grid gap-3">
             <label class="flex flex-col gap-1 text-xs">
                 <span class="text-muted-foreground">From table</span>
                 <select
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm"
                     bind:value={sourceTable}
                 >
-                    {#each tables as t}
+                    {#each tables as t (t.name)}
                         <option value={t.name}>{t.label || t.name}</option>
                     {/each}
                 </select>
@@ -428,7 +344,7 @@
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm font-mono"
                     bind:value={sourceColumn}
                 >
-                    {#each sourceCols as c}
+                    {#each sourceCols as c (c.name)}
                         <option value={c.name}>{c.name}</option>
                     {/each}
                 </select>
@@ -439,7 +355,7 @@
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm"
                     bind:value={targetTable}
                 >
-                    {#each tables as t}
+                    {#each tables as t (t.name)}
                         <option value={t.name}>{t.label || t.name}</option>
                     {/each}
                 </select>
@@ -452,7 +368,7 @@
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm font-mono"
                     bind:value={matchOn}
                 >
-                    {#each targetCols as c}
+                    {#each targetCols as c (c.name)}
                         <option value={c.name}>{c.name}</option>
                     {/each}
                 </select>
@@ -465,7 +381,7 @@
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm font-mono"
                     bind:value={targetColumn}
                 >
-                    {#each targetCols as c}
+                    {#each targetCols as c (c.name)}
                         <option value={c.name}>{c.name}</option>
                     {/each}
                 </select>
@@ -479,17 +395,13 @@
                     bind:value={displayColumn}
                 >
                     <option value="">— none —</option>
-                    {#each targetCols as c}
+                    {#each targetCols as c (c.name)}
                         <option value={c.name}>{c.name}</option>
                     {/each}
                 </select>
             </label>
         </div>
 
-        <label class="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" bind:checked={allowMulti} class="rounded" />
-            Allow multiple values (array / multi-FK)
-        </label>
         <label class="flex items-center gap-2 text-xs text-muted-foreground">
             <input
                 type="checkbox"
@@ -568,7 +480,7 @@
                     >
                 </div>
                 <ul class="divide-y divide-border max-h-64 overflow-y-auto">
-                    {#each report.samples as s}
+                    {#each report.samples as s (s.from)}
                         <li class="px-3 py-2 text-xs">
                             <div class="flex flex-wrap items-center gap-2">
                                 <span
@@ -602,7 +514,7 @@
                                         }}
                                     >
                                         <option value="">Pick target…</option>
-                                        {#each s.candidates ?? [] as c}
+                                        {#each s.candidates ?? [] as c (c)}
                                             <option value={c}>{c}</option>
                                         {/each}
                                     </select>
@@ -651,7 +563,7 @@
             <div class="text-xs text-muted-foreground">
                 <p class="font-medium text-foreground mb-1">Confirmed links</p>
                 <ul class="space-y-1">
-                    {#each confirmed as e}
+                    {#each confirmed as e (`${e.source}.${e.source_column}`)}
                         <li
                             class="flex flex-wrap items-center gap-2 font-mono"
                         >

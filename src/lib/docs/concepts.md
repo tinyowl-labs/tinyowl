@@ -273,7 +273,7 @@ Each media item can carry consent flags, managed via the web UI (Artefacts → c
 
 | Kind | Example | TOML | Hub |
 |---|---|---|---|
-| Recording protocol | compaction, excavation method, `BLK` | `type = "enum"`, no `vocabulary`, no `values` list | Dropdown hint. Distincts live in the table. **Promote to lookup** (Layers → schema) copies those distincts into a `{column}_types` table; the fact column becomes `id` + `references`. New terms are lookup row inserts. |
+| Recording protocol | compaction, excavation method, `BLK` | `type = "enum"`, no `vocabulary`, no `values` list | Dropdown hint. Distincts live in the table. **Promote to lookup** (Layers → schema → Lists) copies those distincts into a `{column}_types` table; the fact column becomes `id` + `references`. New terms are lookup row inserts. A delimited relation cell (e.g. `below = "104, 105"`) **Promotes to junction** (Many-to-many): named `from_id`/`to_id` rows; the cell is frozen. N:1 stays a foreign key. |
 | Shared meaning | period, ware, site type | `vocabulary = "periodo"` / `"aat"` / `"crm"` | Distinct values → `value_mappings`. A URI makes the value comparable across projects. |
 
 Local namespaces such as `find-type` are **not** PeriodO/AAT. They may still be scanned for in-project counts; they do not raise unmapped-vocabulary warnings unless you later map a value to an AAT or PeriodO URI yourself.

@@ -5,33 +5,28 @@
         columns: { name: string; type: string; pk?: boolean }[];
         count: number;
     };
-    type SchemaEdge = {
-        source: string;
-        target: string;
-        source_column: string;
-        kind?: string;
-    };
 
     type Props = {
         accessToken: string;
         slug: string;
         tables: SchemaTable[];
-        edges?: SchemaEdge[];
         onSaved?: () => void;
     };
 
-    let { accessToken, slug, tables, edges = [], onSaved }: Props = $props();
+    let { accessToken, slug, tables, onSaved }: Props = $props();
 
     let sourceTable = $state("");
     let sourceColumn = $state("");
-    let lookupTable = $state("");
+    let targetTable = $state("");
+    let junctionTable = $state("");
     let message = $state("");
     let busy = $state(false);
     let error = $state("");
     let ok = $state("");
 
     let addTable = $state("");
-    let addLabel = $state("");
+    let fromId = $state("");
+    let toId = $state("");
     let addMessage = $state("");
 
     $effect(() => {
@@ -54,30 +49,35 @@
                         c.name !== "entity_type" &&
                         c.name !== "source_id" &&
                         c.name !== "geom" &&
-                        c.name !== "geometry",
+                        c.name !== "geometry" &&
+                        c.name !== "from_id" &&
+                        c.name !== "to_id",
                 ) ?? sourceCols[0];
             sourceColumn = pick?.name ?? "";
         }
     });
 
-    const alreadyLinked = $derived(
-        new Set(
-            edges
-                .filter((e) => e.kind === "fk")
-                .map((e) => `${e.source}.${e.source_column}`),
-        ),
-    );
+    $effect(() => {
+        if (!targetTable && sourceTable) targetTable = sourceTable;
+        if (
+            targetTable &&
+            tables.length &&
+            !tables.some((t) => t.name === targetTable)
+        ) {
+            targetTable = sourceTable || tables[0]?.name || "";
+        }
+    });
 
-    const lookupTables = $derived(
-        tables.filter(
-            (t) =>
-                t.name.endsWith("_types") ||
-                t.columns.some((c) => c.name === "label"),
-        ),
+    const junctionTables = $derived(
+        tables.filter((t) => {
+            const names = new Set(t.columns.map((c) => c.name));
+            return names.has("from_id") && names.has("to_id");
+        }),
     );
 
     $effect(() => {
-        if (!addTable && lookupTables.length) addTable = lookupTables[0].name;
+        if (!addTable && junctionTables.length)
+            addTable = junctionTables[0].name;
     });
 
     async function promote() {
@@ -94,7 +94,7 @@
         busy = true;
         try {
             const res = await fetch(
-                `/api/v1/projects/${encodeURIComponent(slug)}/schema/promote-enum`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/schema/promote-junction`,
                 {
                     method: "POST",
                     headers: {
@@ -105,21 +105,27 @@
                     body: JSON.stringify({
                         entity_type: sourceTable,
                         column_name: sourceColumn,
-                        lookup_table: lookupTable.trim() || undefined,
+                        junction_table: junctionTable.trim() || undefined,
+                        target_table: targetTable.trim() || undefined,
                         message: message.trim(),
                     }),
                 },
             );
             const data = (await res.json().catch(() => ({}))) as {
                 error?: string;
-                lookup_table?: string;
-                lookup_values?: number;
+                junction_table?: string;
+                junction_rows?: number;
+                unresolved?: number;
             };
             if (!res.ok) {
                 throw new Error(data.error || `Promote failed (${res.status})`);
             }
-            ok = `Promoted ${sourceTable}.${sourceColumn} → ${data.lookup_table} (${data.lookup_values ?? 0} values)`;
-            addTable = data.lookup_table || addTable;
+            const extra =
+                data.unresolved && data.unresolved > 0
+                    ? `; ${data.unresolved} token(s) unmatched`
+                    : "";
+            ok = `Promoted ${sourceTable}.${sourceColumn} → ${data.junction_table} (${data.junction_rows ?? 0} links${extra})`;
+            addTable = data.junction_table || addTable;
             onSaved?.();
         } catch (err) {
             error = err instanceof Error ? err.message : "Promote failed";
@@ -128,14 +134,16 @@
         }
     }
 
-    async function addTerm() {
+    async function addLink() {
         error = "";
         ok = "";
-        if (!addTable || !addLabel.trim()) {
-            error = "Pick a lookup table and a label";
+        if (!addTable || !fromId.trim() || !toId.trim()) {
+            error = "Pick a junction table and both source_ids";
             return;
         }
-        const msg = addMessage.trim() || `add ${addLabel.trim()} to ${addTable}`;
+        const msg =
+            addMessage.trim() ||
+            `add link ${fromId.trim()} → ${toId.trim()} in ${addTable}`;
         busy = true;
         try {
             const res = await fetch(
@@ -153,8 +161,11 @@
                             {
                                 op: "insert",
                                 table: addTable,
-                                entityId: "draft-lookup",
-                                attributes: { label: addLabel.trim() },
+                                entityId: "draft-junction",
+                                attributes: {
+                                    from_id: fromId.trim(),
+                                    to_id: toId.trim(),
+                                },
                             },
                         ],
                     }),
@@ -162,13 +173,13 @@
             );
             const data = (await res.json().catch(() => ({}))) as {
                 error?: string;
-                status?: string;
             };
             if (!res.ok) {
                 throw new Error(data.error || `Add failed (${res.status})`);
             }
-            ok = `Added “${addLabel.trim()}” to ${addTable}`;
-            addLabel = "";
+            ok = `Added link in ${addTable}`;
+            fromId = "";
+            toId = "";
             onSaved?.();
         } catch (err) {
             error = err instanceof Error ? err.message : "Add failed";
@@ -180,17 +191,18 @@
 
 {#if tables.length < 1}
     <p class="text-sm text-muted-foreground">
-        Import a table before promoting a closed list.
+        Import a table before promoting a many-to-many column.
     </p>
 {:else}
     <div class="flex flex-col gap-4">
         <div>
             <h3 class="text-sm font-semibold text-foreground">
-                Promote to lookup
+                Promote to junction
             </h3>
             <p class="text-xs text-muted-foreground mt-0.5">
-                Copy distinct values into a lookup table. New terms are extra
-                rows, not a TOML edit.
+                Split a delimited cell (e.g. <code class="font-mono">104, 105</code>)
+                into link rows. The cell is frozen — add more parents as junction
+                rows, not CSV edits.
             </p>
         </div>
 
@@ -207,37 +219,43 @@
                 </select>
             </label>
             <label class="flex flex-col gap-1 text-xs">
-                <span class="text-muted-foreground">Closed-list column</span>
+                <span class="text-muted-foreground">Delimited column</span>
                 <select
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm font-mono"
                     bind:value={sourceColumn}
                 >
                     {#each sourceCols as c (c.name)}
-                        <option value={c.name}
-                            >{c.name}{alreadyLinked.has(
-                                `${sourceTable}.${c.name}`,
-                            )
-                                ? " (linked)"
-                                : ""}</option
-                        >
+                        <option value={c.name}>{c.name}</option>
+                    {/each}
+                </select>
+            </label>
+            <label class="flex flex-col gap-1 text-xs">
+                <span class="text-muted-foreground">Points at</span>
+                <select
+                    class="rounded-md border border-input bg-background px-2 py-2 text-sm"
+                    bind:value={targetTable}
+                >
+                    {#each tables as t (t.name)}
+                        <option value={t.name}>{t.label || t.name}</option>
                     {/each}
                 </select>
             </label>
             <label class="flex flex-col gap-1 text-xs">
                 <span class="text-muted-foreground"
-                    >Lookup table name (optional)</span
+                    >Junction name (optional)</span
                 >
                 <input
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm font-mono"
-                    placeholder="{sourceColumn || 'column'}_types"
-                    bind:value={lookupTable}
+                    placeholder="{sourceTable || 'table'}_{sourceColumn ||
+                        'rel'}"
+                    bind:value={junctionTable}
                 />
             </label>
             <label class="flex flex-col gap-1 text-xs">
                 <span class="text-muted-foreground">Commit message</span>
                 <input
                     class="rounded-md border border-input bg-background px-2 py-2 text-sm"
-                    placeholder="promote context_type to lookup"
+                    placeholder="promote below to junction"
                     bind:value={message}
                 />
             </label>
@@ -247,32 +265,42 @@
                 disabled={busy}
                 onclick={() => void promote()}
             >
-                Promote to lookup
+                Promote to junction
             </button>
         </div>
 
-        {#if lookupTables.length}
+        {#if junctionTables.length}
             <div class="border-t border-border pt-3 space-y-3">
-                <h4 class="text-xs font-semibold text-foreground">
-                    Add lookup term
-                </h4>
+                <h4 class="text-xs font-semibold text-foreground">Add a link</h4>
+                <p class="text-[11px] text-muted-foreground">
+                    Paste each row’s <code class="font-mono">source_id</code>. A
+                    second parent is another row here.
+                </p>
                 <label class="flex flex-col gap-1 text-xs">
-                    <span class="text-muted-foreground">Lookup table</span>
+                    <span class="text-muted-foreground">Junction table</span>
                     <select
                         class="rounded-md border border-input bg-background px-2 py-2 text-sm"
                         bind:value={addTable}
                     >
-                        {#each lookupTables as t (t.name)}
+                        {#each junctionTables as t (t.name)}
                             <option value={t.name}>{t.label || t.name}</option>
                         {/each}
                     </select>
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
-                    <span class="text-muted-foreground">Label</span>
+                    <span class="text-muted-foreground">From source_id</span>
                     <input
-                        class="rounded-md border border-input bg-background px-2 py-2 text-sm"
-                        placeholder="occupation"
-                        bind:value={addLabel}
+                        class="rounded-md border border-input bg-background px-2 py-2 text-sm font-mono"
+                        placeholder="child"
+                        bind:value={fromId}
+                    />
+                </label>
+                <label class="flex flex-col gap-1 text-xs">
+                    <span class="text-muted-foreground">To source_id</span>
+                    <input
+                        class="rounded-md border border-input bg-background px-2 py-2 text-sm font-mono"
+                        placeholder="parent"
+                        bind:value={toId}
                     />
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
@@ -281,7 +309,7 @@
                     >
                     <input
                         class="rounded-md border border-input bg-background px-2 py-2 text-sm"
-                        placeholder="add occupation type"
+                        placeholder="add second parent"
                         bind:value={addMessage}
                     />
                 </label>
@@ -289,9 +317,9 @@
                     type="button"
                     class="rounded bg-secondary px-2 py-1.5 text-[11px] font-medium text-foreground disabled:opacity-50"
                     disabled={busy}
-                    onclick={() => void addTerm()}
+                    onclick={() => void addLink()}
                 >
-                    Add term on develop
+                    Add link on develop
                 </button>
             </div>
         {/if}

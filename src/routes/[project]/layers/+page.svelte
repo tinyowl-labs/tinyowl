@@ -321,6 +321,13 @@
     });
 
     let schemaToolsOpen = $state(false);
+    let schemaTool = $state<"lists" | "links" | "many" | "edges">("lists");
+    const schemaToolTabs: { id: typeof schemaTool; label: string }[] = [
+        { id: "lists", label: "Lists" },
+        { id: "links", label: "Links" },
+        { id: "many", label: "Many-to-many" },
+        { id: "edges", label: "Ad-hoc" },
+    ];
     let tableEditEnabled = $state(false);
     let tableAttrEdit = $state<{ table: string; entityId: string } | null>(
         null,
@@ -333,6 +340,7 @@
     let EntityRelationsPanelCmp = $state<LazyCmp | null>(null);
     let FkLinkerCmp = $state<LazyCmp | null>(null);
     let PromoteLookupCmp = $state<LazyCmp | null>(null);
+    let PromoteJunctionCmp = $state<LazyCmp | null>(null);
 
     $effect(() => {
         if (!browser) return;
@@ -384,6 +392,19 @@
             void import("$lib/components/digitize/PromoteLookup.svelte").then(
                 (m) => {
                     PromoteLookupCmp = m.default;
+                },
+            );
+        }
+        if (
+            viewMode === "schema" &&
+            schemaToolsOpen &&
+            canWrite &&
+            accessToken &&
+            !PromoteJunctionCmp
+        ) {
+            void import("$lib/components/digitize/PromoteJunction.svelte").then(
+                (m) => {
+                    PromoteJunctionCmp = m.default;
                 },
             );
         }
@@ -1138,7 +1159,7 @@
                                         class="rounded-md p-1.5 transition-colors {schemaToolsOpen
                                             ? 'bg-secondary text-foreground'
                                             : 'text-muted-foreground hover:text-foreground'}"
-                                        title="Entity relations and foreign keys"
+                                        title="Schema tools"
                                         aria-pressed={schemaToolsOpen}
                                     >
                                         <PanelRightIcon class="size-4" />
@@ -1353,39 +1374,86 @@
                 </div>
                 {#if viewMode === "schema" && schemaToolsOpen}
                     <aside
-                        class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-6"
+                        class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-4"
                     >
-                        {#if EntityRelationsPanelCmp}
+                        <div>
+                            <h2 class="text-sm font-semibold text-foreground">
+                                Schema tools
+                            </h2>
+                            <p class="text-xs text-muted-foreground mt-0.5">
+                                Turn imported columns into lookups, foreign
+                                keys, or many-to-many links.
+                            </p>
+                        </div>
+                        {#if canWrite && accessToken}
+                            <div
+                                class="grid grid-cols-2 gap-1 rounded-md border border-border p-1"
+                                role="tablist"
+                                aria-label="Schema tool"
+                            >
+                                {#each schemaToolTabs as tab (tab.id)}
+                                    <button
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={schemaTool === tab.id}
+                                        class="rounded px-2 py-1.5 text-[11px] font-medium transition-colors {schemaTool ===
+                                        tab.id
+                                            ? 'bg-background text-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:text-foreground'}"
+                                        onclick={() => (schemaTool = tab.id)}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                {/each}
+                            </div>
+                            {#if schemaTool === "lists" && PromoteLookupCmp}
+                                <PromoteLookupCmp
+                                    {accessToken}
+                                    slug={$page.params.project ?? ""}
+                                    tables={schemaTables}
+                                    edges={schemaEdges}
+                                    onSaved={() => {
+                                        schemaLoaded = false;
+                                        void loadSchema();
+                                        dataEpoch += 1;
+                                        void invalidateAll();
+                                    }}
+                                />
+                            {:else if schemaTool === "links" && FkLinkerCmp}
+                                <FkLinkerCmp
+                                    {accessToken}
+                                    slug={$page.params.project ?? ""}
+                                    tables={schemaTables}
+                                    edges={schemaEdges}
+                                    onSaved={() => {
+                                        schemaLoaded = false;
+                                        void loadSchema();
+                                    }}
+                                />
+                            {:else if schemaTool === "many" && PromoteJunctionCmp}
+                                <PromoteJunctionCmp
+                                    {accessToken}
+                                    slug={$page.params.project ?? ""}
+                                    tables={schemaTables}
+                                    onSaved={() => {
+                                        schemaLoaded = false;
+                                        void loadSchema();
+                                        dataEpoch += 1;
+                                        void invalidateAll();
+                                    }}
+                                />
+                            {:else if schemaTool === "edges" && EntityRelationsPanelCmp}
+                                <EntityRelationsPanelCmp
+                                    slug={$page.params.project ?? ""}
+                                    {accessToken}
+                                    {canWrite}
+                                />
+                            {/if}
+                        {:else if EntityRelationsPanelCmp}
                             <EntityRelationsPanelCmp
                                 slug={$page.params.project ?? ""}
                                 {accessToken}
                                 {canWrite}
-                            />
-                        {/if}
-                        {#if canWrite && accessToken && PromoteLookupCmp}
-                            <PromoteLookupCmp
-                                {accessToken}
-                                slug={$page.params.project ?? ""}
-                                tables={schemaTables}
-                                edges={schemaEdges}
-                                onSaved={() => {
-                                    schemaLoaded = false;
-                                    void loadSchema();
-                                    dataEpoch += 1;
-                                    void invalidateAll();
-                                }}
-                            />
-                        {/if}
-                        {#if canWrite && accessToken && FkLinkerCmp}
-                            <FkLinkerCmp
-                                {accessToken}
-                                slug={$page.params.project ?? ""}
-                                tables={schemaTables}
-                                edges={schemaEdges}
-                                onSaved={() => {
-                                    schemaLoaded = false;
-                                    void loadSchema();
-                                }}
                             />
                         {/if}
                     </aside>

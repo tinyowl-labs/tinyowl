@@ -171,7 +171,7 @@
 <div class="flex flex-col gap-3 text-xs">
     <div class="flex items-center gap-2">
         <GitBranchIcon class="size-3.5 text-muted-foreground" />
-        <h2 class="text-sm font-medium text-foreground">Entity relations</h2>
+        <h2 class="text-sm font-medium text-foreground">Ad-hoc edges</h2>
         {#if relations.length}
             <span class="text-muted-foreground tabular-nums"
                 >{relations.length}</span
@@ -179,6 +179,12 @@
         {/if}
     </div>
 
+    <p class="text-muted-foreground">
+        Loose
+        <code class="font-mono">_relations</code>
+        rows for predicates that do not have a named junction. Named
+        many-to-many links live in their own table.
+    </p>
     {#if bands?.membership || bands?.order}
         <p class="text-muted-foreground">
             Bands:
@@ -205,7 +211,7 @@
         />
         {#if predicateHints.length}
             <datalist id="predicate-hints">
-                {#each predicateHints as p}
+                {#each predicateHints as p (p)}
                     <option value={p}></option>
                 {/each}
             </datalist>
@@ -222,14 +228,12 @@
         <div
             class="rounded-md border border-dashed border-border px-3 py-6 text-center text-muted-foreground"
         >
-            No entity edges yet. Seed via GPKG <code class="font-mono"
-                >_relations</code
-            >
-            or add below.
+            No ad-hoc edges yet. Add one below, or leave this empty if your
+            links already live in a junction table.
         </div>
     {:else}
         <ul class="divide-y divide-border rounded-md border border-border max-h-64 overflow-y-auto">
-            {#each relations as rel}
+            {#each relations as rel (`${rel.source_type}:${rel.source_id}:${rel.predicate}:${rel.target_type}:${rel.target_id}`)}
                 <li
                     class="flex items-center gap-2 px-2 py-1.5 hover:bg-secondary/50"
                 >

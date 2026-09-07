@@ -62,6 +62,10 @@
         return isDark() ? "dark" : "light";
     });
 
+    const hasInferred = $derived(
+        schemaEdges.some((e) => e.kind === "inferred"),
+    );
+
     function nodeHeight(t: SchemaTable): number {
         return HEADER_H + (t.columns?.length ?? 0) * ROW_H + 4;
     }
@@ -491,35 +495,35 @@
                         </svg>
                         Relation
                     </span>
-                    <span class="inline-flex items-center gap-1.5">
-                        <svg
-                            class="size-3.5 shrink-0"
-                            viewBox="0 0 16 8"
-                            aria-hidden="true"
-                        >
-                            <line
-                                x1="0"
-                                y1="4"
-                                x2="16"
-                                y2="4"
-                                stroke="var(--color-muted-foreground)"
-                                stroke-width="1.75"
-                                stroke-dasharray="1.5 3"
-                                opacity="0.7"
-                            />
-                        </svg>
-                        Inferred
-                    </span>
+                    {#if hasInferred}
+                        <span class="inline-flex items-center gap-1.5">
+                            <svg
+                                class="size-3.5 shrink-0"
+                                viewBox="0 0 16 8"
+                                aria-hidden="true"
+                            >
+                                <line
+                                    x1="0"
+                                    y1="4"
+                                    x2="16"
+                                    y2="4"
+                                    stroke="var(--color-muted-foreground)"
+                                    stroke-width="1.75"
+                                    stroke-dasharray="1.5 3"
+                                    opacity="0.7"
+                                />
+                            </svg>
+                            Inferred
+                        </span>
+                    {/if}
                 </div>
                 <p
                     class="max-w-xs rounded-md border border-dashed border-border bg-card/80 px-2.5 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm"
                     class:hidden={schemaEdges.length > 0}
                 >
-                        No FK edges yet — import with
-                        <code class="font-mono">--qgs</code>
-                        or add
-                        <code class="font-mono">references</code>
-                        in table TOML.
+                        No links yet — open schema tools to confirm a foreign
+                        key, or import with
+                        <code class="font-mono">--qgs</code>.
                     </p>
             </Panel>
             <MiniMap

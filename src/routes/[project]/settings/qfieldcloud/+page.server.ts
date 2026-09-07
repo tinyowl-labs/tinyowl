@@ -1,6 +1,9 @@
 import type { PageServerLoad, Actions } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
 
+import type { PageServerLoad, Actions } from "./$types";
+import { TINYOWL_CORE_URL } from "$env/static/private";
+
 export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     const accessToken = await locals.getAccessToken();
     const slug = params.project;
@@ -22,6 +25,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
         username: string;
         label?: string | null;
     }[] = [];
+    let developCommit = "";
     try {
         const res = await fetch(
             `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link`,
@@ -39,8 +43,18 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
         );
         if (res.ok) qfieldAccounts = await res.json();
     } catch (_) {}
+    try {
+        const res = await fetch(
+            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/refs`,
+            { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (res.ok) {
+            const refs = await res.json();
+            developCommit = String(refs?.develop ?? "");
+        }
+    } catch (_) {}
 
-    return { qfieldLink, qfieldAccounts };
+    return { qfieldLink, qfieldAccounts, accessToken, developCommit };
 };
 
 export const actions: Actions = {
@@ -123,5 +137,69 @@ export const actions: Actions = {
             return { error: `Failed: ${await res.text()}`, qfieldAction: "sync" };
         }
         return { success: true, qfieldAction: "sync_requested" };
+    },
+
+    pushFieldPackage: async ({ request, locals, params, fetch }) => {
+        const { user } = await locals.getSession();
+        if (!user) {
+            return { error: "Not signed in", qfieldAction: "field_push" };
+        }
+        const slug = params.project;
+        const accessToken = await locals.getAccessToken();
+        const incoming = await request.formData();
+        const message = String(incoming.get("message") ?? "").trim();
+        const baseCommit = String(incoming.get("base_commit") ?? "").trim();
+        const file = incoming.get("gpkg");
+        if (!message) {
+            return {
+                error: "Commit message required.",
+                qfieldAction: "field_push",
+            };
+        }
+        if (!baseCommit) {
+            return {
+                error: "base_commit required (from tinyowl.json in the package).",
+                qfieldAction: "field_push",
+            };
+        }
+        if (!(file instanceof File) || file.size === 0) {
+            return {
+                error: "Upload the edited project.gpkg or the field zip.",
+                qfieldAction: "field_push",
+            };
+        }
+        const body = new FormData();
+        body.set("gpkg", file, file.name);
+        body.set("message", message);
+        body.set("base_commit", baseCommit);
+        const res = await fetch(
+            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/field-package/push`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "X-TinyOwl-Message": message,
+                    "X-TinyOwl-Base-Commit": baseCommit,
+                    "X-TinyOwl-Target-Ref": "develop",
+                },
+                body,
+            },
+        );
+        if (!res.ok) {
+            return {
+                error: `Failed: ${await res.text()}`,
+                qfieldAction: "field_push",
+            };
+        }
+        let develop = "";
+        try {
+            const out = await res.json();
+            develop = String(out?.develop ?? "");
+        } catch (_) {}
+        return {
+            success: true,
+            qfieldAction: "field_pushed",
+            develop,
+        };
     },
 };
