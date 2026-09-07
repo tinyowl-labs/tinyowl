@@ -46,4 +46,31 @@ export const actions: Actions = {
     if (!res.ok) return { error: "Failed to save readme" };
     return { success: true };
   },
+
+  requestJoin: async ({ locals, params, fetch }) => {
+    const { user } = await locals.getSession();
+    if (!user) return { error: "Not signed in" };
+    const slug = params.project;
+    const accessToken = await locals.getAccessToken();
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/join-request`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: "{}",
+      },
+    );
+    if (!res.ok && res.status !== 409) {
+      const text = await res.text();
+      try {
+        const body = JSON.parse(text) as { error?: string };
+        if (body.error) return { error: body.error };
+      } catch (_) {}
+      return { error: text || "Failed to request join" };
+    }
+    return { success: true, joinAction: "requested" };
+  },
 };

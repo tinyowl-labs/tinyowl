@@ -1,10 +1,10 @@
 import type { GeoJsonGeometry } from "./types";
 
 /** Heights at or below this (metres) are treated as ground-clamped, not 3D. */
-export const FLAT_Z_M = 0.5;
+const FLAT_Z_M = 0.5;
 
 /** Cap vertices on awareness / broadcast payloads. */
-export const MAX_OVERLAY_VERTS = 32;
+const MAX_OVERLAY_VERTS = 32;
 
 function positionHasMeaningfulZ(pos: unknown): boolean {
     if (!Array.isArray(pos) || pos.length < 3) return false;
@@ -153,7 +153,7 @@ function walkLonLat(c: unknown, acc: number[][]) {
     for (const x of c) walkLonLat(x, acc);
 }
 
-export function bboxFromGeometry(raw: unknown): LonLatBbox | null {
+function bboxFromGeometry(raw: unknown): LonLatBbox | null {
     const g = asGeometry(raw);
     if (!g) return null;
     const coords: number[][] = [];
@@ -182,7 +182,7 @@ export function bboxFromGeometry(raw: unknown): LonLatBbox | null {
     return { west, south, east, north };
 }
 
-export function unionBbox(
+function unionBbox(
     a: LonLatBbox | null,
     b: LonLatBbox | null,
 ): LonLatBbox | null {

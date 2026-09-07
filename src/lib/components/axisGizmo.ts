@@ -138,9 +138,3 @@ export function axisGizmoLengthForView(
     const halfH = Math.tan(Math.max(fovYRadians, 0.05) * 0.5) * d;
     return Math.max(halfH * 2 * screenFrac, 1e-4);
 }
-
-/** Sensible triad length from a bounding radius (local units). */
-export function axisGizmoLengthFromRadius(radius: number): number {
-    const r = Math.max(radius, 0.01);
-    return Math.min(Math.max(r * 0.08, 0.05), r * 0.25);
-}

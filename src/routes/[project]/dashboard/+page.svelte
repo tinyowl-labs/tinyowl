@@ -16,6 +16,8 @@
     import FileUpIcon from "@lucide/svelte/icons/file-up";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
     import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
+    import GeodiffSummaryChips from "$lib/components/changeset/GeodiffSummaryChips.svelte";
+    import { formatCommitDate } from "$lib/changeset/client";
 
     let { data } = $props();
 
@@ -78,22 +80,6 @@
 
     let actionsOpen = $state(false);
     let copied = $state(false);
-
-    function formatDate(ts: string): string {
-        return new Date(ts).toLocaleDateString("en-GB", {
-            day: "numeric",
-            month: "short",
-            year: "numeric",
-        });
-    }
-
-    function entityChips(
-        summary: any,
-    ): { table: string; insert?: number; update?: number; delete?: number }[] {
-        return (Array.isArray(summary) ? summary : []).filter(
-            (s: any) => !String(s?.table ?? "").startsWith("_"),
-        );
-    }
 
     const vocabSummary = $derived.by(() => {
         const vocabs = new Set<string>();
@@ -429,7 +415,7 @@
                                 <div
                                     class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground"
                                 >
-                                    <span>{formatDate(c.created_at)}</span>
+                                    <span>{formatCommitDate(c.created_at, false)}</span>
                                     <span>unmerged — develop did not move</span>
                                 </div>
                             </div>
@@ -458,24 +444,11 @@
                                 <div
                                     class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground"
                                 >
-                                    <span>{formatDate(cs.created_at)}</span>
-                                    {#each entityChips(cs.geodiff_summary) as s}
-                                        <span>
-                                            {s.table}
-                                            {#if s.insert}<span
-                                                    class="text-emerald-400"
-                                                    >+{s.insert}</span
-                                                >{/if}
-                                            {#if s.update}<span
-                                                    class="text-amber-400"
-                                                    >~{s.update}</span
-                                                >{/if}
-                                            {#if s.delete}<span
-                                                    class="text-red-400"
-                                                    >−{s.delete}</span
-                                                >{/if}
-                                        </span>
-                                    {/each}
+                                    <span>{formatCommitDate(cs.created_at, false)}</span>
+                                    <GeodiffSummaryChips
+                                        summary={cs.geodiff_summary}
+                                        dotted={false}
+                                    />
                                 </div>
                             </div>
                             <span
@@ -506,24 +479,11 @@
                                 <div
                                     class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground"
                                 >
-                                    <span>{formatDate(row.created_at)}</span>
-                                    {#each entityChips(row.geodiff_summary) as s}
-                                        <span>
-                                            {s.table}
-                                            {#if s.insert}<span
-                                                    class="text-emerald-400"
-                                                    >+{s.insert}</span
-                                                >{/if}
-                                            {#if s.update}<span
-                                                    class="text-amber-400"
-                                                    >~{s.update}</span
-                                                >{/if}
-                                            {#if s.delete}<span
-                                                    class="text-red-400"
-                                                    >−{s.delete}</span
-                                                >{/if}
-                                        </span>
-                                    {/each}
+                                    <span>{formatCommitDate(row.created_at, false)}</span>
+                                    <GeodiffSummaryChips
+                                        summary={row.geodiff_summary}
+                                        dotted={false}
+                                    />
                                 </div>
                             </div>
                             <span

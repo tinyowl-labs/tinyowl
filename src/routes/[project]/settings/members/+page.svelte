@@ -7,11 +7,13 @@
     import { Field, FieldLabel } from "$lib/components/ui/field/index.js";
     import { SELECT_CLASS } from "../pages";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
+    import PendingJoinRequests from "$lib/components/join/PendingJoinRequests.svelte";
 
     let { data, form: rawForm } = $props();
     const form = $derived(rawForm as any);
 
     const members = $derived(data?.members ?? []);
+    const joinRequests = $derived(data?.joinRequests ?? []);
     const currentUserId = $derived(data?.currentUserId ?? "");
     const userRole = $derived(data?.role ?? "viewer");
     const projectTitle = $derived(data?.project?.title ?? "Project");
@@ -78,6 +80,17 @@
             Member {form.memberAction}.
         </p>
     {/if}
+
+    <PendingJoinRequests
+        requests={joinRequests}
+        defaultRole="collaborator"
+        roleOptions={[
+            { value: "viewer", label: "Viewer" },
+            { value: "collaborator", label: "Collaborator" },
+            { value: "admin", label: "Admin" },
+            { value: "owner", label: "Owner" },
+        ]}
+    />
 
     {#if showInvite && canManage}
         <form

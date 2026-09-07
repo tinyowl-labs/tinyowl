@@ -4,10 +4,13 @@
     import { Button } from "$lib/components/ui/button/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
     import { Field, FieldLabel } from "$lib/components/ui/field/index.js";
+    import RequestJoinCta from "$lib/components/join/RequestJoinCta.svelte";
 
     let { data, form } = $props();
     const org = $derived(data.org);
     const isMember = $derived(Boolean(data.isMember));
+    const signedIn = $derived(Boolean(data.user));
+    const pending = $derived(data.joinRequest?.status === "pending");
     let showCreate = $state(false);
 
     function projectHref(slug: string) {
@@ -41,7 +44,7 @@
                 >{org.name.charAt(0).toUpperCase()}</span
             >
         {/if}
-        <div class="min-w-0">
+        <div class="min-w-0 flex-1">
             <h1 class="text-2xl font-semibold text-foreground">{org.name}</h1>
             {#if org.description}
                 <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
@@ -50,6 +53,12 @@
             {/if}
             <p class="mt-1 text-xs text-muted-foreground">{org.slug}</p>
         </div>
+        <RequestJoinCta
+            {signedIn}
+            {isMember}
+            {pending}
+            loginHref="/auth/login?next={encodeURIComponent(`/orgs/${org.slug}`)}"
+        />
     </div>
 
     <section>

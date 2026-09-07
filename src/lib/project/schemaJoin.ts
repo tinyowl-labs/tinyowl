@@ -1,7 +1,7 @@
 import { parseSelectionKey, toSelectionKey } from "$lib/stores/layerSelection.svelte";
 
 /** Confirmed column FKs only — not name-inferred, not `_relations` instance edges. */
-export const JOIN_EDGE_KINDS = new Set(["fk"]);
+const JOIN_EDGE_KINDS = new Set(["fk"]);
 
 export type JoinEdge = {
     source: string;
@@ -12,11 +12,11 @@ export type JoinEdge = {
     allow_multi?: boolean;
 };
 
-export function isGeomColumn(name: string): boolean {
+function isGeomColumn(name: string): boolean {
     return /^_?geom/i.test(name);
 }
 
-export function isSpatialTable(columns: string[] | undefined): boolean {
+function isSpatialTable(columns: string[] | undefined): boolean {
     return (columns ?? []).some(isGeomColumn);
 }
 
@@ -37,7 +37,7 @@ function rowValue(row: Record<string, unknown> | undefined, col: string): unknow
 }
 
 /** Split a FK cell: scalar, JSON array, QGIS `{a,b}` / AllowMulti lists. */
-export function fkCellIds(raw: unknown, allowMulti = false): string[] {
+function fkCellIds(raw: unknown, allowMulti = false): string[] {
     if (raw == null || raw === "") return [];
     if (Array.isArray(raw)) {
         return raw.flatMap((v) => fkCellIds(v, true));

@@ -1,32 +1,18 @@
 import type { PageServerLoad } from "./$types";
-import { TINYOWL_CORE_URL } from "$env/static/private";
-import { redirect } from "@sveltejs/kit";
+import {
+	coreJson,
+	jsonArray,
+	projectAuth,
+} from "$lib/server/projectAccess.server";
 
-export const load: PageServerLoad = async ({ locals, params, fetch }) => {
+export const load: PageServerLoad = async ({ locals, params, fetch, parent }) => {
 	const slug = params.project;
-	const { user } = await locals.getSession();
-	if (!user) throw redirect(303, `/${slug}`);
-
-	const accessToken = await locals.getAccessToken();
-	const headers: Record<string, string> = {};
-	if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-
-	let role = "viewer";
-	if (accessToken) {
-		try {
-			const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
-				headers: { Authorization: `Bearer ${accessToken}` },
-			});
-			if (res.ok) {
-				const projects: { slug: string; role: string }[] = await res.json();
-				const member = projects.find((p) => p.slug === slug);
-				if (member) role = member.role;
-			}
-		} catch (_) {}
-	}
-	if (role !== "owner" && role !== "admin" && role !== "collaborator") {
-		throw redirect(303, `/${slug}`);
-	}
+	const { accessToken, headers, role } = await projectAuth(
+		locals,
+		parent,
+		slug,
+		"writer",
+	);
 
 	let preview: Record<string, any> = {
 		in_sync: true,
@@ -36,68 +22,53 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		main: "",
 		develop: "",
 	};
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/promote`,
-			{ headers },
-		);
-		if (res.ok) {
-			preview = await res.json();
-		}
-	} catch (_) {}
+	const promote = await coreJson(
+		fetch,
+		`/api/v1/projects/${slug}/promote`,
+		headers,
+	);
+	if (promote && typeof promote === "object") {
+		preview = promote as Record<string, any>;
+	}
 
-	let changesets: any[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets?status=pending`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			changesets = Array.isArray(data) ? data : [];
-		}
-		const res2 = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets?status=changes_requested`,
-			{ headers },
-		);
-		if (res2.ok) {
-			const data = await res2.json();
-			if (Array.isArray(data)) changesets = [...changesets, ...data];
-		}
-	} catch (_) {}
+	let changesets = jsonArray(
+		await coreJson(
+			fetch,
+			`/api/v1/projects/${slug}/changesets?status=pending`,
+			headers,
+		),
+	);
+	const requested = jsonArray(
+		await coreJson(
+			fetch,
+			`/api/v1/projects/${slug}/changesets?status=changes_requested`,
+			headers,
+		),
+	);
+	if (requested.length) changesets = [...changesets, ...requested];
 
-	let conflictedCommits: any[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?status=conflicted`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			conflictedCommits = Array.isArray(data) ? data : [];
-		}
-	} catch (_) {}
+	const conflictedCommits = jsonArray(
+		await coreJson(
+			fetch,
+			`/api/v1/projects/${slug}/commits?status=conflicted`,
+			headers,
+		),
+	);
 
 	let heads: { name: string; commit_id: string; author?: string }[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/refs`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			const develop = typeof data?.develop === "string" ? data.develop : "";
-			if (Array.isArray(data?.heads)) {
-				heads = data.heads.filter(
-					(h: { commit_id?: string }) =>
-						h?.commit_id && h.commit_id !== develop,
-				);
-			}
+	const refs = await coreJson(fetch, `/api/v1/projects/${slug}/refs`, headers);
+	if (refs && typeof refs === "object") {
+		const develop = typeof (refs as any).develop === "string" ? (refs as any).develop : "";
+		if (Array.isArray((refs as any).heads)) {
+			heads = (refs as any).heads.filter(
+				(h: { commit_id?: string }) =>
+					h?.commit_id && h.commit_id !== develop,
+			);
 		}
-	} catch (_) {}
+	}
 
 	return {
-		accessToken: accessToken ?? "",
+		accessToken,
 		preview,
 		changesets,
 		conflictedCommits,

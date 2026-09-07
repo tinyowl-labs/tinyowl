@@ -6,7 +6,35 @@ export const load: PageServerLoad = async () => {
 	return {};
 };
 
+async function apiError(res: Response) {
+	const text = await res.text();
+	try {
+		const body = JSON.parse(text) as { error?: string };
+		if (body.error) return body.error;
+	} catch (_) {}
+	return text || `Failed (${res.status})`;
+}
+
 export const actions: Actions = {
+	requestJoin: async ({ locals, params, fetch }) => {
+		const { user } = await locals.getSession();
+		if (!user) return { error: "Not signed in" };
+		const token = await locals.getAccessToken();
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/orgs/${params.org}/join-request`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: "{}",
+			},
+		);
+		if (!res.ok && res.status !== 409) return { error: await apiError(res) };
+		return { success: true, joinAction: "requested" };
+	},
+
 	createProject: async ({ request, locals, params, fetch }) => {
 		const { user } = await locals.getSession();
 		if (!user) return { error: "Not signed in" };

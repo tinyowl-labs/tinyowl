@@ -197,11 +197,17 @@ export default defineConfig({
   // Combined `cesium` IIFE stays out of the optimizer (prebundle broke WebGL/atlas).
   // `@cesium/engine` MUST be optimized: its CJS deps (mersenne-twister, …) have no
   // default ESM export, so native exclude-mode imports fail in Vite dev.
+  resolve: {
+    // One Svelte runtime. Prebundling @xyflow/svelte otherwise inlines a second
+    // svelte/internal/client (next_sibling_getter stays undefined on SchemaGraph).
+    dedupe: ["svelte"],
+  },
   ssr: {
     external: ["cesium", "@cesium/engine"],
+    noExternal: ["@xyflow/svelte"],
   },
   optimizeDeps: {
-    exclude: ["cesium"],
+    exclude: ["cesium", "@xyflow/svelte"],
     include: ["@cesium/engine"],
   },
   server: {

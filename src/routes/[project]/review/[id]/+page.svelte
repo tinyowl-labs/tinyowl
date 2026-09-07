@@ -5,7 +5,9 @@
     import XIcon from "@lucide/svelte/icons/x";
     import MessageSquareIcon from "@lucide/svelte/icons/message-square";
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
-    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
+    import ChangesetWorkspace from "$lib/components/changeset/ChangesetWorkspace.svelte";
+    import GeodiffSummaryChips from "$lib/components/changeset/GeodiffSummaryChips.svelte";
+    import { jsonAuthHeaders } from "$lib/changeset/client";
 
     let { data } = $props();
 
@@ -27,18 +29,6 @@
     let busy = $state(false);
     let errorMsg = $state("");
 
-    const entitySummary = $derived(
-        summary.filter((s: any) => !String(s.table ?? "").startsWith("_")),
-    );
-
-    function authHeaders(): HeadersInit {
-        const h: Record<string, string> = {
-            "Content-Type": "application/json",
-        };
-        if (accessToken) h["Authorization"] = `Bearer ${accessToken}`;
-        return h;
-    }
-
     async function act(action: "approve" | "reject" | "request-changes") {
         if (busy) return;
         if (action === "request-changes" && !note.trim()) {
@@ -52,7 +42,7 @@
                 `/api/v1/projects/${slug}/changesets/${changeset.id}/${action}`,
                 {
                     method: "POST",
-                    headers: authHeaders(),
+                    headers: jsonAuthHeaders(accessToken),
                     body: JSON.stringify({ note: note.trim() }),
                 },
             );
@@ -75,78 +65,57 @@
     );
 </script>
 
-<svelte:head>
-    <title>Review — {slug} — echidna</title>
-</svelte:head>
-
-<article class="flex h-full min-h-0 flex-col overflow-hidden">
-    <WorkspaceToolbar>
-        {#snippet meta()}
-            <span class="min-w-0 truncate text-foreground">
-                {changeset?.message?.trim() || "Changeset review"}
-            </span>
-            <span class="capitalize">{changeset?.status ?? ""}</span>
-            <span class="font-mono"
-                >{changeset?.sha256?.slice(0, 10) ?? ""}</span
+<ChangesetWorkspace title="Review — {slug} — echidna">
+    {#snippet meta()}
+        <span class="min-w-0 truncate text-foreground">
+            {changeset?.message?.trim() || "Changeset review"}
+        </span>
+        <span class="capitalize">{changeset?.status ?? ""}</span>
+        <span class="font-mono"
+            >{changeset?.sha256?.slice(0, 10) ?? ""}</span
+        >
+        <GeodiffSummaryChips {summary} />
+    {/snippet}
+    {#snippet actions()}
+        {#if open}
+            <input
+                class="h-8 w-56 rounded-md border border-border bg-background px-3 text-xs"
+                placeholder="Note (for request changes)"
+                bind:value={note}
+            />
+            <button
+                class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs text-primary-foreground disabled:opacity-50"
+                disabled={busy}
+                onclick={() => act("approve")}
             >
-            {#if entitySummary.length}
-                <span>
-                    {#each entitySummary as s, i}
-                        {#if i > 0}<span class="mx-1">·</span>{/if}
-                        <span class="text-foreground">{s.table}</span>
-                        {#if s.insert}<span class="text-emerald-400"
-                                >+{s.insert}</span
-                            >{/if}
-                        {#if s.update}<span class="text-amber-400"
-                                >~{s.update}</span
-                            >{/if}
-                        {#if s.delete}<span class="text-red-400"
-                                >−{s.delete}</span
-                            >{/if}
-                    {/each}
-                </span>
-            {/if}
-        {/snippet}
-        {#snippet actions()}
-            {#if open}
-                <input
-                    class="h-8 w-56 rounded-md border border-border bg-background px-3 text-xs"
-                    placeholder="Note (for request changes)"
-                    bind:value={note}
-                />
-                <button
-                    class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs text-primary-foreground disabled:opacity-50"
-                    disabled={busy}
-                    onclick={() => act("approve")}
-                >
-                    <CheckIcon class="size-3.5" />
-                    Approve
-                </button>
-                <button
-                    class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs disabled:opacity-50"
-                    disabled={busy}
-                    onclick={() => act("request-changes")}
-                >
-                    <MessageSquareIcon class="size-3.5" />
-                    Request changes
-                </button>
-                <button
-                    class="inline-flex h-8 items-center gap-1.5 rounded-md border border-destructive/40 px-3 text-xs text-destructive disabled:opacity-50"
-                    disabled={busy}
-                    onclick={() => act("reject")}
-                >
-                    <XIcon class="size-3.5" />
-                    Reject
-                </button>
-            {/if}
-        {/snippet}
-    </WorkspaceToolbar>
-
-    {#if errorMsg}
-        <p class="px-4 py-2 text-sm text-destructive border-b border-border">
-            {errorMsg}
-        </p>
-    {/if}
+                <CheckIcon class="size-3.5" />
+                Approve
+            </button>
+            <button
+                class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs disabled:opacity-50"
+                disabled={busy}
+                onclick={() => act("request-changes")}
+            >
+                <MessageSquareIcon class="size-3.5" />
+                Request changes
+            </button>
+            <button
+                class="inline-flex h-8 items-center gap-1.5 rounded-md border border-destructive/40 px-3 text-xs text-destructive disabled:opacity-50"
+                disabled={busy}
+                onclick={() => act("reject")}
+            >
+                <XIcon class="size-3.5" />
+                Reject
+            </button>
+        {/if}
+    {/snippet}
+    {#snippet banner()}
+        {#if errorMsg}
+            <p class="px-4 py-2 text-sm text-destructive border-b border-border">
+                {errorMsg}
+            </p>
+        {/if}
+    {/snippet}
 
     <ChangesetInspect {geodiff} />
-</article>
+</ChangesetWorkspace>

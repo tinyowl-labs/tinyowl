@@ -2,7 +2,7 @@ import type { MeasureMode, MeasureVertex } from "./types";
 
 /** Format measure values for UI labels. */
 
-export function formatDistanceMeters(meters: number): string {
+function formatDistanceMeters(meters: number): string {
   if (!Number.isFinite(meters) || meters < 0) return "—";
   if (meters < 1) return `${Math.round(meters * 1000)} mm`;
   if (meters < 100)
@@ -12,7 +12,7 @@ export function formatDistanceMeters(meters: number): string {
   return `${(Math.round((meters / 1000) * 100) / 100).toLocaleString()} km`;
 }
 
-export function formatAreaSqMeters(sqMeters: number): string {
+function formatAreaSqMeters(sqMeters: number): string {
   if (!Number.isFinite(sqMeters) || sqMeters < 0) return "—";
   if (sqMeters < 10_000) {
     return `${(Math.round(sqMeters * 10) / 10).toLocaleString()} m²`;
@@ -31,7 +31,7 @@ function formatLat(lat: number): string {
 }
 
 /** Lon/lat (and optional ellipsoidal height) for point readout. */
-export function formatCoordinates(
+function formatCoordinates(
   v: MeasureVertex,
   opts?: { withHeight?: boolean },
 ): string {

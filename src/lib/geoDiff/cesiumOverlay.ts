@@ -2,7 +2,7 @@ import { DIFF_OP_FILL } from "./colors";
 import { asGeometry, coordsHaveMeaningfulZ } from "./geometry";
 import type { DiffFeature, DiffOp, GeoJsonGeometry } from "./types";
 
-export const GEO_DIFF_DS_NAME = "tinyowl-geo-diff";
+const GEO_DIFF_DS_NAME = "tinyowl-geo-diff";
 export const PEER_AWARENESS_DS_NAME = "tinyowl-peer-awareness";
 
 type Role = "after" | "before";

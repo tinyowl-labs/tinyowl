@@ -9,7 +9,7 @@
         class: className = "",
         listClass = "",
         contentClass = "",
-        /** When true, inactive panels are not rendered (cheaper for heavy tables). */
+        /** When true, panels render on first visit and stay mounted (xyflow-safe). */
         lazy = false,
         leading,
         trailing,
@@ -19,7 +19,7 @@
         orientation = "horizontal",
     }: {
         value?: string;
-        tabs: { value: string; label: string; count?: number; pending?: number; separatorAfter?: boolean }[];
+        tabs: { value: string; label: string; count?: number; pending?: number; separatorAfter?: boolean; keepAlive?: boolean }[];
         class?: string;
         listClass?: string;
         contentClass?: string;
@@ -41,6 +41,13 @@
     }
 
     const vertical = $derived(orientation === "vertical");
+    let visited = $state<Record<string, boolean>>({});
+
+    $effect(() => {
+        const v = value;
+        if (!v || visited[v]) return;
+        visited = { ...visited, [v]: true };
+    });
 </script>
 
 <BitsTabs.Root
@@ -65,7 +72,7 @@
                 listClass,
             )}
         >
-            {#each tabs as tab}
+            {#each tabs as tab (tab.value)}
                 <BitsTabs.Trigger
                     value={tab.value}
                     class={cn(
@@ -104,7 +111,7 @@
         {/if}
     </div>
 
-    {#each tabs as tab}
+    {#each tabs as tab (tab.value)}
         <BitsTabs.Content
             value={tab.value}
             class={cn(
@@ -113,7 +120,7 @@
                 contentClass,
             )}
         >
-            {#if !lazy || tab.value === value}
+            {#if !lazy || tab.keepAlive || tab.value === value || visited[tab.value]}
                 {@render children?.(tab.value)}
             {/if}
         </BitsTabs.Content>

@@ -1,107 +1,69 @@
 import type { PageServerLoad } from "./$types";
-import { TINYOWL_CORE_URL } from "$env/static/private";
-import { redirect } from "@sveltejs/kit";
+import {
+	coreJson,
+	jsonArray,
+	projectAuth,
+} from "$lib/server/projectAccess.server";
 
-export const load: PageServerLoad = async ({ locals, params, fetch }) => {
+export const load: PageServerLoad = async ({ locals, params, fetch, parent }) => {
 	const slug = params.project;
-	const { user } = await locals.getSession();
-	if (!user) throw redirect(303, `/${slug}`);
+	const { accessToken, headers, role } = await projectAuth(
+		locals,
+		parent,
+		slug,
+		"member",
+	);
 
-	const accessToken = await locals.getAccessToken();
-	const headers: Record<string, string> = {};
-	if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-
-	let role = "none";
-	if (accessToken) {
-		try {
-			const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
-				headers: { Authorization: `Bearer ${accessToken}` },
-			});
-			if (res.ok) {
-				const projects: { slug: string; role: string }[] = await res.json();
-				const member = projects.find((p) => p.slug === slug);
-				if (member) role = member.role;
-			}
-		} catch (_) {}
-	}
-	if (role === "none") {
-		throw redirect(303, `/${slug}`);
-	}
-
-	let diffs: any[] = [];
-	try {
-		const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/diffs`, {
-			headers,
-		});
-		if (res.ok) {
-			const data = await res.json();
-			diffs = Array.isArray(data) ? data : data.diffs ?? [];
-		}
-	} catch (_) {}
+	const diffs = jsonArray(
+		await coreJson(fetch, `/api/v1/projects/${slug}/diffs`, headers),
+		"diffs",
+	);
 
 	let tables: { name: string }[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			const tblMap = (data.tables ?? {}) as Record<string, string[]>;
-			tables = Object.keys(tblMap).map((name) => ({ name }));
-		}
-	} catch (_) {}
+	const tablesPayload = await coreJson(
+		fetch,
+		`/api/v1/projects/${slug}/tables`,
+		headers,
+	);
+	if (tablesPayload && typeof tablesPayload === "object") {
+		const tblMap = ((tablesPayload as any).tables ?? {}) as Record<
+			string,
+			string[]
+		>;
+		tables = Object.keys(tblMap).map((name) => ({ name }));
+	}
 
-	let pendingChangesets: any[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets?status=pending`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			pendingChangesets = Array.isArray(data) ? data : [];
-		}
-	} catch (_) {}
-
-	let commits: any[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?ref=develop`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			commits = Array.isArray(data) ? data : [];
-		}
-	} catch (_) {}
-
-	let mainCommits: any[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?ref=main`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			mainCommits = Array.isArray(data) ? data : [];
-		}
-	} catch (_) {}
-
-	let conflictedCommits: any[] = [];
-	try {
-		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?status=conflicted`,
-			{ headers },
-		);
-		if (res.ok) {
-			const data = await res.json();
-			conflictedCommits = Array.isArray(data) ? data : [];
-		}
-	} catch (_) {}
+	const pendingChangesets = jsonArray(
+		await coreJson(
+			fetch,
+			`/api/v1/projects/${slug}/changesets?status=pending`,
+			headers,
+		),
+	);
+	const commits = jsonArray(
+		await coreJson(
+			fetch,
+			`/api/v1/projects/${slug}/commits?ref=develop`,
+			headers,
+		),
+	);
+	const mainCommits = jsonArray(
+		await coreJson(
+			fetch,
+			`/api/v1/projects/${slug}/commits?ref=main`,
+			headers,
+		),
+	);
+	const conflictedCommits = jsonArray(
+		await coreJson(
+			fetch,
+			`/api/v1/projects/${slug}/commits?status=conflicted`,
+			headers,
+		),
+	);
 
 	return {
-		accessToken: accessToken ?? "",
+		accessToken,
 		role,
 		diffs,
 		tables,

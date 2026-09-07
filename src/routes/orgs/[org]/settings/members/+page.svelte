@@ -6,6 +6,7 @@
     import { Input } from "$lib/components/ui/input/index.js";
     import { Field, FieldLabel } from "$lib/components/ui/field/index.js";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
+    import PendingJoinRequests from "$lib/components/join/PendingJoinRequests.svelte";
 
     const SELECT_CLASS =
         "flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm";
@@ -14,6 +15,7 @@
     const form = $derived(rawForm as any);
     const org = $derived(data.org);
     const members = $derived(data.members ?? []);
+    const joinRequests = $derived(data.joinRequests ?? []);
     const currentUserId = $derived(data.currentUserId ?? "");
     const isOwner = $derived(org.role === "owner");
     let showInvite = $state(false);
@@ -54,6 +56,15 @@
             {form.error}
         </p>
     {/if}
+    <PendingJoinRequests
+        requests={joinRequests}
+        defaultRole="member"
+        roleOptions={[
+            { value: "member", label: "Member" },
+            { value: "admin", label: "Admin" },
+            ...(isOwner ? [{ value: "owner", label: "Owner" }] : []),
+        ]}
+    />
     {#if showInvite}
         <form
             method="POST"

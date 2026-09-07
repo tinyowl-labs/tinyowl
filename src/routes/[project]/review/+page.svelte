@@ -2,8 +2,14 @@
     import { invalidateAll } from "$app/navigation";
     import { page } from "$app/stores";
     import ChangesetInspect from "$lib/components/changeset/ChangesetInspect.svelte";
+    import ChangesetListRow from "$lib/components/changeset/ChangesetListRow.svelte";
+    import ChangesetWorkspace from "$lib/components/changeset/ChangesetWorkspace.svelte";
+    import GeodiffSummaryChips from "$lib/components/changeset/GeodiffSummaryChips.svelte";
     import ReviewMap from "$lib/components/dashboard/ReviewMap.svelte";
-    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
+    import {
+        formatCommitDate,
+        jsonAuthHeaders,
+    } from "$lib/changeset/client";
     import { asGeometry, geometriesEqual } from "$lib/geoDiff";
 
     let { data } = $props();
@@ -16,12 +22,12 @@
     const slug = $derived($page.params.project ?? "");
     const preview = $derived(((data as any)?.preview as any) ?? {});
     const inSync = $derived(Boolean(preview.in_sync));
-    const ahead = $derived((((preview.commits as any[]) ?? []) as any[]) ?? []);
+    const ahead = $derived(((preview.commits as any[]) ?? []) as any[]);
     const geodiff = $derived(
-        (((preview.changes?.geodiff as any[]) ?? []) as any[]) ?? [],
+        ((preview.changes?.geodiff as any[]) ?? []) as any[],
     );
     const summary = $derived(
-        (((preview.summary?.geodiff_summary as any[]) ?? []) as any[]) ?? [],
+        ((preview.summary?.geodiff_summary as any[]) ?? []) as any[],
     );
     const leftover = $derived(((data as any)?.changesets as any[]) ?? []);
     const conflictedCommits = $derived(
@@ -176,7 +182,7 @@
         try {
             const res = await fetch(
                 `/api/v1/projects/${slug}/commits/${id}/changes`,
-                { headers: authHeaders() },
+                { headers: jsonAuthHeaders(accessToken) },
             );
             const body = await res.json().catch(() => ({}));
             if (!res.ok) {
@@ -205,29 +211,6 @@
         resolveNote = "";
     }
 
-    const entitySummary = $derived(
-        summary.filter((s: any) => !String(s.table ?? "").startsWith("_")),
-    );
-
-    function formatDate(ts: string): string {
-        if (!ts) return "";
-        return new Date(ts).toLocaleDateString("en-GB", {
-            day: "numeric",
-            month: "short",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-        });
-    }
-
-    function authHeaders(): HeadersInit {
-        const h: Record<string, string> = {
-            "Content-Type": "application/json",
-        };
-        if (accessToken) h["Authorization"] = `Bearer ${accessToken}`;
-        return h;
-    }
-
     const canPublish = $derived(!inSync && note.trim().length > 0 && !busy);
 
     async function publish() {
@@ -242,7 +225,7 @@
         try {
             const res = await fetch(`/api/v1/projects/${slug}/promote`, {
                 method: "POST",
-                headers: authHeaders(),
+                headers: jsonAuthHeaders(accessToken),
                 body: JSON.stringify({ note: note.trim() }),
             });
             const body = await res.json().catch(() => ({}));
@@ -268,7 +251,7 @@
         try {
             const res = await fetch(`/api/v1/projects/${slug}/integrate`, {
                 method: "POST",
-                headers: authHeaders(),
+                headers: jsonAuthHeaders(accessToken),
                 body: JSON.stringify({
                     from,
                     message: `Integrate ${from}`,
@@ -310,7 +293,7 @@
             }));
             const res = await fetch(`/api/v1/projects/${slug}/integrate`, {
                 method: "POST",
-                headers: authHeaders(),
+                headers: jsonAuthHeaders(accessToken),
                 body: JSON.stringify({
                     from: conflictFrom,
                     message: resolveNote.trim() || `Integrate ${conflictFrom}`,
@@ -333,212 +316,117 @@
     }
 </script>
 
-<svelte:head>
-    <title>Review — {slug} — echidna</title>
-</svelte:head>
-
-<article class="flex h-full min-h-0 flex-col overflow-hidden">
-    <WorkspaceToolbar>
-        {#snippet meta()}
-            <span class="min-w-0 truncate text-foreground">
-                {#if inSync}
-                    main and develop are in sync
-                {:else}
-                    Review develop → main
-                    {#if ahead.length}
-                        <span class="text-muted-foreground"
-                            >· {ahead.length} commit{ahead.length === 1
-                                ? ""
-                                : "s"} ahead</span
-                        >
-                    {/if}
+<ChangesetWorkspace title="Review — {slug} — echidna">
+    {#snippet meta()}
+        <span class="min-w-0 truncate text-foreground">
+            {#if inSync}
+                main and develop are in sync
+            {:else}
+                Review develop → main
+                {#if ahead.length}
+                    <span class="text-muted-foreground"
+                        >· {ahead.length} commit{ahead.length === 1
+                            ? ""
+                            : "s"} ahead</span
+                    >
                 {/if}
-            </span>
-            {#if entitySummary.length}
-                <span>
-                    {#each entitySummary as s, i}
-                        {#if i > 0}<span class="mx-1">·</span>{/if}
-                        <span class="text-foreground">{s.table}</span>
-                        {#if s.insert}<span class="text-emerald-400"
-                                >+{s.insert}</span
-                            >{/if}
-                        {#if s.update}<span class="text-amber-400"
-                                >~{s.update}</span
-                            >{/if}
-                        {#if s.delete}<span class="text-red-400"
-                                >−{s.delete}</span
-                            >{/if}
-                    {/each}
-                </span>
             {/if}
-        {/snippet}
-        {#snippet actions()}
-            {#if !inSync}
-                <input
-                    class="h-8 w-56 rounded-md border border-border bg-background px-3 text-xs"
-                    placeholder="Required publish note"
-                    bind:value={note}
-                    disabled={busy}
-                    onkeydown={(e) => {
-                        if (e.key === "Enter") void publish();
-                    }}
-                />
-                <button
-                    class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs text-primary-foreground disabled:opacity-50"
-                    disabled={!canPublish}
-                    onclick={() => void publish()}
-                >
-                    {busy ? "Publishing…" : "Publish"}
-                </button>
-            {/if}
-        {/snippet}
-    </WorkspaceToolbar>
-
-    {#if errorMsg}
-        <p class="px-4 py-2 text-sm text-destructive border-b border-border">
-            {errorMsg}
-        </p>
-    {/if}
-
-    <div
-        class="flex-1 min-h-0 overflow-hidden grid grid-cols-1 lg:grid-cols-[minmax(220px,260px)_minmax(0,1fr)]"
-    >
-        <div
-            class="min-h-0 flex flex-col border-b lg:border-b-0 lg:border-r border-border max-h-[32vh] lg:max-h-none"
-        >
+        </span>
+        <GeodiffSummaryChips {summary} />
+    {/snippet}
+    {#snippet actions()}
+        {#if !inSync}
+            <input
+                class="h-8 w-56 rounded-md border border-border bg-background px-3 text-xs"
+                placeholder="Required publish note"
+                bind:value={note}
+                disabled={busy}
+                onkeydown={(e) => {
+                    if (e.key === "Enter") void publish();
+                }}
+            />
             <button
-                type="button"
-                class="px-3 py-2 text-xs text-left w-full border-b border-border hover:bg-accent/40 {selectedAheadId
-                    ? 'text-muted-foreground'
-                    : 'text-foreground'}"
-                onclick={() => (selectedAheadId = "")}
+                class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs text-primary-foreground disabled:opacity-50"
+                disabled={!canPublish}
+                onclick={() => void publish()}
             >
-                Develop vs main
-                {#if selectedAheadId}
-                    <span class="text-muted-foreground"> · all unpublished</span>
-                {/if}
+                {busy ? "Publishing…" : "Publish"}
             </button>
-            <div class="flex-1 min-h-0 overflow-y-auto">
-                {#if inSync && leftover.length === 0 && conflictedCommits.length === 0 && heads.length === 0}
-                    <p class="p-4 text-sm text-muted-foreground">
-                        Nothing unpublished. Viewers already see this tip.
-                    </p>
-                {:else}
-                    <ul class="divide-y divide-border">
-                        {#each ahead as c}
-                            <li>
-                                <button
-                                    type="button"
-                                    class="block w-full text-left px-3 py-2.5 hover:bg-accent/40 {selectedAheadId ===
-                                    c.id
-                                        ? 'bg-accent/50'
-                                        : ''}"
-                                    disabled={busy ||
-                                        integrateBusy !== "" ||
-                                        commitBusy !== ""}
-                                    onclick={() => void selectAhead(c.id)}
-                                >
-                                    <div
-                                        class="flex items-center gap-2 text-xs"
-                                    >
-                                        <span
-                                            class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400"
-                                            >ahead</span
-                                        >
-                                        <span
-                                            class="font-mono text-muted-foreground"
-                                            >{(c.id ?? "").slice(0, 8)}</span
-                                        >
-                                        <span
-                                            class="text-foreground truncate"
-                                            >{c.message?.trim() ||
-                                                "Untitled"}</span
-                                        >
-                                    </div>
-                                    <p
-                                        class="mt-0.5 text-[11px] text-muted-foreground"
-                                    >
-                                        {commitBusy === c.id
-                                            ? "Loading changes…"
-                                            : formatDate(c.created_at)}
-                                    </p>
-                                </button>
-                            </li>
-                        {/each}
-                        {#each leftover as cs}
-                            <li>
-                                <a
-                                    href="/{slug}/review/{cs.id}"
-                                    class="block px-3 py-2.5 hover:bg-accent/40"
-                                >
-                                    <div
-                                        class="flex items-center gap-2 text-xs"
-                                    >
-                                        <span
-                                            class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400"
-                                            >leftover</span
-                                        >
-                                        <span
-                                            class="text-foreground truncate"
-                                            >{cs.message?.trim() ||
-                                                "Untitled"}</span
-                                        >
-                                    </div>
-                                    <p
-                                        class="mt-0.5 text-[11px] text-muted-foreground"
-                                    >
-                                        {formatDate(cs.created_at)} · pre-DAG
-                                        pending
-                                    </p>
-                                </a>
-                            </li>
-                        {/each}
-                        {#each conflictedCommits as c}
-                            <li>
-                                <a
-                                    href="/{slug}/history/{c.id}"
-                                    class="block px-3 py-2.5 hover:bg-accent/40"
-                                >
-                                    <div
-                                        class="flex items-center gap-2 text-xs"
-                                    >
-                                        <span
-                                            class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-500/15 text-red-400"
-                                            >conflicted</span
-                                        >
-                                        <span
-                                            class="font-mono text-muted-foreground"
-                                            >{(c.id ?? "").slice(0, 8)}</span
-                                        >
-                                        <span
-                                            class="text-foreground truncate"
-                                            >{c.message?.trim() ||
-                                                "Untitled"}</span
-                                        >
-                                    </div>
-                                    <p
-                                        class="mt-0.5 text-[11px] text-muted-foreground"
-                                    >
-                                        {formatDate(c.created_at)} · unmerged
-                                    </p>
-                                </a>
-                            </li>
-                        {/each}
-                            {#each heads as h}
-                            <li class="px-3 py-2.5 {conflictFrom === h.name ? 'bg-accent/40' : ''}">
-                                <div class="flex items-center gap-2 text-xs">
-                                    <span
-                                        class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400"
-                                        >parked</span
-                                    >
-                                    <span
-                                        class="font-mono text-muted-foreground"
-                                        >{(h.commit_id ?? "").slice(0, 8)}</span
-                                    >
-                                    <span class="text-foreground truncate"
-                                        >{h.name}</span
-                                    >
-                                </div>
+        {/if}
+    {/snippet}
+    {#snippet banner()}
+        {#if errorMsg}
+            <p class="px-4 py-2 text-sm text-destructive border-b border-border">
+                {errorMsg}
+            </p>
+        {/if}
+    {/snippet}
+    {#snippet sidebar()}
+        <button
+            type="button"
+            class="px-3 py-2 text-xs text-left w-full border-b border-border hover:bg-accent/40 {selectedAheadId
+                ? 'text-muted-foreground'
+                : 'text-foreground'}"
+            onclick={() => (selectedAheadId = "")}
+        >
+            Develop vs main
+            {#if selectedAheadId}
+                <span class="text-muted-foreground"> · all unpublished</span>
+            {/if}
+        </button>
+        <div class="flex-1 min-h-0 overflow-y-auto">
+            {#if inSync && leftover.length === 0 && conflictedCommits.length === 0 && heads.length === 0}
+                <p class="p-4 text-sm text-muted-foreground">
+                    Nothing unpublished. Viewers already see this tip.
+                </p>
+            {:else}
+                <ul class="divide-y divide-border">
+                    {#each ahead as c}
+                        <li>
+                            <ChangesetListRow
+                                selected={selectedAheadId === c.id}
+                                disabled={busy ||
+                                    integrateBusy !== "" ||
+                                    commitBusy !== ""}
+                                onclick={() => void selectAhead(c.id)}
+                                badge="ahead"
+                                mono={(c.id ?? "").slice(0, 8)}
+                                title={c.message?.trim() || "Untitled"}
+                                subtitle={commitBusy === c.id
+                                    ? "Loading changes…"
+                                    : formatCommitDate(c.created_at)}
+                            />
+                        </li>
+                    {/each}
+                    {#each leftover as cs}
+                        <li>
+                            <ChangesetListRow
+                                href="/{slug}/review/{cs.id}"
+                                badge="leftover"
+                                title={cs.message?.trim() || "Untitled"}
+                                subtitle="{formatCommitDate(cs.created_at)} · pre-DAG pending"
+                            />
+                        </li>
+                    {/each}
+                    {#each conflictedCommits as c}
+                        <li>
+                            <ChangesetListRow
+                                href="/{slug}/history/{c.id}"
+                                badge="conflicted"
+                                mono={(c.id ?? "").slice(0, 8)}
+                                title={c.message?.trim() || "Untitled"}
+                                subtitle="{formatCommitDate(c.created_at)} · unmerged"
+                            />
+                        </li>
+                    {/each}
+                    {#each heads as h}
+                        <li>
+                            <ChangesetListRow
+                                selected={conflictFrom === h.name}
+                                badge="parked"
+                                mono={(h.commit_id ?? "").slice(0, 8)}
+                                title={h.name}
+                            >
                                 <div
                                     class="mt-1.5 flex items-center justify-between gap-2"
                                 >
@@ -556,14 +444,13 @@
                                             : "Integrate"}
                                     </button>
                                 </div>
-                            </li>
-                        {/each}
-                    </ul>
-                {/if}
-            </div>
+                            </ChangesetListRow>
+                        </li>
+                    {/each}
+                </ul>
+            {/if}
         </div>
-
-        <div class="min-h-0 h-full overflow-hidden flex flex-col">
+    {/snippet}
             {#if conflictEntries.length}
                 <div
                     class="px-3 py-2 text-xs border-b border-border flex items-center justify-between gap-2"
@@ -734,6 +621,4 @@
             {:else}
                 <ChangesetInspect geodiff={inspectGeodiff} />
             {/if}
-        </div>
-    </div>
-</article>
+</ChangesetWorkspace>

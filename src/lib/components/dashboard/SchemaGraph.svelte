@@ -63,7 +63,7 @@
     });
 
     function nodeHeight(t: SchemaTable): number {
-        return HEADER_H + t.columns.length * ROW_H + 4;
+        return HEADER_H + (t.columns?.length ?? 0) * ROW_H + 4;
     }
 
     function nodeCenterX(n: Node): number {
@@ -189,7 +189,7 @@
                 style: `width:${NODE_W}px`,
                 data: {
                     label: t.label || t.name,
-                    columns: t.columns,
+                    columns: t.columns ?? [],
                     count: t.count,
                     highlighted: [...(highlighted.get(t.name) ?? [])],
                 },
@@ -296,7 +296,7 @@
 
         const tableSet = new Set(tables.map((t) => t.name));
         const colByTable = new Map(
-            tables.map((t) => [t.name, t.columns] as const),
+            tables.map((t) => [t.name, t.columns ?? []] as const),
         );
 
         function resolveHandle(
@@ -317,74 +317,87 @@
                 want
             );
         }
-        const flowEdges: Edge[] = edges
-            .filter((e) => tableSet.has(e.source) && tableSet.has(e.target))
-            .map((e) => {
-                const sourceCol = resolveHandle(
-                    e.source,
-                    e.source_column,
-                    e.source_column,
-                );
-                const targetCol = resolveHandle(
-                    e.target,
-                    e.target_column,
-                    "source_id",
-                );
-                const srcNode = nodes.find((n) => n.id === e.source);
-                const tgtNode = nodes.find((n) => n.id === e.target);
-                const handles =
-                    srcNode && tgtNode
-                        ? sideHandles(sourceCol, targetCol, srcNode, tgtNode)
-                        : {
-                              sourceHandle: `${sourceCol}__sr`,
-                              targetHandle: `${targetCol}__tl`,
-                          };
-                const label =
-                    e.label ||
-                    (e.count
-                        ? `${e.source_column} (${e.count})`
-                        : e.source_column);
-                const stroke =
-                    e.kind === "fk"
-                        ? "var(--color-primary)"
-                        : e.kind === "inferred"
-                          ? "var(--color-muted-foreground)"
-                          : "var(--color-foreground)";
-                return {
-                    id: e.id,
-                    source: e.source,
-                    target: e.target,
-                    sourceHandle: handles.sourceHandle,
-                    targetHandle: handles.targetHandle,
-                    label,
-                    type: "smoothstep",
-                    animated: e.kind === "relation",
-                    class: `schema-edge schema-edge--${e.kind}`,
-                    style: `stroke: ${stroke}; stroke-width: 1.75;`,
-                    markerEnd: {
-                        type: MarkerType.ArrowClosed,
-                        width: 10,
-                        height: 10,
-                        color: stroke,
-                    },
-                    labelStyle:
-                        "font-size: 10px; fill: var(--color-muted-foreground); font-weight: 500;",
-                    labelBgStyle:
-                        "fill: var(--color-background); fill-opacity: 0.88;",
-                    labelBgPadding: [3, 5] as [number, number],
-                    labelBgBorderRadius: 4,
-                    data: { sourceCol, targetCol, kind: e.kind },
-                } as Edge;
-            });
+        const flowEdges: Edge[] = [];
+        const seenIds = new Set<string>();
+        for (const e of edges) {
+            if (!tableSet.has(e.source) || !tableSet.has(e.target)) continue;
+            const sourceCol = resolveHandle(
+                e.source,
+                e.source_column,
+                e.source_column,
+            );
+            const targetCol = resolveHandle(
+                e.target,
+                e.target_column,
+                "source_id",
+            );
+            const srcNode = nodes.find((n) => n.id === e.source);
+            const tgtNode = nodes.find((n) => n.id === e.target);
+            const handles =
+                srcNode && tgtNode
+                    ? sideHandles(sourceCol, targetCol, srcNode, tgtNode)
+                    : {
+                          sourceHandle: `${sourceCol}__sr`,
+                          targetHandle: `${targetCol}__tl`,
+                      };
+            const label =
+                e.label ||
+                (e.count
+                    ? `${e.source_column} (${e.count})`
+                    : e.source_column);
+            const stroke =
+                e.kind === "fk"
+                    ? "var(--color-primary)"
+                    : e.kind === "inferred"
+                      ? "var(--color-muted-foreground)"
+                      : "var(--color-foreground)";
+            let id = e.id || `${e.source}.${e.source_column}→${e.target}`;
+            if (seenIds.has(id)) id = `${id}#${seenIds.size}`;
+            seenIds.add(id);
+            flowEdges.push({
+                id,
+                source: e.source,
+                target: e.target,
+                sourceHandle: handles.sourceHandle,
+                targetHandle: handles.targetHandle,
+                label,
+                type: "smoothstep",
+                animated: e.kind === "relation",
+                class: `schema-edge schema-edge--${e.kind}`,
+                style: `stroke: ${stroke}; stroke-width: 1.75;`,
+                markerEnd: {
+                    type: MarkerType.ArrowClosed,
+                    width: 10,
+                    height: 10,
+                    color: stroke,
+                },
+                labelStyle:
+                    "font-size: 10px; fill: var(--color-muted-foreground); font-weight: 500;",
+                labelBgStyle:
+                    "fill: var(--color-background); fill-opacity: 0.88;",
+                labelBgPadding: [3, 5] as [number, number],
+                labelBgBorderRadius: 4,
+                data: { sourceCol, targetCol, kind: e.kind },
+            } as Edge);
+        }
 
         return { nodes, flowEdges };
     }
 
     let nodes = $state.raw<Node[]>([]);
     let edges = $state.raw<Edge[]>([]);
+    let live = true;
+
+    $effect(() => {
+        live = true;
+        return () => {
+            live = false;
+        };
+    });
 
     $effect(() => {
         const built = layout(tables, schemaEdges);
+        if (!live) return;
         nodes = built.nodes;
         edges = built.flowEdges;
     });
@@ -397,27 +410,16 @@
             )
             .join("|");
         void key;
+        if (!live) return;
         const routed = applySides(nodes, edges);
         if (routed !== edges) edges = routed;
     });
+
+    const showFlow = $derived(tables.length > 0);
 </script>
 
-{#if loading}
-    <div
-        class="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"
-    >
-        <Loader2Icon class="size-4 animate-spin" />
-        Loading schema…
-    </div>
-{:else if tables.length === 0}
-    <div
-        class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
-    >
-        <WaypointsIcon class="size-8 text-muted-foreground/30" />
-        No tables to graph.
-    </div>
-{:else}
-    <div class="relative h-full min-h-0 w-full overflow-hidden bg-background">
+<div class="relative h-full min-h-0 w-full overflow-hidden bg-background">
+    <div class="h-full min-h-0 w-full" class:invisible={!showFlow}>
         <SvelteFlow
             bind:nodes
             bind:edges
@@ -509,17 +511,16 @@
                         Inferred
                     </span>
                 </div>
-                {#if schemaEdges.length === 0}
-                    <p
-                        class="max-w-xs rounded-md border border-dashed border-border bg-card/80 px-2.5 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm"
-                    >
+                <p
+                    class="max-w-xs rounded-md border border-dashed border-border bg-card/80 px-2.5 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm"
+                    class:hidden={schemaEdges.length > 0}
+                >
                         No FK edges yet — import with
                         <code class="font-mono">--qgs</code>
                         or add
                         <code class="font-mono">references</code>
                         in table TOML.
                     </p>
-                {/if}
             </Panel>
             <MiniMap
                 position="bottom-right"
@@ -535,7 +536,21 @@
             />
         </SvelteFlow>
     </div>
-{/if}
+    <div
+        class="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/70 text-sm text-muted-foreground"
+        class:hidden={!loading}
+    >
+        <Loader2Icon class="size-4 animate-spin" />
+        Loading schema…
+    </div>
+    <div
+        class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
+        class:hidden={loading || showFlow}
+    >
+        <WaypointsIcon class="size-8 text-muted-foreground/30" />
+        No tables to graph.
+    </div>
+</div>
 
 <style>
     :global(.schema-flow) {

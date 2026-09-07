@@ -5,6 +5,14 @@
     import { Input } from "$lib/components/ui/input/index.js";
     import type { DrawGeomMode } from "$lib/stores/editBuffer.svelte";
 
+    type LookupOpt = { id: string; label: string };
+    type SchemaEdge = {
+        source: string;
+        target: string;
+        source_column: string;
+        kind?: string;
+    };
+
     type Props = {
         layer: string;
         geomType: DrawGeomMode;
@@ -12,6 +20,8 @@
         mode?: "create" | "edit";
         entityId?: string;
         initial?: Record<string, string>;
+        slug?: string;
+        accessToken?: string;
         onConfirm?: (attrs: Record<string, string>) => void;
         onCancel?: () => void;
     };
@@ -23,12 +33,15 @@
         mode = "create",
         entityId = "",
         initial = {},
+        slug = "",
+        accessToken = "",
         onConfirm,
         onCancel,
     }: Props = $props();
 
     let values = $state<Record<string, string>>({});
     let lastSeed = "";
+    let lookups = $state<Record<string, LookupOpt[]>>({});
 
     $effect(() => {
         const seed = `${fields.join("|")}\0${JSON.stringify(initial)}`;
@@ -38,6 +51,64 @@
         for (const f of fields) next[f] = initial[f] ?? "";
         values = next;
     });
+
+    $effect(() => {
+        if (!slug || !layer || fields.length === 0) {
+            lookups = {};
+            return;
+        }
+        const table = layer;
+        const cols = [...fields];
+        const token = accessToken;
+        void (async () => {
+            try {
+                const headers: Record<string, string> = {};
+                if (token) headers.Authorization = `Bearer ${token}`;
+                const res = await fetch(
+                    `/api/v1/projects/${encodeURIComponent(slug)}/schema`,
+                    { headers },
+                );
+                if (!res.ok) return;
+                const json = (await res.json()) as { edges?: SchemaEdge[] };
+                const next: Record<string, LookupOpt[]> = {};
+                await Promise.all(
+                    cols.map(async (name) => {
+                        const edge = (json.edges ?? []).find(
+                            (e) =>
+                                e.kind === "fk" &&
+                                e.source === table &&
+                                e.source_column === name,
+                        );
+                        if (!edge?.target) return;
+                        const rowsRes = await fetch(
+                            `/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(edge.target)}/rows`,
+                            { headers },
+                        );
+                        if (!rowsRes.ok) return;
+                        const body = (await rowsRes.json()) as {
+                            rows?: Record<string, unknown>[];
+                        };
+                        next[name] = (body.rows ?? []).map((row) => {
+                            const id = String(row.source_id ?? "");
+                            const label = lookupLabel(row, id);
+                            return { id, label };
+                        });
+                    }),
+                );
+                lookups = next;
+            } catch {
+                lookups = {};
+            }
+        })();
+    });
+
+    function lookupLabel(row: Record<string, unknown>, fallback: string) {
+        for (const k of ["label", "name", "title", "code"]) {
+            const v = row[k];
+            if (v != null && String(v).trim() !== "") return String(v);
+        }
+        return fallback;
+    }
 
     function confirm() {
         const attrs: Record<string, string> = {};
@@ -97,16 +168,34 @@
             {#each fields as name}
                 <Field>
                     <FieldLabel class="text-[11px]">{name}</FieldLabel>
-                    <Input
-                        class="h-8 text-sm"
-                        value={values[name] ?? ""}
-                        autocomplete="off"
-                        oninput={(e) =>
-                            setField(
-                                name,
-                                (e.currentTarget as HTMLInputElement).value,
-                            )}
-                    />
+                    {#if lookups[name]}
+                        <select
+                            class="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+                            value={values[name] ?? ""}
+                            onchange={(e) =>
+                                setField(
+                                    name,
+                                    (e.currentTarget as HTMLSelectElement)
+                                        .value,
+                                )}
+                        >
+                            <option value="">—</option>
+                            {#each lookups[name] as opt}
+                                <option value={opt.id}>{opt.label}</option>
+                            {/each}
+                        </select>
+                    {:else}
+                        <Input
+                            class="h-8 text-sm"
+                            value={values[name] ?? ""}
+                            autocomplete="off"
+                            oninput={(e) =>
+                                setField(
+                                    name,
+                                    (e.currentTarget as HTMLInputElement).value,
+                                )}
+                        />
+                    {/if}
                 </Field>
             {/each}
         {/if}

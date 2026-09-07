@@ -1,33 +1,17 @@
 import type { PageServerLoad } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
-import { error, redirect } from "@sveltejs/kit";
+import { error } from "@sveltejs/kit";
+import { projectAuth } from "$lib/server/projectAccess.server";
 
-export const load: PageServerLoad = async ({ locals, params, fetch }) => {
+export const load: PageServerLoad = async ({ locals, params, fetch, parent }) => {
 	const slug = params.project;
 	const id = params.id;
-	const { user } = await locals.getSession();
-	if (!user) throw redirect(303, `/${slug}`);
-
-	const accessToken = await locals.getAccessToken();
-	const headers: Record<string, string> = {};
-	if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-
-	let role = "viewer";
-	if (accessToken) {
-		try {
-			const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
-				headers: { Authorization: `Bearer ${accessToken}` },
-			});
-			if (res.ok) {
-				const projects: { slug: string; role: string }[] = await res.json();
-				const member = projects.find((p) => p.slug === slug);
-				if (member) role = member.role;
-			}
-		} catch (_) {}
-	}
-	if (role !== "owner" && role !== "admin" && role !== "collaborator") {
-		throw redirect(303, `/${slug}`);
-	}
+	const { accessToken, headers, role } = await projectAuth(
+		locals,
+		parent,
+		slug,
+		"writer",
+	);
 
 	const res = await fetch(
 		`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets/${id}/changes`,
@@ -38,7 +22,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	const payload = await res.json();
 
 	return {
-		accessToken: accessToken ?? "",
+		accessToken,
 		role,
 		changeset: payload.changeset ?? null,
 		changes: payload.changes ?? { geodiff: [] },

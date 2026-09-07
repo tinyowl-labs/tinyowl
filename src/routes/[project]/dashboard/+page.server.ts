@@ -1,122 +1,84 @@
 import type { PageServerLoad } from "./$types";
-import { TINYOWL_CORE_URL } from "$env/static/private";
-import { redirect } from "@sveltejs/kit";
+import {
+  coreJson,
+  jsonArray,
+  projectAuth,
+} from "$lib/server/projectAccess.server";
 
-export const load: PageServerLoad = async ({ locals, params, fetch }) => {
+export const load: PageServerLoad = async ({ locals, params, fetch, parent }) => {
   const slug = params.project;
-  const { user } = await locals.getSession();
-  if (!user) throw redirect(303, `/${slug}`);
+  const { accessToken, headers } = await projectAuth(
+    locals,
+    parent,
+    slug,
+    "writer",
+  );
 
-  const accessToken = await locals.getAccessToken();
-  const headers: Record<string, string> = {};
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-
-  // Check role — only collaborator+
-  let role = "viewer";
-  if (accessToken) {
-    try {
-      const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res.ok) {
-        const projects: { slug: string; role: string }[] = await res.json();
-        const member = projects.find((p) => p.slug === slug);
-        if (member) role = member.role;
-      }
-    } catch (_) {}
-  }
-
-  if (role !== "owner" && role !== "admin" && role !== "collaborator") {
-    throw redirect(303, `/${slug}`);
-  }
-
-  // Tables
   let tables: { name: string; count: number }[] = [];
-  try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
-      { headers },
-    );
-    if (res.ok) {
-      const data = await res.json();
-      const tblMap = data.tables as Record<string, string[]>;
-      const counts = (data.counts ?? {}) as Record<string, number>;
-      tables = Object.keys(tblMap).map((name) => ({
-        name,
-        count: counts[name] ?? 0,
-      }));
-    }
-  } catch (_) {}
+  const tablesPayload = await coreJson(
+    fetch,
+    `/api/v1/projects/${slug}/tables`,
+    headers,
+  );
+  if (tablesPayload && typeof tablesPayload === "object") {
+    const tblMap = ((tablesPayload as any).tables ?? {}) as Record<
+      string,
+      string[]
+    >;
+    const counts = ((tablesPayload as any).counts ?? {}) as Record<
+      string,
+      number
+    >;
+    tables = Object.keys(tblMap).map((name) => ({
+      name,
+      count: counts[name] ?? 0,
+    }));
+  }
 
-  // Warnings
-  let warnings: any[] = [];
-  try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/warnings?limit=10`,
-      { headers },
-    );
-    if (res.ok) warnings = await res.json();
-  } catch (_) {}
+  const warnings = jsonArray(
+    await coreJson(
+      fetch,
+      `/api/v1/projects/${slug}/warnings?limit=10`,
+      headers,
+    ),
+  );
 
-  // Diffs
-  let diffs: any[] = [];
-  try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/diffs`,
-      { headers },
-    );
-    if (res.ok) {
-      const data = await res.json();
-      diffs = (Array.isArray(data) ? data : (data.diffs ?? [])).slice(0, 10);
-    }
-  } catch (_) {}
+  const diffs = jsonArray(
+    await coreJson(fetch, `/api/v1/projects/${slug}/diffs`, headers),
+    "diffs",
+  ).slice(0, 10);
 
-  // Leftover pending rows (pre-DAG). New writes land on develop.
-  let pendingChangesets: any[] = [];
-  try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets?status=pending`,
-      { headers },
-    );
-    if (res.ok) {
-      const data = await res.json();
-      pendingChangesets = Array.isArray(data) ? data : [];
-    }
-  } catch (_) {}
+  const pendingChangesets = jsonArray(
+    await coreJson(
+      fetch,
+      `/api/v1/projects/${slug}/changesets?status=pending`,
+      headers,
+    ),
+  );
 
-  let developCommits: any[] = [];
-  try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?ref=develop`,
-      { headers },
-    );
-    if (res.ok) {
-      const data = await res.json();
-      developCommits = (Array.isArray(data) ? data : []).slice(0, 10);
-    }
-  } catch (_) {}
+  const developCommits = jsonArray(
+    await coreJson(
+      fetch,
+      `/api/v1/projects/${slug}/commits?ref=develop`,
+      headers,
+    ),
+  ).slice(0, 10);
 
-  let conflictedCommits: any[] = [];
-  try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?status=conflicted`,
-      { headers },
-    );
-    if (res.ok) {
-      const data = await res.json();
-      conflictedCommits = Array.isArray(data) ? data : [];
-    }
-  } catch (_) {}
+  const conflictedCommits = jsonArray(
+    await coreJson(
+      fetch,
+      `/api/v1/projects/${slug}/commits?status=conflicted`,
+      headers,
+    ),
+  );
 
-  // Mappings
-  let mappings: any[] = [];
-  try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/value-mappings`,
-      { headers },
-    );
-    if (res.ok) mappings = await res.json();
-  } catch (_) {}
+  const mappings = jsonArray(
+    await coreJson(
+      fetch,
+      `/api/v1/projects/${slug}/value-mappings`,
+      headers,
+    ),
+  );
 
   return {
     tables,
@@ -126,6 +88,6 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     developCommits,
     conflictedCommits,
     mappings,
-    accessToken: accessToken ?? "",
+    accessToken,
   };
 };

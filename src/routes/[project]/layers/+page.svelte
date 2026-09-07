@@ -101,6 +101,7 @@
             value: SCHEMA_TAB,
             label: "Schema",
             separatorAfter: true,
+            keepAlive: true,
         },
         ...tabs,
     ]);
@@ -331,6 +332,7 @@
     let DataTableCmp = $state<LazyCmp | null>(null);
     let EntityRelationsPanelCmp = $state<LazyCmp | null>(null);
     let FkLinkerCmp = $state<LazyCmp | null>(null);
+    let PromoteLookupCmp = $state<LazyCmp | null>(null);
 
     $effect(() => {
         if (!browser) return;
@@ -369,6 +371,19 @@
             void import("$lib/components/digitize/FkLinker.svelte").then(
                 (m) => {
                     FkLinkerCmp = m.default;
+                },
+            );
+        }
+        if (
+            viewMode === "schema" &&
+            schemaToolsOpen &&
+            canWrite &&
+            accessToken &&
+            !PromoteLookupCmp
+        ) {
+            void import("$lib/components/digitize/PromoteLookup.svelte").then(
+                (m) => {
+                    PromoteLookupCmp = m.default;
                 },
             );
         }
@@ -415,6 +430,15 @@
     }
 
     const inTables = $derived(viewMode === "table" || viewMode === "schema");
+    let tablesEverShown = $state(
+        untrack(() => {
+            const v = viewParam;
+            return v === "table" || v === "schema";
+        }),
+    );
+    $effect(() => {
+        if (inTables) tablesEverShown = true;
+    });
 
     function toggleTableEdit() {
         if (!canWrite) return;
@@ -871,7 +895,8 @@
 
     async function loadSchema() {
         if (schemaLoaded || schemaLoading) return;
-        schemaLoading = true;
+        const showSpinner = schemaTables.length === 0;
+        if (showSpinner) schemaLoading = true;
         try {
             const slug = $page.params.project;
             const res = await fetch(`/api/v1/projects/${slug}/schema`, {
@@ -884,8 +909,10 @@
                 schemaLoaded = true;
             }
         } catch (_) {
-            schemaTables = [];
-            schemaEdges = [];
+            if (schemaTables.length === 0) {
+                schemaTables = [];
+                schemaEdges = [];
+            }
         } finally {
             schemaLoading = false;
         }
@@ -1063,8 +1090,12 @@
             {/if}
         </div>
 
-        {#if inTables}
-            <div class="absolute inset-0 z-10 flex bg-background">
+        {#if tablesEverShown}
+            <div
+                class="absolute inset-0 z-10 flex bg-background {inTables
+                    ? ''
+                    : 'invisible pointer-events-none z-0'}"
+            >
                 <div class="min-h-0 flex-1 overflow-hidden p-5">
                     {#if tableNames.length > 0}
                         <Tabs
@@ -1329,6 +1360,20 @@
                                 slug={$page.params.project ?? ""}
                                 {accessToken}
                                 {canWrite}
+                            />
+                        {/if}
+                        {#if canWrite && accessToken && PromoteLookupCmp}
+                            <PromoteLookupCmp
+                                {accessToken}
+                                slug={$page.params.project ?? ""}
+                                tables={schemaTables}
+                                edges={schemaEdges}
+                                onSaved={() => {
+                                    schemaLoaded = false;
+                                    void loadSchema();
+                                    dataEpoch += 1;
+                                    void invalidateAll();
+                                }}
                             />
                         {/if}
                         {#if canWrite && accessToken && FkLinkerCmp}

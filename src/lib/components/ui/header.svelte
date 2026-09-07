@@ -17,6 +17,7 @@
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import PanelLeftCloseIcon from "@lucide/svelte/icons/panel-left-close";
     import SearchIcon from "@lucide/svelte/icons/search";
+    import InboxIcon from "@lucide/svelte/icons/inbox";
     import { cn } from "$lib/utils.js";
     import EchidnaLogo from "$lib/components/ui/echidna-logo.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
@@ -54,6 +55,11 @@
     const dark = $derived(isDark());
     const userId = $derived(
         ($page.data?.user as { id?: string } | undefined)?.id ?? "",
+    );
+    const inboxUnread = $derived(
+        Number(
+            ($page.data as { inboxUnread?: number } | undefined)?.inboxUnread,
+        ) || 0,
     );
 
     let isMounted = $state(false);
@@ -163,6 +169,24 @@
                 </span>
             {/if}
         </button>
+        {#if hasSession}
+            <a
+                href="/inbox"
+                class="relative rounded-md p-1.5 text-muted-foreground no-underline hover:text-foreground hover:bg-accent transition-colors"
+                aria-label={inboxUnread > 0
+                    ? `Inbox, ${inboxUnread} unread`
+                    : "Inbox"}
+                title="Inbox"
+            >
+                <InboxIcon class="size-4" />
+                {#if inboxUnread > 0}
+                    <span
+                        class="absolute -right-0.5 -top-0.5 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-4 text-primary-foreground"
+                        >{inboxUnread > 99 ? "99+" : inboxUnread}</span
+                    >
+                {/if}
+            </a>
+        {/if}
         <button
             type="button"
             onclick={toggleTheme}
@@ -230,6 +254,18 @@
                         >
                             <Building2Icon class="size-3.5 shrink-0" />
                             Organisations
+                        </a>
+                        <a
+                            href="/inbox"
+                            class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
+                        >
+                            <InboxIcon class="size-3.5 shrink-0" />
+                            Inbox
+                            {#if inboxUnread > 0}
+                                <span class="ml-auto text-[10px] text-muted-foreground"
+                                    >{inboxUnread}</span
+                                >
+                            {/if}
                         </a>
                         <a
                             href="/settings"

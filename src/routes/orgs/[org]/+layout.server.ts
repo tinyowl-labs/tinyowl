@@ -26,6 +26,7 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
 		has_avatar: boolean;
 		role?: string;
 		projects: OrgProject[];
+		join_request?: { id: string; status: string } | null;
 	};
 
 	return {
@@ -33,5 +34,6 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
 		org,
 		canAdmin: org.role === "owner" || org.role === "admin",
 		isMember: Boolean(org.role),
+		joinRequest: org.join_request ?? null,
 	};
 };

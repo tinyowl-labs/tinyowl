@@ -11,6 +11,7 @@
     import { marked } from "marked";
     import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
+    import RequestJoinCta from "$lib/components/join/RequestJoinCta.svelte";
     import { searchHref } from "$lib/search/params";
 
     let { data, form } = $props();
@@ -24,6 +25,12 @@
     const accessToken = $derived(((data as any)?.accessToken as string) ?? "");
     const role = $derived(((data as any)?.role as string) ?? "viewer");
     const canManage = $derived(role === "owner" || role === "admin");
+    const isMember = $derived(Boolean((data as any)?.isMember));
+    const signedIn = $derived(Boolean((data as any)?.user));
+    const pending = $derived(
+        ((project as any)?.join_request as { status?: string } | null | undefined)
+            ?.status === "pending",
+    );
 
     type ProjectPerson = { user_id: string; email: string; role: string };
     type OrgSummary = { slug: string; name: string; has_avatar: boolean };
@@ -272,7 +279,8 @@
 
 <article class="mx-auto max-w-5xl px-6 py-12">
     <div class="mb-8">
-        <div class="flex items-center gap-3">
+        <div class="flex items-start justify-between gap-4">
+            <div class="flex items-center gap-3 min-w-0">
             <h1 class="text-4xl font-bold tracking-tight text-foreground">
                 {project?.title ?? "Untitled"}
             </h1>
@@ -285,6 +293,14 @@
                     <PencilIcon class="size-5" />
                 </a>
             {/if}
+            </div>
+            <RequestJoinCta
+                {signedIn}
+                {isMember}
+                {pending}
+                loginHref="/auth/login?next={encodeURIComponent(`/${project?.slug ?? ""}`)}"
+                formError={form?.error}
+            />
         </div>
         {#if description}
             <p

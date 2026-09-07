@@ -33,6 +33,7 @@
         SELECTION_PRIMARY,
     } from "./selectionStyle";
     import { computeInViewKeys } from "./layerSceneInView";
+    import { paintLayerViews } from "./layerSceneViews";
     import {
         bboxFromEntity,
         collectKeysAtScreenPoint,
@@ -42,7 +43,7 @@
         type SelectableEntity,
     } from "./mapSelection";
     import { syncSelectionOverlay } from "./selectionOverlay";
-    import { mapToolShortcut } from "./mapShortcuts";
+    import { handleSceneKey } from "./layerSceneKeys";
     import {
         dedupePickCandidates,
         pickCandidateLabel,
@@ -53,14 +54,7 @@
     import type { LayerData } from "./layerTypes";
     import {
         activeView,
-        POINT_OUTLINE_WIDTH,
-        contrastColor,
         defaultOpacityForPackets,
-        DEFAULT_CLUSTER_PIXEL_RANGE,
-        layerLegendColor,
-        numericRange,
-        resolveFill,
-        resolveHeight,
         rowByEntityId,
         rowMatchesFilter,
         rowMatchesSeries,
@@ -3740,38 +3734,6 @@
         }
     }
 
-    function applyEntityHeight(
-        entity: any,
-        meta: EntityMeta,
-        meters: number | null,
-    ) {
-        if (!Cesium) return;
-        if (meta.kind === "polygon" && entity.polygon) {
-            if (meters == null) {
-                entity.polygon.extrudedHeight = undefined;
-                entity.polygon.height = undefined;
-                return;
-            }
-            entity.polygon.height = 0;
-            entity.polygon.extrudedHeight = Math.max(0, meters);
-            if (Cesium.HeightReference) {
-                entity.polygon.heightReference =
-                    Cesium.HeightReference.CLAMP_TO_GROUND;
-                entity.polygon.extrudedHeightReference =
-                    Cesium.HeightReference.RELATIVE_TO_GROUND;
-            }
-            return;
-        }
-        if (meta.kind === "point" && entity.position && meta.baseLon != null && meta.baseLat != null) {
-            const alt = (meta.baseAlt ?? 0) + (meters ?? 0);
-            entity.position = Cesium.Cartesian3.fromDegrees(
-                meta.baseLon,
-                meta.baseLat,
-                alt,
-            );
-        }
-    }
-
     function resolveEntityIdFromCzml(entity: any, layerName: string): string {
         const time = Cesium?.JulianDate?.now?.() ?? undefined;
         const props = entity.properties;
@@ -4563,16 +4525,6 @@
         bumpRender();
     }
 
-    function colorFromRgba(rgba: number[], opacity: number) {
-        const [r = 0, g = 0, b = 0, a = 255] = rgba;
-        return new Cesium.Color(
-            r / 255,
-            g / 255,
-            b / 255,
-            (a / 255) * opacity,
-        );
-    }
-
     function classifyTilesActive(): boolean {
         if (dim !== "3d") return false;
         return models.some((m) => isModelVisible(m.hash));
@@ -4595,161 +4547,19 @@
         bumpRender();
     }
 
-    function applyLayerClustering(ds: any, layerName: string) {
-        if (!Cesium || !ds?.clustering) return;
-        const layer = layers.find((l) => l.name === layerName);
-        const view = activeView(layer?.views, layer?.activeViewId ?? "");
-        const on = Boolean(view?.style.cluster);
-        const range =
-            view?.style.clusterPixelRange && view.style.clusterPixelRange > 0
-                ? view.style.clusterPixelRange
-                : DEFAULT_CLUSTER_PIXEL_RANGE;
-        ds.clustering.pixelRange = range;
-        ds.clustering.minimumClusterSize = 2;
-        ds.clustering.clusterPoints = true;
-        ds.clustering.clusterBillboards = true;
-        ds.clustering.clusterLabels = true;
-        if (!clusteredSources.has(ds)) {
-            clusteredSources.add(ds);
-            ds.clustering.clusterEvent.addEventListener(
-                (clusteredEntities: unknown[], cluster: any) => {
-                    const n = clusteredEntities?.length ?? 0;
-                    const size = n < 10 ? 28 : n < 100 ? 36 : 44;
-                    const live = layers.find((l) => l.name === ds.name);
-                    const fill = layerLegendColor(
-                        live?.views,
-                        live?.activeViewId ?? "",
-                    );
-                    const color = colorFromRgba(fill, 1);
-                    try {
-                        if (cluster.billboard) cluster.billboard.show = false;
-                        if (cluster.point) {
-                            cluster.point.show = true;
-                            cluster.point.color = color;
-                            cluster.point.pixelSize = size;
-                            cluster.point.outlineColor =
-                                Cesium.Color.WHITE.withAlpha(0.9);
-                            cluster.point.outlineWidth = 2;
-                            cluster.point.disableDepthTestDistance =
-                                Number.POSITIVE_INFINITY;
-                        }
-                        if (cluster.label) {
-                            cluster.label.show = true;
-                            cluster.label.text = String(n);
-                            cluster.label.font =
-                                "650 12px ui-sans-serif, system-ui, sans-serif";
-                            cluster.label.fillColor = Cesium.Color.WHITE;
-                            cluster.label.outlineColor = Cesium.Color.BLACK;
-                            cluster.label.outlineWidth = 3;
-                            cluster.label.style =
-                                Cesium.LabelStyle?.FILL_AND_OUTLINE ??
-                                cluster.label.style;
-                            cluster.label.disableDepthTestDistance =
-                                Number.POSITIVE_INFINITY;
-                            cluster.label.pixelOffset = new Cesium.Cartesian2(
-                                0,
-                                0,
-                            );
-                        }
-                    } catch {
-                        /* ignore */
-                    }
-                },
-            );
-        }
-        ds.clustering.enabled = false;
-        ds.clustering.enabled = on;
-    }
-
     function applyLayerViews() {
-        if (!viewer || !Cesium) return;
-        const ranges = new Map<
-            string,
-            {
-                color: { min: number; max: number } | null;
-                height: { min: number; max: number } | null;
-            }
-        >();
-        for (const layer of layers) {
-            const view = activeView(layer.views, layer.activeViewId ?? "");
-            if (!view) continue;
-            const tableRows = rows[layer.name];
-            ranges.set(layer.name, {
-                color: view.style.colorField
-                    ? numericRange(tableRows, view.style.colorField)
-                    : null,
-                height: view.style.heightField
-                    ? numericRange(tableRows, view.style.heightField)
-                    : null,
-            });
-        }
-        for (const ds of entityDataSources()) {
-            try {
-                for (const entity of ds.entities.values) {
-                    const meta = entityMeta.get(entity);
-                    if (!meta) continue;
-                    const layer = layers.find((l) => l.name === meta.layerName);
-                    const view = activeView(layer?.views, layer?.activeViewId ?? "");
-                    const op = Math.max(
-                        0,
-                        Math.min(
-                            1,
-                            layer?.opacity ??
-                                defaultOpacityForPackets(layer?.packets),
-                        ),
-                    );
-                    const span = ranges.get(meta.layerName);
-                    if (view) {
-                        const row = rowByEntityId(
-                            rows[meta.layerName],
-                            meta.entityId,
-                        );
-                        const fill = resolveFill(view.style, row, span?.color);
-                        const outline = contrastColor(fill);
-                        meta.dash = Boolean(view.style.dash);
-                        meta.basePixelSize = view.style.pointSize || meta.basePixelSize;
-                        meta.baseWidth = view.style.strokeWidth || meta.baseWidth;
-                        if (meta.kind === "point") {
-                            meta.baseOutlineWidth = POINT_OUTLINE_WIDTH;
-                            meta.base = colorFromRgba(fill, op);
-                            meta.baseOutline = colorFromRgba(outline, 1);
-                            meta.baseAlpha = ((fill[3] ?? 255) / 255) * op;
-                        } else if (meta.kind === "polyline") {
-                            const line =
-                                view.source === "sld" &&
-                                view.style.strokeColor?.length
-                                    ? view.style.strokeColor
-                                    : fill;
-                            meta.base = colorFromRgba(line, op);
-                            meta.baseOutline = colorFromRgba(line, op);
-                            meta.baseAlpha = ((line[3] ?? 255) / 255) * op;
-                        } else {
-                            meta.baseOutlineWidth = view.style.strokeWidth || 1;
-                            meta.base = colorFromRgba(fill, op);
-                            meta.baseOutline = colorFromRgba(outline, 1);
-                            meta.baseAlpha = ((fill[3] ?? 255) / 255) * op;
-                        }
-                        applyEntityHeight(
-                            entity,
-                            meta,
-                            resolveHeight(view.style, row, span?.height),
-                        );
-                    } else {
-                        applyEntityHeight(entity, meta, null);
-                    }
-                    applyEntitySelectionStyle(entity, null);
-                }
-            } catch {
-                /* ignore */
-            }
-        }
-        for (const [name, ds] of layerSources) {
-            try {
-                applyLayerClustering(ds, name);
-            } catch {
-                /* ignore */
-            }
-        }
+        const painted = paintLayerViews({
+            Cesium,
+            viewer,
+            layers,
+            rows,
+            entityMeta,
+            entityDataSources,
+            layerSources,
+            clusteredSources,
+            paintSelection: applyEntitySelectionStyle,
+        });
+        if (!painted) return;
         applyHiddenVisibility();
         syncAllSelectionStyles();
         bumpRender();
@@ -5786,203 +5596,94 @@
     });
 
     function onSceneKey(ev: KeyboardEvent) {
-        const action = mapToolShortcut(ev);
-        if (!action) return;
-
-        if (action.type === "enter") {
-            if (anyFormOpen) return;
-            if (editEnabled) {
-                ev.preventDefault();
-                onEnterInEdit();
-                return;
-            }
-            if (commentCanFinishSketch) {
-                ev.preventDefault();
-                finishCommentSketch();
-                return;
-            }
-            if (measureEnabled) {
-                ev.preventDefault();
-                finishDraft3d();
-            }
-            return;
-        }
-        if (action.type === "undo") {
-            ev.preventDefault();
-            undoDrawOrMeasure();
-            return;
-        }
-        if (action.type === "delete-feature") {
-            if (!canWrite || !active) return;
-            ev.preventDefault();
-            if (anyFormOpen) return;
-            if (!editEnabled) return;
-            if (
-                !vertexSession &&
-                (drawVertexCount > 0 || drawPartCount > 0)
-            ) {
+        handleSceneKey(ev, {
+            anyFormOpen,
+            canWrite,
+            active,
+            presenceMember,
+            dim,
+            editEnabled,
+            measureEnabled,
+            commentsEnabled,
+            commentCanFinishSketch,
+            vertexSession: Boolean(vertexSession),
+            drawVertexCount,
+            drawPartCount,
+            selectedVertexCount: selectedVertexIndices.size,
+            attrEdit: Boolean(attrEdit),
+            createFormOpen,
+            ctxOpen,
+            pickOpen,
+            stylePanelOpen: styleLayerIdx !== null,
+            isolating: layerSelection.isIsolating,
+            commentSketchCount,
+            pendingComment: Boolean(pendingComment),
+            commentAdding,
+            selectedCommentId: Boolean(selectedCommentId),
+            editLayer: Boolean(editLayer),
+            measureMode,
+            onEnterInEdit,
+            finishCommentSketch,
+            finishDraft3d,
+            undoDrawOrMeasure,
+            popLastDrawVertex: () => {
                 popLastDrawVertex();
                 if (drawVertexCount === 0) restoreLastDrawPart();
-                return;
-            }
-            // Vertex multi-select (06): Del removes selected draft vertices first.
-            if (vertexSession && selectedVertexIndices.size > 0) {
-                deleteSelectedVertices();
-                return;
-            }
-            deleteSelectedFeatures();
-            return;
-        }
-        if (action.type === "escape") {
-            if (attrEdit) {
-                ev.preventDefault();
-                cancelAttrEdit();
-                return;
-            }
-            if (createFormOpen) {
-                ev.preventDefault();
-                cancelCreate();
-                return;
-            }
-            if (editEnabled) {
-                if (cancelVertexMarquee()) {
-                    ev.preventDefault();
-                    return;
-                }
-                if (vertexSession) {
-                    // Escape clears the vertex selection before cancelling the session.
-                    if (selectedVertexIndices.size > 0) {
-                        ev.preventDefault();
-                        clearVertexSelection();
-                        return;
-                    }
-                    ev.preventDefault();
-                    cancelVertexEdit();
-                    return;
-                }
-                if (drawVertexCount > 0 || drawPartCount > 0) {
-                    clearDraftDraw();
-                    paintDraftDraw();
-                    return;
-                }
-                exitEditMode();
-                return;
-            }
-            if (measureEnabled) {
-                clearDraftMeasure();
-                measureStatus = measureHint(measureMode, dim === "2d" ? "2d" : "3d");
-                return;
-            }
-            if (commentsEnabled) {
-                ev.preventDefault();
-                if (commentSketchCount > 0) {
-                    clearCommentSketch();
-                    return;
-                }
-                if (pendingComment) {
-                    pendingComment = null;
-                    commentAdding = false;
-                    return;
-                }
-                if (commentAdding) {
-                    stopCommentAdd();
-                    return;
-                }
-                if (selectedCommentId) {
-                    clearCommentSelection();
-                    return;
-                }
-                commentsEnabled = false;
-                return;
-            }
-            if (ctxOpen) return;
-            if (pickOpen) {
-                closePickPager();
-                return;
-            }
-            if (styleLayerIdx !== null) {
+            },
+            deleteSelectedVertices,
+            deleteSelectedFeatures,
+            cancelAttrEdit,
+            cancelCreate,
+            cancelVertexMarquee,
+            clearVertexSelection,
+            cancelVertexEdit,
+            clearDraftDraw,
+            paintDraftDraw,
+            exitEditMode,
+            clearDraftMeasure,
+            clearCommentSketch,
+            stopCommentAdd,
+            clearCommentSelection,
+            closePickPager,
+            closeStylePanel: () => {
                 styleLayerIdx = null;
-                return;
-            }
-            if (layerSelection.isIsolating) {
-                exitIsolateUi();
-                return;
-            }
-            clearSelection();
-            return;
-        }
-        if (action.type === "fly-to") {
-            ev.preventDefault();
-            void flyToSelection(true);
-            return;
-        }
-        if (action.type === "home") {
-            ev.preventDefault();
-            void flyHome();
-            return;
-        }
-        if (action.type === "isolate") {
-            ev.preventDefault();
-            layerSelection.isolateSelected();
-            applyHiddenVisibility();
-            return;
-        }
-        if (action.type === "exit-isolate") {
-            ev.preventDefault();
-            exitIsolateUi();
-            return;
-        }
-        if (action.type === "select-tool") {
-            ev.preventDefault();
-            selectionToolLocal = action.mode;
-            return;
-        }
-        if (action.type === "measure-toggle") {
-            ev.preventDefault();
-            if (editEnabled) exitEditMode();
-            measureEnabled = !measureEnabled;
-            if (measureEnabled) commentsEnabled = false;
-            return;
-        }
-        if (action.type === "comments-toggle") {
-            if (!presenceMember) return;
-            ev.preventDefault();
-            if (editEnabled) exitEditMode();
-            commentsEnabled = !commentsEnabled;
-            if (commentsEnabled) measureEnabled = false;
-            else stopCommentAdd();
-            return;
-        }
-        if (action.type === "edit-toggle") {
-            if (anyFormOpen) return;
-            if (editEnabled) {
-                ev.preventDefault();
-                exitEditMode();
-                return;
-            }
-            if (!canWrite || !active) return;
-            if (!editLayer && !layerFromSelection()) return;
-            ev.preventDefault();
-            enterEditMode();
-            return;
-        }
-        if (action.type === "measure-mode") {
-            ev.preventDefault();
-            if (editEnabled) {
-                const mapped: Record<string, DrawGeomMode> = {
-                    point: "Point",
-                    length: "LineString",
-                    area: "Polygon",
-                };
-                const next = mapped[action.mode];
-                if (next) setDrawMode(next);
-                return;
-            }
-            measureMode = action.mode;
-            measureEnabled = true;
-            editEnabled = false;
-            commentsEnabled = false;
-        }
+            },
+            exitIsolateUi,
+            clearSelection,
+            flyToSelection: () => {
+                void flyToSelection(true);
+            },
+            flyHome: () => {
+                void flyHome();
+            },
+            isolateSelected: () => layerSelection.isolateSelected(),
+            applyHiddenVisibility,
+            layerFromSelection,
+            enterEditMode,
+            setDrawMode,
+            setSelectionTool: (mode) => {
+                selectionToolLocal = mode;
+            },
+            setMeasureEnabled: (on) => {
+                measureEnabled = on;
+            },
+            setCommentsEnabled: (on) => {
+                commentsEnabled = on;
+            },
+            setEditEnabled: (on) => {
+                editEnabled = on;
+            },
+            setMeasureMode: (mode) => {
+                measureMode = mode;
+            },
+            setMeasureStatus: (msg) => {
+                measureStatus = msg;
+            },
+            clearPendingComment: () => {
+                pendingComment = null;
+                commentAdding = false;
+            },
+        });
     }
 
     $effect(() => {
@@ -6595,6 +6296,8 @@
                         layer={drawBindTable ?? editLayer ?? ""}
                         geomType={drawMode}
                         fields={createFields}
+                        slug={projectSlug}
+                        {accessToken}
                         onConfirm={confirmCreate}
                         onCancel={cancelCreate}
                     />
@@ -6607,6 +6310,8 @@
                             geomType="Point"
                             fields={attrEditFields}
                             initial={attrEditInitial}
+                            slug={projectSlug}
+                            {accessToken}
                             onConfirm={confirmAttrEdit}
                             onCancel={cancelAttrEdit}
                         />

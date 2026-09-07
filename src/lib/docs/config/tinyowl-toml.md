@@ -110,6 +110,7 @@ references = "contexts.source_id"
 |---|---|---|---|
 | `key` | string | Yes | Table name. Becomes the entity type and GeoPackage table name. Must be a valid SQLite table name |
 | `label` | string | Yes | Human-readable table label |
+| `kind` | string | No | `lookup` (closed-list values) or `junction` (M2M). Not CRM `class`. |
 
 ### `[[columns]]` Sections
 

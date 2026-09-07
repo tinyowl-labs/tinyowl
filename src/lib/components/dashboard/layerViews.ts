@@ -56,14 +56,14 @@ export type LayerView = {
 };
 
 /** Session layer alpha when unset (polygons / lines). Points default to 1. */
-export const DEFAULT_LAYER_OPACITY = 0.7;
-export const DEFAULT_POINT_OPACITY = 1;
+const DEFAULT_LAYER_OPACITY = 0.7;
+const DEFAULT_POINT_OPACITY = 1;
 export const POINT_OUTLINE_WIDTH = 1;
 export const DEFAULT_CLUSTER_PIXEL_RANGE = 64;
 
-export const DEFAULT_FILL = [230, 80, 80, 255];
-export const DEFAULT_STROKE = [80, 160, 230, 255];
-export const NONE_CATEGORY = "__none__";
+const DEFAULT_FILL = [230, 80, 80, 255];
+const DEFAULT_STROKE = [80, 160, 230, 255];
+const NONE_CATEGORY = "__none__";
 
 const CAT_PALETTE: number[][] = [
 	[230, 80, 80, 255],
@@ -165,11 +165,11 @@ export function layerLegendColor(
 
 const legendNum = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
 
-export function formatLegendNum(n: number): string {
+function formatLegendNum(n: number): string {
 	return legendNum.format(n);
 }
 
-export const LEGEND_CLASS_CAP = 8;
+const LEGEND_CLASS_CAP = 8;
 
 export type LayerLegendClass = {
 	label: string;
@@ -239,7 +239,7 @@ export function layerLegend(
 }
 
 /** FNV-1a 32-bit → hue 0–359 (stable per layer name). */
-export function hashHue(s: string): number {
+function hashHue(s: string): number {
 	let h = 2166136261;
 	for (let i = 0; i < s.length; i++) {
 		h ^= s.charCodeAt(i);
@@ -248,7 +248,7 @@ export function hashHue(s: string): number {
 	return (h >>> 0) % 360;
 }
 
-export function hslToRgba(h: number, s: number, l: number, a = 255): number[] {
+function hslToRgba(h: number, s: number, l: number, a = 255): number[] {
 	let hue = h % 360;
 	if (hue < 0) hue += 360;
 	const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -285,7 +285,7 @@ export function hslToRgba(h: number, s: number, l: number, a = 255): number[] {
 	];
 }
 
-export function randomLayerColor(layerName: string): number[] {
+function randomLayerColor(layerName: string): number[] {
 	const name = layerName.trim() || "layer";
 	return hslToRgba(hashHue(name), 0.58, 0.52);
 }
@@ -303,7 +303,7 @@ export function defaultStyle(layerName = ""): LayerStyle {
 	};
 }
 
-export function seedLayerViews(layerName: string): LayerView[] {
+function seedLayerViews(layerName: string): LayerView[] {
 	return [
 		{
 			id: `seed:${layerName}`,
@@ -452,7 +452,7 @@ export function rowByEntityId(
 	});
 }
 
-export function rowField(row: Record<string, unknown> | undefined, field: string): string {
+function rowField(row: Record<string, unknown> | undefined, field: string): string {
 	const v = rowRaw(row, field);
 	if (v == null) return "";
 	return String(v);
@@ -471,7 +471,7 @@ function rowRaw(
 	return undefined;
 }
 
-export function rowNumeric(
+function rowNumeric(
 	row: Record<string, unknown> | undefined,
 	field: string,
 ): number | null {
@@ -687,7 +687,7 @@ function asYear(n: number): ParsedSeriesDate | null {
 }
 
 /** Parse a cell as a calendar date / year. Null when it is not temporal. */
-export function parseSeriesDate(raw: unknown): ParsedSeriesDate | null {
+function parseSeriesDate(raw: unknown): ParsedSeriesDate | null {
 	if (raw == null || raw === "") return null;
 	if (typeof raw === "number" && Number.isFinite(raw)) {
 		const year = asYear(raw);
@@ -744,7 +744,7 @@ function utcDay(d: Date): ParsedSeriesDate {
 	};
 }
 
-export function inferSeriesKind(
+function inferSeriesKind(
 	rows: Record<string, unknown>[] | undefined,
 	field: string,
 ): SeriesKind {
@@ -771,7 +771,7 @@ export function resolveSeriesKind(
 	return inferSeriesKind(rows, style?.seriesField ?? "");
 }
 
-export function rowSeriesKey(
+function rowSeriesKey(
 	row: Record<string, unknown> | undefined,
 	field: string,
 	kind: SeriesKind,

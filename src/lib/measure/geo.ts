@@ -7,7 +7,7 @@ function toRad(deg: number): number {
 }
 
 /** Great-circle distance between two lon/lat points (metres). */
-export function distanceMeters(a: MeasureVertex, b: MeasureVertex): number {
+function distanceMeters(a: MeasureVertex, b: MeasureVertex): number {
   const φ1 = toRad(a.lat);
   const φ2 = toRad(b.lat);
   const Δφ = toRad(b.lat - a.lat);
@@ -19,7 +19,7 @@ export function distanceMeters(a: MeasureVertex, b: MeasureVertex): number {
 }
 
 /** Sum of great-circle segments. */
-export function pathLengthMeters(vertices: MeasureVertex[]): number {
+function pathLengthMeters(vertices: MeasureVertex[]): number {
   let sum = 0;
   for (let i = 1; i < vertices.length; i++) {
     sum += distanceMeters(vertices[i - 1]!, vertices[i]!);
@@ -31,7 +31,7 @@ export function pathLengthMeters(vertices: MeasureVertex[]): number {
  * Spherical polygon area (m²) via spherical excess.
  * Ring need not be closed; first/last may match.
  */
-export function ringAreaSqMeters(vertices: MeasureVertex[]): number {
+function ringAreaSqMeters(vertices: MeasureVertex[]): number {
   if (vertices.length < 3) return 0;
   const ring = [...vertices];
   const first = ring[0]!;

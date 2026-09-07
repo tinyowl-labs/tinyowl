@@ -37,10 +37,10 @@ export type CommentDraft = {
 
 export type CommentFilter = "open" | "resolved" | "all";
 
-export const COMMENTS_TOPIC_PREFIX = "comments:";
-export const COMMENT_EVENT = "comment";
+const COMMENTS_TOPIC_PREFIX = "comments:";
+const COMMENT_EVENT = "comment";
 
-export function commentsTopic(slug: string): string {
+function commentsTopic(slug: string): string {
 	return `${COMMENTS_TOPIC_PREFIX}${slug.trim()}`;
 }
 
@@ -48,7 +48,7 @@ function authHeaders(accessToken: string): HeadersInit {
 	return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 }
 
-export function commentsUrl(slug: string): string {
+function commentsUrl(slug: string): string {
 	return `/api/v1/projects/${encodeURIComponent(slug)}/comments`;
 }
 
@@ -144,18 +144,7 @@ export function commentRoots(comments: MapComment[], filter: CommentFilter): Map
 	});
 }
 
-/** 1-based index in the current filter, or null if the thread is hidden. */
-export function commentThreadIndex(
-	comments: MapComment[],
-	filter: CommentFilter,
-	id: string | null | undefined,
-): number | null {
-	if (!id) return null;
-	const i = commentRoots(comments, filter).findIndex((c) => c.id === id);
-	return i >= 0 ? i + 1 : null;
-}
-
-export function commentGeomKind(
+function commentGeomKind(
 	geom: GeoJsonGeometry | null | undefined,
 ): "Point" | "Line" | "Area" {
 	const t = geom?.type ?? "Point";
@@ -179,7 +168,7 @@ export function commentReplies(comments: MapComment[], rootId: string): MapComme
 	return comments.filter((c) => c.parent_id === rootId);
 }
 
-export const PENDING_COMMENT_PREFIX = "pending:";
+const PENDING_COMMENT_PREFIX = "pending:";
 
 export function isPendingCommentId(id: string): boolean {
 	return id.startsWith(PENDING_COMMENT_PREFIX);
@@ -218,10 +207,6 @@ export function reconcileComments(
 		if (echoIds?.has(c.id)) extras.push(c);
 	}
 	return extras.length === 0 ? remote : [...remote, ...extras];
-}
-
-export function threadCount(comments: MapComment[], rootId: string): number {
-	return 1 + commentReplies(comments, rootId).length;
 }
 
 export type CommentsRealtimeHandle = {
