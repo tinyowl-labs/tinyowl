@@ -205,7 +205,7 @@ item = "media"
 | `date` | Calendar date |
 | `datetime` | Date + time |
 | `arch_date` | Archaeological date. Stored as JSON `{"start":-8000,"end":-6000,"label":"Early Holocene"}` or plain strings like `"Iron Age"`. Parsed years are unioned into the project temporal extent |
-| `enum` | One of a fixed set (`values = ["loose","firm","compact"]`) |
+| `enum` | Closed-list **widget hint**. Values live in the GPKG cells until lookup promote. Do not put `values = [...]` in new TOML. |
 | `array` | Multi-value column. Set `item` for element type, `delimiter`, and `wrapper` (`{}`, `[]`, `()`) |
 | `media` | References a content-addressed media file |
 | `geometry` | Spatial column (automatically present for geometry tables) |
@@ -273,7 +273,7 @@ Each media item can carry consent flags, managed via the web UI (Artefacts → c
 
 | Kind | Example | TOML | Hub |
 |---|---|---|---|
-| Recording protocol | compaction, excavation method, `BLK` | `type = "enum"`, no `vocabulary` | Dropdown only. Not scanned into the unmapped-concept queue. |
+| Recording protocol | compaction, excavation method, `BLK` | `type = "enum"`, no `vocabulary`, no `values` list | Dropdown hint. Distincts live in the table. |
 | Shared meaning | period, ware, site type | `vocabulary = "periodo"` / `"aat"` / `"crm"` | Distinct values → `value_mappings`. A URI makes the value comparable across projects. |
 
 Local namespaces such as `find-type` are **not** PeriodO/AAT. They may still be scanned for in-project counts; they do not raise unmapped-vocabulary warnings unless you later map a value to an AAT or PeriodO URI yourself.

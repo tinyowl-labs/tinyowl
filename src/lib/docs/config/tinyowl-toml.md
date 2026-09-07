@@ -89,7 +89,6 @@ label = "Depth (cm)"
 name = "compaction"
 type = "enum"
 label = "Compaction"
-values = ["loose", "firm", "compact"]
 
 [[columns]]
 name = "description"
@@ -125,7 +124,7 @@ Each `[[columns]]` entry defines one column in the table.
 | `property` | string | No | CRM property URI (e.g. `crm:P3_has_note`) |
 | `range` | string | No | CRM range class |
 | `references` | string | No | FK reference `Table.column` (also from QGIS ValueRelation import) |
-| `values` | string[] | No | Allowed values when `type = "enum"` or `item = "enum"` |
+| `values` | string[] | No | **Legacy.** Closed list formerly stored in TOML. Omit on new files; GPKG cells (then lookup tables) are SoT. Still parsed if present. |
 | `item` | string | No | Array element type: `string`, `integer`, `enum`, `id` |
 | `delimiter` | string | No | Array separator (default `,`) |
 | `wrapper` | string | No | Array wrapper: `{}`, `[]`, `()`, `none` |

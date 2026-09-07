@@ -14,11 +14,14 @@
         loop = true,
         /** Crop empty margins and fit smaller so search stays optical center. */
         compact = false,
+        /** Fill the parent and center the glyph box on both axes. */
+        fill = false,
     }: {
         src?: string;
         class?: string;
         loop?: boolean;
         compact?: boolean;
+        fill?: boolean;
     } = $props();
 
     let wrapEl = $state<HTMLDivElement | null>(null);
@@ -56,6 +59,26 @@
         return { start, end };
     }
 
+    /** Shared column bounds so the glyph box is tight and can be centered. */
+    function fixedTrimCols(all: string[][]): { left: number; right: number } {
+        let left = Infinity;
+        let right = 0;
+        for (const rows of all) {
+            for (const row of rows) {
+                for (let i = 0; i < row.length; i++) {
+                    if (row[i] !== " " && row[i] !== "\t") {
+                        left = Math.min(left, i);
+                        right = Math.max(right, i + 1);
+                    }
+                }
+            }
+        }
+        if (!Number.isFinite(left) || right <= left) {
+            return { left: 0, right: all[0]?.[0]?.length ?? 0 };
+        }
+        return { left, right };
+    }
+
     onMount(() => {
         const reduceMotion = window.matchMedia(
             "(prefers-reduced-motion: reduce)",
@@ -74,24 +97,38 @@
             // Stable geometry: size from column count, not per-frame scrollWidth.
             const cols = frameText.split("\n")[0]?.length || 100;
             const rows = frameText.split("\n").length;
-            const avail = wrapEl.clientWidth || 1;
-            const target = compact ? avail * 0.72 : avail;
-            const maxPx = compact ? 6 : 10.5;
-            const minPx = compact ? 2.5 : 4.5;
-            const pxW = target / Math.max(cols * 0.62, 1);
-            const maxH = compact
-                ? Math.round((window.innerHeight || 800) * 0.14)
-                : Infinity;
-            const pxH = Number.isFinite(maxH)
-                ? maxH / Math.max(rows * 1.02, 1)
-                : maxPx;
-            const px = Math.max(minPx, Math.min(maxPx, pxW, pxH));
+            const availW = wrapEl.clientWidth || 1;
+            const availH = wrapEl.clientHeight || 1;
+            let px: number;
+            if (fill) {
+                const pad = 0.82;
+                const pxW = (availW * pad) / Math.max(cols * 0.62, 1);
+                const pxH = (availH * pad) / Math.max(rows * 1.02, 1);
+                px = Math.max(4, Math.min(pxW, pxH));
+            } else {
+                const target = compact ? availW * 0.72 : availW;
+                const maxPx = compact ? 6 : 10.5;
+                const minPx = compact ? 2.5 : 4.5;
+                const pxW = target / Math.max(cols * 0.62, 1);
+                const maxH = compact
+                    ? Math.round((window.innerHeight || 800) * 0.14)
+                    : Infinity;
+                const pxH = Number.isFinite(maxH)
+                    ? maxH / Math.max(rows * 1.02, 1)
+                    : maxPx;
+                px = Math.max(minPx, Math.min(maxPx, pxW, pxH));
+            }
             if (Math.abs(px - fittedPx) < 0.05) return;
             fittedPx = px;
             preEl.style.fontSize = `${px}px`;
-            const h = Math.ceil(rows * px * 1.02);
-            wrapEl.style.height = `${h}px`;
-            wrapEl.style.minHeight = `${h}px`;
+            if (!fill) {
+                const h = Math.ceil(rows * px * 1.02);
+                wrapEl.style.height = `${h}px`;
+                wrapEl.style.minHeight = `${h}px`;
+            } else {
+                wrapEl.style.height = "";
+                wrapEl.style.minHeight = "";
+            }
         };
 
         const paint = (t: number) => {
@@ -118,14 +155,12 @@
                 fps = data.frameRate || 24;
                 const raw = data.frames.map((f) => f.rows);
                 const { start, end } = fixedTrimBounds(raw);
-                const width = Math.max(
-                    ...raw.flatMap((rows) => rows.map((r) => r.length)),
-                    1,
-                );
-                frames = raw.map((rows) =>
+                const sliced = raw.map((rows) => rows.slice(start, end));
+                const { left, right } = fixedTrimCols(sliced);
+                const width = Math.max(right - left, 1);
+                frames = sliced.map((rows) =>
                     rows
-                        .slice(start, end)
-                        .map((r) => r.padEnd(width).slice(0, width))
+                        .map((r) => r.padEnd(right).slice(left, right).padEnd(width))
                         .join("\n"),
                 );
                 if (frames.length === 0) throw new Error("no frames");
@@ -168,7 +203,11 @@
     });
 </script>
 
-<div bind:this={wrapEl} class="ascii-echidna-wrap w-full {klass}">
+<div
+    bind:this={wrapEl}
+    class="ascii-echidna-wrap w-full {klass}"
+    class:ascii-echidna-fill={fill}
+>
     <pre
         bind:this={preEl}
         class="ascii-echidna m-0 mx-auto w-max max-w-none select-none overflow-hidden font-mono text-foreground/85"
@@ -178,6 +217,15 @@
 </div>
 
 <style>
+    .ascii-echidna-fill {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+    }
+
     .ascii-echidna {
         white-space: pre;
         line-height: 1.02;

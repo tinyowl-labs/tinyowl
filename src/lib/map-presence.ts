@@ -3,13 +3,13 @@ import { createClient } from "$lib/supabase/client";
 import type { EditBufferEntry } from "$lib/geoDiff/types";
 import { asGeometry, compactGeometry } from "$lib/geoDiff/geometry";
 
-export const PRESENCE_TOPIC_PREFIX = "presence:";
-export const CURSOR_EVENT = "cursor";
-export const OVERLAY_EVENT = "overlay";
-export const STALE_MS = 15_000;
-export const THROTTLE_MS = 32;
-export const OVERLAY_THROTTLE_MS = 200;
-export const MIN_MOVE_DEG = 1e-7;
+const PRESENCE_TOPIC_PREFIX = "presence:";
+const CURSOR_EVENT = "cursor";
+const OVERLAY_EVENT = "overlay";
+const STALE_MS = 15_000;
+const THROTTLE_MS = 32;
+const OVERLAY_THROTTLE_MS = 200;
+const MIN_MOVE_DEG = 1e-7;
 export const MAX_OVERLAY_ITEMS = 40;
 
 const CURSOR_COLORS = [
@@ -37,7 +37,7 @@ export type PresenceSelection = {
 	geometry?: unknown;
 };
 
-export type PresenceEditing = {
+type PresenceEditing = {
 	table: string;
 	entityId: string;
 };
@@ -79,15 +79,15 @@ type Identity = {
 	display_name: string;
 };
 
-export function presenceTopic(slug: string): string {
+function presenceTopic(slug: string): string {
 	return `${PRESENCE_TOPIC_PREFIX}${slug}`;
 }
 
-export function hideStorageKey(slug: string): string {
+function hideStorageKey(slug: string): string {
 	return `echidna:map-presence:hidden:${slug}`;
 }
 
-export function parseCursorPayload(raw: unknown): CursorTick | null {
+function parseCursorPayload(raw: unknown): CursorTick | null {
 	if (!raw || typeof raw !== "object") return null;
 	const o = raw as Record<string, unknown>;
 	const user_id = typeof o.user_id === "string" ? o.user_id : "";
@@ -114,7 +114,7 @@ function payloadHasOverlay(o: Record<string, unknown>): boolean {
 	);
 }
 
-export function parseEditing(raw: unknown): PresenceEditing | null {
+function parseEditing(raw: unknown): PresenceEditing | null {
 	if (!raw || typeof raw !== "object") return null;
 	const o = raw as Record<string, unknown>;
 	const table = parseRef(o.table);
@@ -123,7 +123,7 @@ export function parseEditing(raw: unknown): PresenceEditing | null {
 	return { table, entityId };
 }
 
-export function parseSelectionList(raw: unknown): PresenceSelection[] {
+function parseSelectionList(raw: unknown): PresenceSelection[] {
 	if (!Array.isArray(raw)) return [];
 	const out: PresenceSelection[] = [];
 	for (const item of raw.slice(0, MAX_OVERLAY_ITEMS)) {
@@ -138,7 +138,7 @@ export function parseSelectionList(raw: unknown): PresenceSelection[] {
 	return out;
 }
 
-export function parseBufferList(raw: unknown): EditBufferEntry[] {
+function parseBufferList(raw: unknown): EditBufferEntry[] {
 	if (!Array.isArray(raw)) return [];
 	const out: EditBufferEntry[] = [];
 	for (const item of raw.slice(0, MAX_OVERLAY_ITEMS)) {
@@ -159,7 +159,7 @@ export function parseBufferList(raw: unknown): EditBufferEntry[] {
 	return out;
 }
 
-export function parseOverlayPayload(raw: unknown): {
+function parseOverlayPayload(raw: unknown): {
 	user_id: string;
 	tracking_ref: string;
 	based_on: string;
@@ -181,7 +181,7 @@ export function parseOverlayPayload(raw: unknown): {
 	};
 }
 
-export function slimOverlay(overlay: PresenceOverlay): PresenceOverlay {
+function slimOverlay(overlay: PresenceOverlay): PresenceOverlay {
 	return {
 		tracking_ref: overlay.tracking_ref.trim() || "develop",
 		based_on: overlay.based_on.trim(),
@@ -214,7 +214,7 @@ function overlayHasContent(overlay: PresenceOverlay | null): boolean {
 	);
 }
 
-export function cursorMovedEnough(
+function cursorMovedEnough(
 	prev: { lon: number; lat: number } | null,
 	lon: number,
 	lat: number,
@@ -225,7 +225,7 @@ export function cursorMovedEnough(
 	return dlon * dlon + dlat * dlat >= MIN_MOVE_DEG * MIN_MOVE_DEG;
 }
 
-export function dropStaleTicks(
+function dropStaleTicks(
 	peers: Map<string, PresencePeer>,
 	now = Date.now(),
 ): boolean {
@@ -575,6 +575,7 @@ export async function connectMapPresence(opts: {
 			if (stopped || hidden || !pageVisible) return;
 			const now = Date.now();
 			if (now - lastSentAt < THROTTLE_MS) return;
+			if (!cursorMovedEnough(lastSent, lon, lat)) return;
 			lastSentAt = now;
 			lastSent = { lon, lat };
 			const payload: Record<string, unknown> = {

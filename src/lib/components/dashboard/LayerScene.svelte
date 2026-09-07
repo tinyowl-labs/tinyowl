@@ -28,7 +28,11 @@
     import PickPager from "./PickPager.svelte";
     import EditModeBar from "./EditModeBar.svelte";
     import FeatureCreateForm from "./FeatureCreateForm.svelte";
-    import { SELECTION_PRIMARY, SELECTION_SECONDARY } from "./selectionStyle";
+    import {
+        applyEntitySelectionStyle as paintEntitySelection,
+        SELECTION_PRIMARY,
+    } from "./selectionStyle";
+    import { computeInViewKeys } from "./layerSceneInView";
     import {
         bboxFromEntity,
         collectKeysAtScreenPoint,
@@ -3265,119 +3269,23 @@
         clearDraftDraw();
     }
 
-    function arraysEqual(a: string[], b: string[]): boolean {
-        return a.length === b.length && a.every((v, i) => v === b[i]);
-    }
-
     /** Keys / model hashes whose geometry intersects the current camera frustum. */
     function computeInView(): void {
-        if (!viewer || !Cesium) return;
-        const canvas = viewer.scene?.canvas;
-        const width = canvas?.clientWidth ?? canvas?.width ?? 0;
-        const height = canvas?.clientHeight ?? canvas?.height ?? 0;
-        if (width === 0 || height === 0) return;
-
-        const entityKeys: string[] = [];
-        const time = viewer.clock.currentTime;
-        for (const ds of entityDataSources()) {
-            for (const entity of ds.entities.values) {
-                const meta = entityMeta.get(entity);
-                if (!meta) continue;
-                try {
-                    if (entity.show === false) continue;
-                } catch {
-                    /* ignore */
-                }
-                const key = toSelectionKey(meta.layerName, meta.entityId);
-                let matched = false;
-                const positionSets: any[][] = [];
-                try {
-                    if (entity.polygon?.hierarchy) {
-                        const h = entity.polygon.hierarchy.getValue(time);
-                        const pts = h?.positions ?? h;
-                        if (Array.isArray(pts)) positionSets.push(pts);
-                    }
-                } catch {
-                    /* ignore */
-                }
-                try {
-                    if (entity.polyline?.positions) {
-                        const pts = entity.polyline.positions.getValue(time);
-                        if (Array.isArray(pts)) positionSets.push(pts);
-                    }
-                } catch {
-                    /* ignore */
-                }
-                try {
-                    if (entity.position) {
-                        const pos = entity.position.getValue(time);
-                        if (pos) positionSets.push([pos]);
-                    }
-                } catch {
-                    /* ignore */
-                }
-                if (positionSets.length === 0) {
-                    const sphere = entityBoundingSphere(entity);
-                    if (sphere?.center) positionSets.push([sphere.center]);
-                }
-                outer: for (const pts of positionSets) {
-                    for (const pos of pts) {
-                        try {
-                            const screenPos =
-                                Cesium.SceneTransforms.worldToWindowCoordinates(
-                                    viewer.scene,
-                                    pos,
-                                );
-                            if (
-                                screenPos &&
-                                screenPos.x >= 0 &&
-                                screenPos.x <= width &&
-                                screenPos.y >= 0 &&
-                                screenPos.y <= height
-                            ) {
-                                matched = true;
-                                break outer;
-                            }
-                        } catch {
-                            /* ignore */
-                        }
-                    }
-                }
-                if (matched) entityKeys.push(key);
-            }
-        }
-
-        const modelHashes: string[] = [];
-        try {
-            const camera = viewer.camera;
-            const cullingVolume = camera.frustum.computeCullingVolume(
-                camera.position,
-                camera.direction,
-                camera.up,
-            );
-            for (const [hash, tileset] of tilesetPrims) {
-                if (!tileset?.show) continue;
-                const bs = tileset.boundingSphere;
-                if (!bs) continue;
-                if (
-                    cullingVolume.computeVisibility(bs) !==
-                    Cesium.Intersect.OUTSIDE
-                ) {
-                    modelHashes.push(hash);
-                }
-            }
-        } catch {
-            /* ignore */
-        }
-
-        const uniqueEntityKeys = [...new Set(entityKeys)].sort();
-        modelHashes.sort();
-        if (!arraysEqual(uniqueEntityKeys, inViewEntityKeys)) {
-            inViewEntityKeys = uniqueEntityKeys;
-        }
-        if (!arraysEqual(modelHashes, inViewModelHashes)) {
-            inViewModelHashes = modelHashes;
-        }
+        const next = computeInViewKeys({
+            Cesium,
+            viewer,
+            entityDataSources,
+            entityMeta,
+            entityBoundingSphere,
+            tilesetPrims,
+            prev: {
+                entityKeys: inViewEntityKeys,
+                modelHashes: inViewModelHashes,
+            },
+        });
+        if (!next) return;
+        inViewEntityKeys = next.entityKeys;
+        inViewModelHashes = next.modelHashes;
     }
 
     function scheduleInViewUpdate(): void {
@@ -3663,69 +3571,7 @@
         entity: any,
         kind: "primary" | "secondary" | null,
     ) {
-        const meta = entityMeta.get(entity);
-        if (!meta || !Cesium) return;
-        const base = meta.base;
-        const accentCss =
-            kind === "primary"
-                ? SELECTION_PRIMARY
-                : kind === "secondary"
-                  ? SELECTION_SECONDARY
-                  : null;
-        const accent = accentCss
-            ? (cesiumColorFromCss(accentCss, accentCss) ??
-              Cesium.Color.fromCssColorString(accentCss))
-            : null;
-        const selected = kind != null;
-        if (meta.kind === "point" && entity.point) {
-            entity.point.pixelSize = kind === "primary"
-                ? Math.max(meta.basePixelSize + 6, 14)
-                : selected
-                  ? Math.max(meta.basePixelSize + 3, 11)
-                  : meta.basePixelSize;
-            entity.point.color = accent ?? base;
-            entity.point.outlineColor = selected
-                ? Cesium.Color.WHITE
-                : (meta.baseOutline ?? Cesium.Color.WHITE);
-            entity.point.outlineWidth = 1;
-        } else if (meta.kind === "polyline" && entity.polyline) {
-            entity.polyline.width = kind === "primary"
-                ? Math.max(meta.baseWidth + 3, 5)
-                : selected
-                  ? Math.max(meta.baseWidth + 1.5, 3.5)
-                  : meta.baseWidth;
-            const color = accent ?? base;
-            if (!selected && meta.dash && Cesium.PolylineDashMaterialProperty) {
-                entity.polyline.material = new Cesium.PolylineDashMaterialProperty({
-                    color,
-                });
-            } else {
-                entity.polyline.material = color;
-            }
-        } else if (meta.kind === "polygon" && entity.polygon) {
-            const fill = accent ?? base;
-            const a = selected
-                ? kind === "primary"
-                    ? Math.min(meta.baseAlpha + 0.1, 0.55)
-                    : Math.min(meta.baseAlpha + 0.05, 0.5)
-                : meta.baseAlpha;
-            entity.polygon.material =
-                fill && typeof fill.withAlpha === "function"
-                    ? fill.withAlpha(a)
-                    : fill;
-            if (entity.polygon.outlineColor !== undefined) {
-                entity.polygon.outlineColor = selected
-                    ? Cesium.Color.WHITE
-                    : (meta.baseOutline ?? base);
-            }
-            if (entity.polygon.outlineWidth !== undefined) {
-                entity.polygon.outlineWidth = kind === "primary"
-                    ? Math.max(meta.baseOutlineWidth + 1, 3)
-                    : selected
-                      ? Math.max(meta.baseOutlineWidth + 0.5, 2.5)
-                      : meta.baseOutlineWidth;
-            }
-        }
+        paintEntitySelection(Cesium, entity, entityMeta.get(entity), kind);
     }
 
     function raiseTransientOverlays() {

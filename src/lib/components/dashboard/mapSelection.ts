@@ -12,7 +12,7 @@ export type GeoBbox = {
 	north: number;
 };
 
-export function geoPointsBbox(pts: GeoPoint[]): GeoBbox | null {
+function geoPointsBbox(pts: GeoPoint[]): GeoBbox | null {
 	if (pts.length === 0) return null;
 	let west = Infinity;
 	let south = Infinity;
@@ -28,15 +28,15 @@ export function geoPointsBbox(pts: GeoPoint[]): GeoBbox | null {
 	return { west, south, east, north };
 }
 
-export function bboxesOverlap(a: GeoBbox, b: GeoBbox): boolean {
+function bboxesOverlap(a: GeoBbox, b: GeoBbox): boolean {
 	return a.west <= b.east && a.east >= b.west && a.south <= b.north && a.north >= b.south;
 }
 
-export function pointInBbox(lon: number, lat: number, b: GeoBbox): boolean {
+function pointInBbox(lon: number, lat: number, b: GeoBbox): boolean {
 	return lon >= b.west && lon <= b.east && lat >= b.south && lat <= b.north;
 }
 
-export function pointInGeoPolygon(
+function pointInGeoPolygon(
 	lon: number,
 	lat: number,
 	polygon: GeoPoint[],
@@ -47,28 +47,6 @@ export function pointInGeoPolygon(
 		const yi = polygon[i]!.latitude;
 		const xj = polygon[j]!.longitude;
 		const yj = polygon[j]!.latitude;
-		if (
-			yi > lat !== yj > lat &&
-			lon < ((xj - xi) * (lat - yi)) / (yj - yi || Number.EPSILON) + xi
-		) {
-			inside = !inside;
-		}
-	}
-	return inside;
-}
-
-/** Ray-cast point-in-polygon in lon/lat degrees (Leaflet). */
-export function pointInLonLatPolygon(
-	lon: number,
-	lat: number,
-	ring: Array<{ lon: number; lat: number }>,
-): boolean {
-	let inside = false;
-	for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-		const xi = ring[i]!.lon;
-		const yi = ring[i]!.lat;
-		const xj = ring[j]!.lon;
-		const yj = ring[j]!.lat;
 		if (
 			yi > lat !== yj > lat &&
 			lon < ((xj - xi) * (lat - yi)) / (yj - yi || Number.EPSILON) + xi
@@ -156,7 +134,7 @@ export function entityPositionSets(entity: any, time?: unknown): any[][] {
 	return positionSets;
 }
 
-export function bboxFromCartesians(Cesium: any, pts: any[]): GeoBbox | null {
+function bboxFromCartesians(Cesium: any, pts: any[]): GeoBbox | null {
 	const geo: GeoPoint[] = [];
 	for (const pos of pts) {
 		try {
@@ -394,63 +372,4 @@ export function collectKeysInScreenPolygon(
 		.map((p) => screenToCartographic(viewer, Cesium, p.x, p.y))
 		.filter((c): c is GeoPoint => c != null);
 	return collectKeysInGeoPolygon(viewer, Cesium, items, geo);
-}
-
-/** Leaflet: keys whose representative point / bounds hit a latLng bounds. */
-export function collectLeafletKeysInBounds(
-	entries: Array<{
-		key: string;
-		layer: any;
-	}>,
-	bounds: any,
-): string[] {
-	const ids: string[] = [];
-	for (const { key, layer } of entries) {
-		try {
-			if (typeof layer.getLatLng === "function") {
-				if (bounds.contains(layer.getLatLng())) ids.push(key);
-				continue;
-			}
-			if (typeof layer.getBounds === "function") {
-				const b = layer.getBounds();
-				if (b?.isValid?.() && bounds.intersects(b)) ids.push(key);
-			}
-		} catch {
-			/* ignore */
-		}
-	}
-	return ids;
-}
-
-/** Leaflet: keys whose representative lon/lat is inside a closed ring (degrees). */
-export function collectLeafletKeysInLonLatRing(
-	entries: Array<{
-		key: string;
-		layer: any;
-	}>,
-	ring: Array<{ lon: number; lat: number }>,
-): string[] {
-	if (ring.length < 3) return [];
-	const ids: string[] = [];
-	for (const { key, layer } of entries) {
-		try {
-			let lat = 0;
-			let lon = 0;
-			if (typeof layer.getLatLng === "function") {
-				const ll = layer.getLatLng();
-				lat = ll.lat;
-				lon = ll.lng;
-			} else if (typeof layer.getBounds === "function") {
-				const b = layer.getBounds();
-				if (!b?.isValid?.()) continue;
-				const c = b.getCenter();
-				lat = c.lat;
-				lon = c.lng;
-			} else continue;
-			if (pointInLonLatPolygon(lon, lat, ring)) ids.push(key);
-		} catch {
-			/* ignore */
-		}
-	}
-	return ids;
 }

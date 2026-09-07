@@ -5,22 +5,20 @@ import { commentRoots } from "$lib/map-comments";
 import { avatarPreview } from "$lib/stores/avatar-preview.svelte";
 import type { DrawGeomMode, LonLatVertex } from "$lib/stores/editBuffer.svelte";
 
-export const COMMENT_DS_NAME = "tinyowl-comments";
-export const COMMENT_ID_PREFIX = "comment:";
-export const COMMENT_PENDING_ID = "comment:pending";
-export const COMMENT_SKETCH_ID = "comment:sketch";
+const COMMENT_DS_NAME = "tinyowl-comments";
+const COMMENT_ID_PREFIX = "comment:";
+const COMMENT_PENDING_ID = "comment:pending";
+const COMMENT_SKETCH_ID = "comment:sketch";
 
-export const COMMENT_OPEN = "#2563eb";
-export const COMMENT_RESOLVED = "#64748b";
+const COMMENT_OPEN = "#2563eb";
+const COMMENT_RESOLVED = "#64748b";
 export const COMMENT_PENDING = "#f59e0b";
-/** Fallback when theme primary is unavailable. */
-export const COMMENT_PIN_AVATAR = COMMENT_OPEN;
 
-export function commentEntityId(id: string): string {
+function commentEntityId(id: string): string {
 	return COMMENT_ID_PREFIX + id;
 }
 
-export function parseCommentEntityId(id: unknown): string | null {
+function parseCommentEntityId(id: unknown): string | null {
 	if (typeof id !== "string" || !id.startsWith(COMMENT_ID_PREFIX)) return null;
 	const rest = id.slice(COMMENT_ID_PREFIX.length);
 	if (!rest || rest === "pending" || rest.startsWith("pending:") || rest === "sketch" || rest.startsWith("sketch:")) {
@@ -138,30 +136,6 @@ function refreshPinsForUser(userId: string) {
 	} catch {
 		/* ignore */
 	}
-}
-
-let hiddenPinId: string | null = null;
-
-function isPinEntityId(id: string): boolean {
-	if (id === COMMENT_PENDING_ID) return true;
-	if (!id.startsWith(COMMENT_ID_PREFIX)) return false;
-	return !id.includes(":line:") && !id.includes(":poly:") && !id.includes(":pt:");
-}
-
-function applyHiddenPin(ds: any) {
-	if (!ds?.entities?.values) return;
-	const hideId = hiddenPinId ? commentEntityId(hiddenPinId) : "";
-	for (const entity of ds.entities.values) {
-		const id = String(entity.id ?? "");
-		if (!entity.billboard || !isPinEntityId(id)) continue;
-		entity.billboard.show = hideId ? id !== hideId : true;
-	}
-}
-
-/** Hide the selected comment's billboard without rebuilding geometry. Unused while the balloon sits above the pin. */
-export function hideCommentPin(ds: any, commentId: string | null) {
-	hiddenPinId = commentId;
-	applyHiddenPin(ds);
 }
 
 /** Scale the pin only — do not rebuild overlay geometry (that flickers). */
@@ -442,7 +416,6 @@ export function syncCommentPins(opts: {
 	for (const id of [...pinMeta.keys()]) {
 		if (!keep.has(id)) pinMeta.delete(id);
 	}
-	applyHiddenPin(ds);
 }
 
 function addSketch(

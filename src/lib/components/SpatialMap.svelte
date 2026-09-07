@@ -23,11 +23,11 @@
         MarkerClusterGroup,
         PathOptions,
     } from "leaflet";
+    import { haversineMetres } from "$lib/geo/haversine";
     import {
         createClusterGroup,
         createLeafletMap,
         destroyLeafletMap,
-        haversineMetres,
         loadLeafletWithCluster,
         observeLeafletResize,
         tuneLeafletBasemap,

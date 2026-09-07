@@ -1,5 +1,6 @@
 /** Unified omnibox place hit (Pleiades + Photon). */
 
+import { haversineMetres } from "$lib/geo/haversine";
 import {
 	DEFAULT_SEARCH_RADIUS,
 	parseBBox,
@@ -37,22 +38,6 @@ export function bboxFromPhotonExtent(
 	const south = Math.min(b, d);
 	const north = Math.max(b, d);
 	return parseBBox(`${west},${south},${east},${north}`);
-}
-
-function haversineMetres(
-	lat1: number,
-	lng1: number,
-	lat2: number,
-	lng2: number,
-): number {
-	const R = 6371000;
-	const toRad = (deg: number) => (deg * Math.PI) / 180;
-	const dLat = toRad(lat2 - lat1);
-	const dLng = toRad(lng2 - lng1);
-	const x =
-		Math.sin(dLat / 2) ** 2 +
-		Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-	return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
 }
 
 export function radiusFromSearchBBox(

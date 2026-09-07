@@ -1,9 +1,9 @@
-export const AVATAR_EXPORT_SIZE = 512;
+const AVATAR_EXPORT_SIZE = 512;
 export const CROP_WORKSPACE_SIZE = 256;
-export const CROP_GUIDE_SIZE = 144;
+const CROP_GUIDE_SIZE = 144;
 export const MIN_CROP_ZOOM = 1;
 export const MAX_CROP_ZOOM = 3;
-export const ALLOWED_AVATAR_MIME = [
+const ALLOWED_AVATAR_MIME = [
 	"image/jpeg",
 	"image/png",
 	"image/webp",

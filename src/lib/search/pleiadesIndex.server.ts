@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { haversineMetres } from "$lib/geo/haversine";
 import type { PleiadesPlace } from "./pleiades";
 
 export type IndexedPlace = {
@@ -46,22 +47,6 @@ export function fold(s: string): string {
 		.replace(/\s+/g, " ")
 		.trim()
 		.toLowerCase();
-}
-
-function haversineMetres(
-	lat1: number,
-	lng1: number,
-	lat2: number,
-	lng2: number,
-): number {
-	const R = 6371000;
-	const toRad = (d: number) => (d * Math.PI) / 180;
-	const dLat = toRad(lat2 - lat1);
-	const dLng = toRad(lng2 - lng1);
-	const a =
-		Math.sin(dLat / 2) ** 2 +
-		Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-	return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
 export function radiusFromBbox(
