@@ -1,7 +1,8 @@
 import type { GeoJsonGeometry } from "$lib/geoDiff";
 import { asGeometry } from "$lib/geoDiff";
 import type { CommentFilter, CommentDraft, MapComment } from "$lib/map-comments";
-import { commentRoots, threadCount } from "$lib/map-comments";
+import { commentRoots } from "$lib/map-comments";
+import { avatarPreview } from "$lib/stores/avatar-preview.svelte";
 import type { DrawGeomMode, LonLatVertex } from "$lib/stores/editBuffer.svelte";
 
 export const COMMENT_DS_NAME = "tinyowl-comments";
@@ -9,9 +10,11 @@ export const COMMENT_ID_PREFIX = "comment:";
 export const COMMENT_PENDING_ID = "comment:pending";
 export const COMMENT_SKETCH_ID = "comment:sketch";
 
-export const COMMENT_OPEN = "#7c3aed";
+export const COMMENT_OPEN = "#2563eb";
 export const COMMENT_RESOLVED = "#64748b";
 export const COMMENT_PENDING = "#f59e0b";
+/** Fallback when theme primary is unavailable. */
+export const COMMENT_PIN_AVATAR = COMMENT_OPEN;
 
 export function commentEntityId(id: string): string {
 	return COMMENT_ID_PREFIX + id;
@@ -26,20 +29,170 @@ export function parseCommentEntityId(id: unknown): string | null {
 	return rest.split(":")[0] || null;
 }
 
-function pinSvg(fill: string, selected: boolean, badge: string): string {
-	const stroke = selected ? "#fff" : "rgba(255,255,255,0.92)";
-	const sw = selected ? 2 : 1.65;
-	const inner =
-		badge.length > 0
-			? `<text x="16" y="18.2" text-anchor="middle" font-size="10" font-family="ui-sans-serif,system-ui,sans-serif" font-weight="700" fill="#fff">${badge}</text>`
-			: `<circle cx="11.2" cy="14.8" r="1.65" fill="#fff"/><circle cx="16" cy="14.8" r="1.65" fill="#fff"/><circle cx="20.8" cy="14.8" r="1.65" fill="#fff"/>`;
-	return `data:image/svg+xml,${encodeURIComponent(
-		`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="36" viewBox="0 0 32 36">
-			<path fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"
-				d="M7.2 2.4h17.6c2.65 0 4.8 2.15 4.8 4.8v10.4c0 2.65-2.15 4.8-4.8 4.8h-5.35L11.4 33.4l1.55-10.6H7.2c-2.65 0-4.8-2.15-4.8-4.8V7.2c0-2.65 2.15-4.8 4.8-4.8z"/>
-			${inner}
-		</svg>`,
-	)}`;
+type PinEmphasis = "normal" | "hover" | "selected";
+
+const PIN_W = 80;
+const PIN_H = 96;
+const avatarImgs = new Map<string, HTMLImageElement | "loading" | "error">();
+const pinMeta = new Map<
+	string,
+	{ userId: string; fill: string; canvas: HTMLCanvasElement; image: string | HTMLCanvasElement }
+>();
+let pinDs: any = null;
+let pinViewer: any = null;
+
+function avatarSrc(userId: string): string {
+	return (
+		avatarPreview.src(userId) ??
+		`/users/${encodeURIComponent(userId)}/avatar`
+	);
+}
+
+function drawAvatarPin(
+	canvas: HTMLCanvasElement,
+	fill: string,
+	img: HTMLImageElement | null,
+) {
+	canvas.width = PIN_W;
+	canvas.height = PIN_H;
+	const ctx = canvas.getContext("2d");
+	if (!ctx) return;
+	ctx.clearRect(0, 0, PIN_W, PIN_H);
+	ctx.fillStyle = fill;
+	ctx.beginPath();
+	ctx.moveTo(40, 94);
+	ctx.lineTo(24, 58);
+	ctx.lineTo(56, 58);
+	ctx.closePath();
+	ctx.fill();
+	ctx.beginPath();
+	ctx.arc(40, 40, 30, 0, Math.PI * 2);
+	ctx.closePath();
+	ctx.fill();
+	if (img) {
+		ctx.save();
+		ctx.beginPath();
+		ctx.arc(40, 40, 28, 0, Math.PI * 2);
+		ctx.closePath();
+		ctx.clip();
+		ctx.drawImage(img, 12, 12, 56, 56);
+		ctx.restore();
+	}
+	ctx.beginPath();
+	ctx.arc(40, 40, 30, 0, Math.PI * 2);
+	ctx.strokeStyle = "#ffffff";
+	ctx.lineWidth = 3;
+	ctx.stroke();
+}
+
+function pinImage(
+	userId: string,
+	fill: string,
+	canvas: HTMLCanvasElement,
+): string | HTMLCanvasElement {
+	const img = avatarImgs.get(userId);
+	drawAvatarPin(
+		canvas,
+		fill,
+		img instanceof HTMLImageElement ? img : null,
+	);
+	try {
+		return canvas.toDataURL();
+	} catch {
+		return canvas;
+	}
+}
+
+function ensureAvatar(userId: string) {
+	if (!userId) return;
+	const existing = avatarImgs.get(userId);
+	if (existing instanceof HTMLImageElement || existing === "error") return;
+	if (existing === "loading") return;
+	avatarImgs.set(userId, "loading");
+	const img = new Image();
+	img.onload = () => {
+		avatarImgs.set(userId, img);
+		refreshPinsForUser(userId);
+	};
+	img.onerror = () => {
+		avatarImgs.set(userId, "error");
+	};
+	img.src = avatarSrc(userId);
+}
+
+function applyPinImage(entityId: string, image: string | HTMLCanvasElement) {
+	const entity = pinDs?.entities?.getById?.(entityId);
+	if (!entity?.billboard) return;
+	if (entity.billboard.image !== image) entity.billboard.image = image;
+}
+
+function refreshPinsForUser(userId: string) {
+	for (const [id, meta] of pinMeta) {
+		if (meta.userId !== userId) continue;
+		const image = pinImage(meta.userId, meta.fill, meta.canvas);
+		meta.image = image;
+		applyPinImage(id, image);
+	}
+	try {
+		pinViewer?.scene?.requestRender?.();
+	} catch {
+		/* ignore */
+	}
+}
+
+let hiddenPinId: string | null = null;
+
+function isPinEntityId(id: string): boolean {
+	if (id === COMMENT_PENDING_ID) return true;
+	if (!id.startsWith(COMMENT_ID_PREFIX)) return false;
+	return !id.includes(":line:") && !id.includes(":poly:") && !id.includes(":pt:");
+}
+
+function applyHiddenPin(ds: any) {
+	if (!ds?.entities?.values) return;
+	const hideId = hiddenPinId ? commentEntityId(hiddenPinId) : "";
+	for (const entity of ds.entities.values) {
+		const id = String(entity.id ?? "");
+		if (!entity.billboard || !isPinEntityId(id)) continue;
+		entity.billboard.show = hideId ? id !== hideId : true;
+	}
+}
+
+/** Hide the selected comment's billboard without rebuilding geometry. Unused while the balloon sits above the pin. */
+export function hideCommentPin(ds: any, commentId: string | null) {
+	hiddenPinId = commentId;
+	applyHiddenPin(ds);
+}
+
+/** Scale the pin only — do not rebuild overlay geometry (that flickers). */
+export function setCommentPinEmphasis(opts: {
+	ds: any;
+	comments: MapComment[];
+	filter: CommentFilter;
+	hoveredId?: string | null;
+	selectedId?: string | null;
+}): void {
+	const {
+		ds,
+		comments,
+		filter,
+		hoveredId = null,
+		selectedId = null,
+	} = opts;
+	if (!ds?.entities?.getById) return;
+	const roots = commentRoots(comments, filter);
+	for (const root of roots) {
+		const entity = ds.entities.getById(commentEntityId(root.id));
+		if (!entity?.billboard) continue;
+		const emphasis: PinEmphasis =
+			root.id === selectedId
+				? "selected"
+				: root.id === hoveredId
+					? "hover"
+					: "normal";
+		entity.billboard.scale =
+			emphasis === "hover" ? 1.22 : emphasis === "selected" ? 1.12 : 1;
+	}
 }
 
 type CesiumLike = {
@@ -206,22 +359,37 @@ export function syncCommentPins(opts: {
 	ds: any;
 	comments: MapComment[];
 	filter: CommentFilter;
-	selectedId: string | null;
 	pending: CommentDraft | null;
 	sketch?: LonLatVertex[];
 	sketchMode?: DrawGeomMode;
+	openFill?: string;
+	resolvedFill?: string;
+	pendingFill?: string;
+	pendingUserId?: string;
 }): void {
-	const { Cesium, viewer, ds, comments, filter, selectedId, pending, sketch, sketchMode } = opts;
+	const {
+		Cesium,
+		viewer,
+		ds,
+		comments,
+		filter,
+		pending,
+		sketch,
+		sketchMode,
+		openFill = COMMENT_OPEN,
+		resolvedFill = COMMENT_RESOLVED,
+		pendingFill = COMMENT_PENDING,
+		pendingUserId = "",
+	} = opts;
 	if (!ds) return;
+	pinDs = ds;
+	pinViewer = viewer;
 	clampIncomplete = false;
 	const exclude = commentExclude(ds);
 	const keep = new Set<string>();
 	const roots = commentRoots(comments, filter);
 	for (const root of roots) {
-		const selected = selectedId === root.id;
-		const count = threadCount(comments, root.id);
-		const badge = count > 1 ? String(count) : "";
-		const fill = root.status === "resolved" ? COMMENT_RESOLVED : COMMENT_OPEN;
+		const fill = root.status === "resolved" ? resolvedFill : openFill;
 		addShape(
 			Cesium,
 			viewer,
@@ -233,9 +401,9 @@ export function syncCommentPins(opts: {
 			root.lat,
 			asGeometry(root.geometry) ?? root.geometry ?? null,
 			fill,
-			selected,
-			badge,
+			root.author.id,
 			root.status === "resolved",
+			"normal",
 		);
 	}
 	if (pending) {
@@ -249,10 +417,10 @@ export function syncCommentPins(opts: {
 			pending.lon,
 			pending.lat,
 			pending.geometry ?? null,
-			COMMENT_PENDING,
-			true,
-			"",
+			pendingFill,
+			pendingUserId,
 			false,
+			"selected",
 		);
 	}
 	if (sketch && sketch.length > 0 && sketchMode) {
@@ -264,12 +432,17 @@ export function syncCommentPins(opts: {
 		if (!keep.has(id)) remove.push(id);
 	}
 	for (const id of remove) {
+		pinMeta.delete(id);
 		try {
 			ds.entities.removeById(id);
 		} catch {
 			/* ignore */
 		}
 	}
+	for (const id of [...pinMeta.keys()]) {
+		if (!keep.has(id)) pinMeta.delete(id);
+	}
+	applyHiddenPin(ds);
 }
 
 function addSketch(
@@ -319,11 +492,13 @@ function addShape(
 	lat: number,
 	geometry: GeoJsonGeometry | null,
 	fill: string,
-	selected: boolean,
-	badge: string,
+	userId: string,
 	dashed: boolean,
+	emphasis: PinEmphasis = "normal",
 ) {
-	const color = Cesium.Color.fromCssColorString(fill);
+	const color =
+		Cesium.Color.fromCssColorString(fill) ??
+		Cesium.Color.fromCssColorString(COMMENT_OPEN);
 	const geom = asGeometry(geometry) ?? geometry;
 	const type = geom?.type ?? "Point";
 	const pinId = baseId;
@@ -338,8 +513,8 @@ function addShape(
 		lat,
 		firstHeightFromGeometry(geom),
 		fill,
-		selected,
-		badge,
+		userId,
+		emphasis,
 	);
 
 	if (type === "MultiPoint") {
@@ -430,33 +605,50 @@ function upsertPin(
 	lat: number,
 	height: number | undefined,
 	fill: string,
-	selected: boolean,
-	badge: string,
+	userId: string,
+	emphasis: PinEmphasis,
 ) {
 	let entity = ds.entities.getById(id);
-	const image = pinSvg(fill, selected, badge);
+	let meta = pinMeta.get(id);
+	if (!meta || meta.userId !== userId) {
+		meta = {
+			userId,
+			fill,
+			canvas: meta?.canvas ?? document.createElement("canvas"),
+			image: "",
+		};
+		pinMeta.set(id, meta);
+	}
+	if (meta.fill !== fill || !meta.image) {
+		meta.fill = fill;
+		meta.image = pinImage(userId, fill, meta.canvas);
+	}
+	ensureAvatar(userId);
+	const image = meta.image;
+	const scale = emphasis === "hover" ? 1.22 : emphasis === "selected" ? 1.12 : 1;
 	const position = clampLonLatToScene(Cesium, viewer, lon, lat, height, exclude);
 	const billboard = {
 		image,
-		width: selected ? 32 : 26,
-		height: selected ? 36 : 30,
+		width: 40,
+		height: 48,
+		scale,
 		verticalOrigin: Cesium.VerticalOrigin?.BOTTOM,
 		heightReference: Cesium.HeightReference?.NONE,
 		disableDepthTestDistance: Number.POSITIVE_INFINITY,
-		show: !selected,
+		show: true,
 	};
 	if (!entity) {
-		ds.entities.add({ id, position, show: !selected, billboard });
+		ds.entities.add({ id, position, show: true, billboard });
 		return;
 	}
-	entity.show = !selected;
 	entity.position = position;
 	if (entity.billboard) {
-		entity.billboard.image = image;
+		if (entity.billboard.image !== image) entity.billboard.image = image;
 		entity.billboard.width = billboard.width;
 		entity.billboard.height = billboard.height;
+		entity.billboard.scale = scale;
 		entity.billboard.heightReference = billboard.heightReference;
-		entity.billboard.show = !selected;
+		entity.billboard.show = true;
 	}
 }
 

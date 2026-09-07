@@ -64,8 +64,8 @@
         <p class="mt-1 text-sm text-muted-foreground">
             {#if inProject}
                 Add CSV or GeoJSON into {existingTitle || existingSlug}. A
-                commit message is required; the table stays pending until
-                review.
+                commit message is required; members see the table on develop
+                immediately.
             {:else}
                 Every site keeps its own tables. Import what you have, then link
                 foreign keys and map values when you’re ready.

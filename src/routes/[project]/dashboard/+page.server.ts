@@ -71,7 +71,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     }
   } catch (_) {}
 
-  // Pending changesets (S1 review gate)
+  // Leftover pending rows (pre-DAG). New writes land on develop.
   let pendingChangesets: any[] = [];
   try {
     const res = await fetch(
@@ -81,6 +81,30 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     if (res.ok) {
       const data = await res.json();
       pendingChangesets = Array.isArray(data) ? data : [];
+    }
+  } catch (_) {}
+
+  let developCommits: any[] = [];
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?ref=develop`,
+      { headers },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      developCommits = (Array.isArray(data) ? data : []).slice(0, 10);
+    }
+  } catch (_) {}
+
+  let conflictedCommits: any[] = [];
+  try {
+    const res = await fetch(
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?status=conflicted`,
+      { headers },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      conflictedCommits = Array.isArray(data) ? data : [];
     }
   } catch (_) {}
 
@@ -99,6 +123,8 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     warnings,
     diffs,
     pendingChangesets,
+    developCommits,
+    conflictedCommits,
     mappings,
     accessToken: accessToken ?? "",
   };

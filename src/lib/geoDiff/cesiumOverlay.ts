@@ -3,6 +3,7 @@ import { asGeometry } from "./geometry";
 import type { DiffFeature, DiffOp, GeoJsonGeometry } from "./types";
 
 export const GEO_DIFF_DS_NAME = "tinyowl-geo-diff";
+export const PEER_AWARENESS_DS_NAME = "tinyowl-peer-awareness";
 
 type Role = "after" | "before";
 
@@ -12,13 +13,13 @@ type OverlayStamp = {
     tinyowlRole: Role;
 };
 
-function findDiffDataSource(viewer: any): any | null {
+function findNamedDataSource(viewer: any, name: string): any | null {
     const col = viewer?.dataSources;
     if (!col) return null;
     const n = col.length ?? 0;
     for (let i = 0; i < n; i++) {
         const ds = col.get(i);
-        if (ds?.name === GEO_DIFF_DS_NAME) return ds;
+        if (ds?.name === name) return ds;
     }
     return null;
 }
@@ -53,12 +54,12 @@ function ringToCartesians(Cesium: any, ring: unknown): any[] {
     return out;
 }
 
-function fillColor(Cesium: any, op: DiffOp, role: Role) {
+function fillColor(Cesium: any, op: DiffOp, role: Role, tint?: string) {
     if (role === "before") {
         const grey = Cesium.Color.fromCssColorString("#94a3b8");
         return (grey ?? Cesium.Color.GRAY).withAlpha(0.35);
     }
-    const hex = DIFF_OP_FILL[op] ?? DIFF_OP_FILL.head;
+    const hex = tint || DIFF_OP_FILL[op] || DIFF_OP_FILL.head;
     const base =
         Cesium.Color.fromCssColorString(hex) ?? Cesium.Color.ORANGE;
     if (op === "delete") return base.withAlpha(0.4);
@@ -66,12 +67,12 @@ function fillColor(Cesium: any, op: DiffOp, role: Role) {
     return base.withAlpha(0.45);
 }
 
-function lineColor(Cesium: any, op: DiffOp, role: Role) {
+function lineColor(Cesium: any, op: DiffOp, role: Role, tint?: string) {
     if (role === "before") {
         const grey = Cesium.Color.fromCssColorString("#94a3b8");
         return (grey ?? Cesium.Color.GRAY).withAlpha(0.95);
     }
-    const hex = DIFF_OP_FILL[op] ?? DIFF_OP_FILL.head;
+    const hex = tint || DIFF_OP_FILL[op] || DIFF_OP_FILL.head;
     const base =
         Cesium.Color.fromCssColorString(hex) ?? Cesium.Color.ORANGE;
     if (op === "delete") return base.withAlpha(0.7);
@@ -94,6 +95,11 @@ function overlayStamp(
     };
 }
 
+type PaintStyle = {
+    tint?: string;
+    pickable: boolean;
+};
+
 function addPoint(
     Cesium: any,
     ds: any,
@@ -102,6 +108,7 @@ function addPoint(
     op: DiffOp,
     role: Role,
     stamp: OverlayStamp,
+    style: PaintStyle,
 ) {
     if (!Array.isArray(coords) || coords.length < 2) return;
     const lon = Number(coords[0]);
@@ -111,7 +118,7 @@ function addPoint(
         coords.length > 2 && Number.isFinite(Number(coords[2]))
             ? Number(coords[2])
             : 0;
-    const color = fillColor(Cesium, op, role);
+    const color = fillColor(Cesium, op, role, style.tint);
     ds.entities.add({
         id,
         properties: stamp,
@@ -128,7 +135,7 @@ function addPoint(
                 : Cesium.HeightReference.CLAMP_TO_GROUND,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
-        allowPicking: role === "after",
+        allowPicking: style.pickable && role === "after",
     });
 }
 
@@ -140,10 +147,11 @@ function addLine(
     op: DiffOp,
     role: Role,
     stamp: OverlayStamp,
+    style: PaintStyle,
 ) {
     const positions = ringToCartesians(Cesium, coords);
     if (positions.length < 2) return;
-    const color = lineColor(Cesium, op, role);
+    const color = lineColor(Cesium, op, role, style.tint);
     const material = dashed(op, role)
         ? new Cesium.PolylineDashMaterialProperty({
               color,
@@ -159,7 +167,7 @@ function addLine(
             material,
             clampToGround: !coordsHaveZ(coords),
         },
-        allowPicking: role === "after",
+        allowPicking: style.pickable && role === "after",
     });
 }
 
@@ -179,9 +187,10 @@ function addOutlineRings(
     role: Role,
     pickable: boolean,
     stamp: OverlayStamp,
+    style: PaintStyle,
 ) {
     const clamp = !coordsHaveZ(rings);
-    const color = lineColor(Cesium, op, role);
+    const color = lineColor(Cesium, op, role, style.tint);
     const material = dashed(op, role)
         ? new Cesium.PolylineDashMaterialProperty({
               color,
@@ -216,12 +225,13 @@ function addPolygon(
     op: DiffOp,
     role: Role,
     stamp: OverlayStamp,
+    style: PaintStyle,
 ) {
     const rings = asRings(coords);
     const outer = ringToCartesians(Cesium, rings[0]);
     if (outer.length < 3) return;
     if (role === "before") {
-        addOutlineRings(Cesium, ds, id, rings, op, role, false, stamp);
+        addOutlineRings(Cesium, ds, id, rings, op, role, false, stamp, style);
         return;
     }
     const holes = rings
@@ -230,8 +240,8 @@ function addPolygon(
         .filter((r) => r.length >= 3)
         .map((r) => new Cesium.PolygonHierarchy(r.slice()));
     const hierarchy = new Cesium.PolygonHierarchy(outer.slice(), holes);
-    const fill = fillColor(Cesium, op, role);
-    const outline = lineColor(Cesium, op, role);
+    const fill = fillColor(Cesium, op, role, style.tint);
+    const outline = lineColor(Cesium, op, role, style.tint);
     const withZ = coordsHaveZ(coords);
     ds.entities.add({
         id,
@@ -247,7 +257,7 @@ function addPolygon(
                 ? Cesium.HeightReference.NONE
                 : Cesium.HeightReference.CLAMP_TO_GROUND,
         },
-        allowPicking: true,
+        allowPicking: style.pickable,
     });
 }
 
@@ -259,6 +269,7 @@ function paintGeometry(
     op: DiffOp,
     role: Role,
     stamp: OverlayStamp,
+    style: PaintStyle,
 ) {
     let n = 0;
     const nextId = () => `${idBase}:${n++}`;
@@ -266,27 +277,27 @@ function paintGeometry(
     const visit = (g: GeoJsonGeometry) => {
         switch (g.type) {
             case "Point":
-                addPoint(Cesium, ds, nextId(), g.coordinates, op, role, stamp);
+                addPoint(Cesium, ds, nextId(), g.coordinates, op, role, stamp, style);
                 break;
             case "MultiPoint":
                 for (const c of asRings(g.coordinates)) {
-                    addPoint(Cesium, ds, nextId(), c, op, role, stamp);
+                    addPoint(Cesium, ds, nextId(), c, op, role, stamp, style);
                 }
                 break;
             case "LineString":
-                addLine(Cesium, ds, nextId(), g.coordinates, op, role, stamp);
+                addLine(Cesium, ds, nextId(), g.coordinates, op, role, stamp, style);
                 break;
             case "MultiLineString":
                 for (const c of asRings(g.coordinates)) {
-                    addLine(Cesium, ds, nextId(), c, op, role, stamp);
+                    addLine(Cesium, ds, nextId(), c, op, role, stamp, style);
                 }
                 break;
             case "Polygon":
-                addPolygon(Cesium, ds, nextId(), g.coordinates, op, role, stamp);
+                addPolygon(Cesium, ds, nextId(), g.coordinates, op, role, stamp, style);
                 break;
             case "MultiPolygon":
                 for (const c of asRings(g.coordinates)) {
-                    addPolygon(Cesium, ds, nextId(), c, op, role, stamp);
+                    addPolygon(Cesium, ds, nextId(), c, op, role, stamp, style);
                 }
                 break;
             case "GeometryCollection":
@@ -304,6 +315,10 @@ function paintGeometry(
 
 function addFeature(Cesium: any, ds: any, f: DiffFeature) {
     const op = f.op;
+    const style: PaintStyle = {
+        tint: f.color,
+        pickable: f.pickable !== false,
+    };
     if (f.oldGeometry) {
         paintGeometry(
             Cesium,
@@ -313,6 +328,7 @@ function addFeature(Cesium: any, ds: any, f: DiffFeature) {
             op,
             "before",
             overlayStamp(f.table, f.entityId, "before"),
+            style,
         );
     }
     if (f.geometry) {
@@ -324,26 +340,33 @@ function addFeature(Cesium: any, ds: any, f: DiffFeature) {
             op,
             "after",
             overlayStamp(f.table, f.entityId, "after"),
+            style,
         );
     }
 }
 
-/** One in-flight `dataSources.add` so vertex-session filter flips cannot double-push. */
-let overlayAttach: Promise<any> | null = null;
+/** One in-flight `dataSources.add` per name so filter flips cannot double-push. */
+const overlayAttach = new Map<string, Promise<any>>();
 
-async function getOrAttachOverlayDs(Cesium: any, viewer: any): Promise<any> {
-    const existing = findDiffDataSource(viewer);
+async function getOrAttachOverlayDs(
+    Cesium: any,
+    viewer: any,
+    name: string,
+): Promise<any> {
+    const existing = findNamedDataSource(viewer, name);
     if (existing) return existing;
-    if (!overlayAttach) {
-        const created = new Cesium.CustomDataSource(GEO_DIFF_DS_NAME);
-        overlayAttach = Promise.resolve(viewer.dataSources.add(created)).then(
+    let pending = overlayAttach.get(name);
+    if (!pending) {
+        const created = new Cesium.CustomDataSource(name);
+        pending = Promise.resolve(viewer.dataSources.add(created)).then(
             () => created,
         );
-        overlayAttach.finally(() => {
-            overlayAttach = null;
+        overlayAttach.set(name, pending);
+        pending.finally(() => {
+            overlayAttach.delete(name);
         });
     }
-    return overlayAttach;
+    return pending;
 }
 
 /** Paint `DiffFeature[]` on Cesium. Empty list clears entities; the data source stays attached. */
@@ -351,9 +374,10 @@ export async function syncDiffOverlay(
     Cesium: any,
     viewer: any,
     features: DiffFeature[],
+    name = GEO_DIFF_DS_NAME,
 ): Promise<any | null> {
     if (!Cesium || !viewer) return null;
-    const ds = await getOrAttachOverlayDs(Cesium, viewer);
+    const ds = await getOrAttachOverlayDs(Cesium, viewer, name);
     ds.entities.removeAll();
     for (const f of features) addFeature(Cesium, ds, f);
     return ds;
@@ -383,7 +407,7 @@ export function overlayEntityInfo(
 }
 
 export function destroyDiffOverlay(viewer: any, ds?: any) {
-    const target = ds ?? findDiffDataSource(viewer);
+    const target = ds ?? findNamedDataSource(viewer, GEO_DIFF_DS_NAME);
     if (!target) return;
     try {
         viewer?.dataSources?.remove?.(target, true);

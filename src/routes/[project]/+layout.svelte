@@ -24,6 +24,7 @@
     const hasSession = $derived(Boolean($page.data?.user));
     const project = $derived(data?.project);
     const role = $derived(((data as any)?.role as string) ?? "viewer");
+    const isMember = $derived(Boolean((data as any)?.isMember));
     const canManage = $derived(role === "owner" || role === "admin");
     const canWrite = $derived(
         role === "owner" || role === "admin" || role === "collaborator",
@@ -33,12 +34,11 @@
         const prefix = `/${slug}/`;
         if (!pathname.startsWith(prefix)) return false;
         const rest = pathname.slice(prefix.length);
-        const [head, ...tail] = rest.split("/");
+        const [head] = rest.split("/");
         if (head === "layers" || head === "artefacts" || head === "history") {
             return true;
         }
-        // Review detail only — the list at /review stays a document.
-        return head === "review" && tail.length > 0 && tail[0] !== "";
+        return head === "review";
     }
 
     const workspace = $derived(
@@ -92,6 +92,15 @@
                               },
                           ]
                         : []),
+                    ...(isMember
+                        ? [
+                              {
+                                  label: "History",
+                                  href: `/${slug}/history`,
+                                  icon: HistoryIcon,
+                              },
+                          ]
+                        : []),
                     ...(gpkgUri
                         ? [
                               {
@@ -114,14 +123,9 @@
                         icon: GaugeIcon,
                     },
                     {
-                        label: "Reviews",
+                        label: "Publish",
                         href: `/${slug}/review`,
                         icon: GitPullRequestIcon,
-                    },
-                    {
-                        label: "History",
-                        href: `/${slug}/history`,
-                        icon: HistoryIcon,
                     },
                     {
                         label: "Mappings",

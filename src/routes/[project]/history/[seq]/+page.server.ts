@@ -4,16 +4,15 @@ import { error, redirect } from "@sveltejs/kit";
 
 export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	const slug = params.project;
-	const seq = Number(params.seq);
+	const rev = String(params.seq ?? "").trim();
 	const { user } = await locals.getSession();
 	if (!user) throw redirect(303, `/${slug}`);
-	if (!Number.isInteger(seq) || seq < 1) throw error(400, "invalid seq");
 
 	const accessToken = await locals.getAccessToken();
 	const headers: Record<string, string> = {};
 	if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
-	let role = "viewer";
+	let role = "none";
 	if (accessToken) {
 		try {
 			const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
@@ -26,23 +25,31 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 			}
 		} catch (_) {}
 	}
-	if (role !== "owner" && role !== "admin" && role !== "collaborator") {
+	if (role === "none") {
 		throw redirect(303, `/${slug}`);
 	}
 
-	const res = await fetch(
-		`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/diffs/${seq}/changes`,
-		{ headers },
-	);
-	if (res.status === 404) throw error(404, "Diff not found");
-	if (!res.ok) throw error(res.status, "Failed to load diff");
+	const isCommit = /^[0-9a-f]{32,}$/i.test(rev);
+	const seq = Number(rev);
+	if (!isCommit && (!Number.isInteger(seq) || seq < 1)) {
+		throw error(400, "invalid revision");
+	}
+
+	const url = isCommit
+		? `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits/${rev}/changes`
+		: `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/diffs/${seq}/changes`;
+	const res = await fetch(url, { headers });
+	if (res.status === 404) throw error(404, "Revision not found");
+	if (!res.ok) throw error(res.status, "Failed to load revision");
 	const payload = await res.json();
 
 	return {
 		accessToken: accessToken ?? "",
 		role,
-		seq,
-		diff: payload.diff ?? { seq },
+		rev,
+		seq: isCommit ? 0 : seq,
+		commit: payload.commit ?? null,
+		diff: payload.diff ?? payload.commit ?? { seq: isCommit ? undefined : seq },
 		changes: payload.changes ?? { geodiff: [] },
 		summary: payload.summary ?? { geodiff_summary: [] },
 	};

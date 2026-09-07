@@ -7,7 +7,16 @@
 
     const slug = $derived($page.params.project ?? "");
     const seq = $derived((data as any)?.seq as number);
+    const rev = $derived(String((data as any)?.rev ?? ""));
+    const commitMeta = $derived((data as any)?.commit as any);
     const diffMeta = $derived((data as any)?.diff as any);
+    const shortRev = $derived(
+        commitMeta?.id
+            ? String(commitMeta.id).slice(0, 8)
+            : seq
+              ? `seq ${seq}`
+              : rev.slice(0, 8),
+    );
     const geodiff = $derived(
         (((data as any)?.changes?.geodiff as any[]) ?? []) as any[],
     );
@@ -17,10 +26,17 @@
     const entitySummary = $derived(
         summary.filter((s: any) => !String(s.table ?? "").startsWith("_")),
     );
+    const message = $derived(
+        (commitMeta?.message ?? diffMeta?.message)?.trim() ||
+            (seq ? `Changeset #${seq}` : "Commit"),
+    );
+    const fingerprint = $derived(
+        String(commitMeta?.changeset_sha ?? diffMeta?.sha256 ?? "").slice(0, 10),
+    );
 </script>
 
 <svelte:head>
-    <title>Seq {seq} — {slug} — echidna</title>
+    <title>{shortRev} — {slug} — echidna</title>
 </svelte:head>
 
 <article class="flex h-full min-h-0 flex-col overflow-hidden">
@@ -30,11 +46,11 @@
                 >History</a
             >
             <span>/</span>
-            <span>seq {seq}</span>
+            <span class="font-mono">{shortRev}</span>
             <span class="min-w-0 truncate text-foreground">
-                {diffMeta?.message?.trim() || `Changeset #${seq}`}
+                {message}
             </span>
-            <span class="font-mono">{diffMeta?.sha256?.slice(0, 10) ?? ""}</span>
+            <span class="font-mono">{fingerprint}</span>
             {#if entitySummary.length}
                 <span>
                     {#each entitySummary as s, i}

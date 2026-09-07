@@ -25,11 +25,19 @@
 	{:else}
 		<div class="flex -space-x-1.5 pl-0.5">
 			{#each peers.slice(0, 6) as peer (peer.userId)}
-				<UserAvatar
-					userId={peer.userId}
-					name={peer.displayName}
-					class="size-5 ring-2 ring-background"
-				/>
+				<span
+					title={peer.overlayStale
+						? `${peer.displayName} (edits on an older develop tip)`
+						: peer.displayName}
+				>
+					<UserAvatar
+						userId={peer.userId}
+						name={peer.displayName}
+						class="size-5 ring-2 {peer.overlayStale
+							? 'ring-amber-400'
+							: 'ring-background'}"
+					/>
+				</span>
 			{/each}
 		</div>
 		{#if peers.length > 6}
@@ -42,8 +50,8 @@
 		type="button"
 		class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
 		title={hidden
-			? "Show my cursor to collaborators"
-			: "Hide me from collaborators"}
+			? "Show my cursor and edits to collaborators"
+			: "Hide my cursor and edits from collaborators"}
 		aria-label={hidden ? "Show presence" : "Hide presence"}
 		aria-pressed={hidden}
 		onclick={() => onToggleHidden?.()}

@@ -11,7 +11,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	const headers: Record<string, string> = {};
 	if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
-	let role = "viewer";
+	let role = "none";
 	if (accessToken) {
 		try {
 			const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects`, {
@@ -24,7 +24,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 			}
 		} catch (_) {}
 	}
-	if (role !== "owner" && role !== "admin" && role !== "collaborator") {
+	if (role === "none") {
 		throw redirect(303, `/${slug}`);
 	}
 
@@ -64,11 +64,37 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		}
 	} catch (_) {}
 
+	let commits: any[] = [];
+	try {
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?ref=develop`,
+			{ headers },
+		);
+		if (res.ok) {
+			const data = await res.json();
+			commits = Array.isArray(data) ? data : [];
+		}
+	} catch (_) {}
+
+	let conflictedCommits: any[] = [];
+	try {
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?status=conflicted`,
+			{ headers },
+		);
+		if (res.ok) {
+			const data = await res.json();
+			conflictedCommits = Array.isArray(data) ? data : [];
+		}
+	} catch (_) {}
+
 	return {
 		accessToken: accessToken ?? "",
 		role,
 		diffs,
 		tables,
 		pendingChangesets,
+		commits,
+		conflictedCommits,
 	};
 };

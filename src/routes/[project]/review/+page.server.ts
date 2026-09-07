@@ -28,6 +28,24 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		throw redirect(303, `/${slug}`);
 	}
 
+	let preview: Record<string, any> = {
+		in_sync: true,
+		commits: [],
+		changes: { geodiff: [] },
+		summary: { geodiff_summary: [] },
+		main: "",
+		develop: "",
+	};
+	try {
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/promote`,
+			{ headers },
+		);
+		if (res.ok) {
+			preview = await res.json();
+		}
+	} catch (_) {}
+
 	let changesets: any[] = [];
 	try {
 		const res = await fetch(
@@ -38,7 +56,6 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 			const data = await res.json();
 			changesets = Array.isArray(data) ? data : [];
 		}
-		// Also surface changes_requested
 		const res2 = await fetch(
 			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets?status=changes_requested`,
 			{ headers },
@@ -49,5 +66,23 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		}
 	} catch (_) {}
 
-	return { accessToken: accessToken ?? "", changesets, role };
+	let conflictedCommits: any[] = [];
+	try {
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits?status=conflicted`,
+			{ headers },
+		);
+		if (res.ok) {
+			const data = await res.json();
+			conflictedCommits = Array.isArray(data) ? data : [];
+		}
+	} catch (_) {}
+
+	return {
+		accessToken: accessToken ?? "",
+		preview,
+		changesets,
+		conflictedCommits,
+		role,
+	};
 };

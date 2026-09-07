@@ -144,8 +144,80 @@ export function commentRoots(comments: MapComment[], filter: CommentFilter): Map
 	});
 }
 
+/** 1-based index in the current filter, or null if the thread is hidden. */
+export function commentThreadIndex(
+	comments: MapComment[],
+	filter: CommentFilter,
+	id: string | null | undefined,
+): number | null {
+	if (!id) return null;
+	const i = commentRoots(comments, filter).findIndex((c) => c.id === id);
+	return i >= 0 ? i + 1 : null;
+}
+
+export function commentGeomKind(
+	geom: GeoJsonGeometry | null | undefined,
+): "Point" | "Line" | "Area" {
+	const t = geom?.type ?? "Point";
+	if (t === "LineString" || t === "MultiLineString") return "Line";
+	if (t === "Polygon" || t === "MultiPolygon") return "Area";
+	return "Point";
+}
+
+export function commentPlaceLabel(c: {
+	layer_name?: string | null;
+	feature_id?: string | null;
+	geometry?: GeoJsonGeometry | null;
+}): string {
+	const layer = (c.layer_name ?? "").trim();
+	const feature = (c.feature_id ?? "").trim();
+	if (layer && feature) return `${layer} · ${feature}`;
+	return commentGeomKind(c.geometry);
+}
+
 export function commentReplies(comments: MapComment[], rootId: string): MapComment[] {
 	return comments.filter((c) => c.parent_id === rootId);
+}
+
+export const PENDING_COMMENT_PREFIX = "pending:";
+
+export function isPendingCommentId(id: string): boolean {
+	return id.startsWith(PENDING_COMMENT_PREFIX);
+}
+
+export function pendingCommentId(): string {
+	const uuid =
+		globalThis.crypto?.randomUUID?.() ??
+		`${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+	return `${PENDING_COMMENT_PREFIX}${uuid}`;
+}
+
+/** Keep in-flight optimistic rows (and just-posted ids) across a stale GET. */
+export function reconcileComments(
+	local: MapComment[],
+	remote: MapComment[],
+	echoIds?: Set<string>,
+): MapComment[] {
+	const remoteIds = new Set(remote.map((c) => c.id));
+	if (echoIds) {
+		for (const id of remoteIds) echoIds.delete(id);
+	}
+	const extras: MapComment[] = [];
+	for (const c of local) {
+		if (remoteIds.has(c.id)) continue;
+		if (isPendingCommentId(c.id)) {
+			const landed = remote.some(
+				(r) =>
+					r.created_by === c.created_by &&
+					(r.parent_id ?? null) === (c.parent_id ?? null) &&
+					r.body === c.body,
+			);
+			if (!landed) extras.push(c);
+			continue;
+		}
+		if (echoIds?.has(c.id)) extras.push(c);
+	}
+	return extras.length === 0 ? remote : [...remote, ...extras];
 }
 
 export function threadCount(comments: MapComment[], rootId: string): number {

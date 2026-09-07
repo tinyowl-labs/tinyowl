@@ -30,6 +30,21 @@ export type LayerStyle = {
 	/** Cesium EntityCluster for point / billboard layers (MapLibre-like). */
 	cluster?: boolean;
 	clusterPixelRange?: number;
+	/** Date / ordered-categorical field the map can scrub (session step). */
+	seriesField?: string;
+	/** date | category; omit to auto-detect from values. */
+	seriesKind?: SeriesKind;
+};
+
+export type SeriesKind = "date" | "category";
+
+/** Session “show every step” — not persisted on the view. */
+export const SERIES_ALL = "";
+
+export type SeriesStep = {
+	key: string;
+	label: string;
+	sort: number;
 };
 
 export type LayerView = {
@@ -285,6 +300,8 @@ export function cloneStyle(s: LayerStyle | undefined | null, layerName = ""): La
 		heightTo: base.heightTo,
 		cluster: Boolean(base.cluster) || undefined,
 		clusterPixelRange: base.clusterPixelRange,
+		seriesField: base.seriesField || undefined,
+		seriesKind: base.seriesKind || undefined,
 		categories: base.categories
 			? Object.fromEntries(
 					Object.entries(base.categories).map(([k, v]) => [k, [...v]]),
@@ -361,14 +378,22 @@ export function rowByEntityId(
 }
 
 export function rowField(row: Record<string, unknown> | undefined, field: string): string {
-	if (!row || !field) return "";
-	const direct = row[field];
-	if (direct != null) return String(direct);
+	const v = rowRaw(row, field);
+	if (v == null) return "";
+	return String(v);
+}
+
+function rowRaw(
+	row: Record<string, unknown> | undefined,
+	field: string,
+): unknown {
+	if (!row || !field) return undefined;
+	if (Object.prototype.hasOwnProperty.call(row, field)) return row[field];
 	const lower = field.toLowerCase();
 	for (const [k, v] of Object.entries(row)) {
-		if (k.toLowerCase() === lower && v != null) return String(v);
+		if (k.toLowerCase() === lower) return v;
 	}
-	return "";
+	return undefined;
 }
 
 export function rowNumeric(
@@ -561,4 +586,171 @@ export function singleSymbolStyle(style: LayerStyle, layerName = ""): LayerStyle
 export function newViewId(): string {
 	if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
 	return `view-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+type DatePrecision = "year" | "month" | "day";
+
+type ParsedSeriesDate = {
+	key: string;
+	sort: number;
+	precision: DatePrecision;
+};
+
+function pad2(n: number): string {
+	return String(Math.abs(n)).padStart(2, "0");
+}
+
+function dateSort(year: number, month = 0, day = 0): number {
+	return year * 10000 + month * 100 + day;
+}
+
+function asYear(n: number): ParsedSeriesDate | null {
+	if (!Number.isInteger(n) || n < -9999 || n > 9999) return null;
+	// 1–999 are usually ids / phase numbers, not calendar years (force Dates if needed).
+	if (n > 0 && n < 1000) return null;
+	return { key: String(n), sort: dateSort(n), precision: "year" };
+}
+
+/** Parse a cell as a calendar date / year. Null when it is not temporal. */
+export function parseSeriesDate(raw: unknown): ParsedSeriesDate | null {
+	if (raw == null || raw === "") return null;
+	if (typeof raw === "number" && Number.isFinite(raw)) {
+		const year = asYear(raw);
+		if (year) return year;
+		if (Number.isInteger(raw) && raw >= -9999 && raw <= 9999) return null;
+		const ms = Math.abs(raw) >= 1e12 ? raw : raw * 1000;
+		const d = new Date(ms);
+		if (Number.isNaN(d.getTime())) return null;
+		return utcDay(d);
+	}
+	const s = String(raw).trim();
+	if (!s) return null;
+	let m = s.match(/^(-?\d{1,4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+	if (m) {
+		const y = Number(m[1]);
+		const mo = Number(m[2]);
+		const d = Number(m[3]);
+		if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+			return {
+				key: `${y}-${pad2(mo)}-${pad2(d)}`,
+				sort: dateSort(y, mo, d),
+				precision: "day",
+			};
+		}
+	}
+	m = s.match(/^(-?\d{1,4})-(\d{2})$/);
+	if (m) {
+		const y = Number(m[1]);
+		const mo = Number(m[2]);
+		if (mo >= 1 && mo <= 12) {
+			return {
+				key: `${y}-${pad2(mo)}`,
+				sort: dateSort(y, mo),
+				precision: "month",
+			};
+		}
+	}
+	if (/^-?\d{1,4}$/.test(s)) {
+		return asYear(Number(s));
+	}
+	const parsed = Date.parse(s);
+	if (!Number.isNaN(parsed)) return utcDay(new Date(parsed));
+	return null;
+}
+
+function utcDay(d: Date): ParsedSeriesDate {
+	const y = d.getUTCFullYear();
+	const mo = d.getUTCMonth() + 1;
+	const day = d.getUTCDate();
+	return {
+		key: `${y}-${pad2(mo)}-${pad2(day)}`,
+		sort: dateSort(y, mo, day),
+		precision: "day",
+	};
+}
+
+export function inferSeriesKind(
+	rows: Record<string, unknown>[] | undefined,
+	field: string,
+): SeriesKind {
+	if (!field) return "category";
+	let n = 0;
+	let dates = 0;
+	for (const row of rows ?? []) {
+		const v = rowField(row, field);
+		if (v === "") continue;
+		n += 1;
+		if (parseSeriesDate(rowRaw(row, field)) != null) dates += 1;
+	}
+	if (n === 0) return "category";
+	return dates * 2 >= n ? "date" : "category";
+}
+
+export function resolveSeriesKind(
+	style: LayerStyle | undefined | null,
+	rows: Record<string, unknown>[] | undefined,
+): SeriesKind {
+	if (style?.seriesKind === "date" || style?.seriesKind === "category") {
+		return style.seriesKind;
+	}
+	return inferSeriesKind(rows, style?.seriesField ?? "");
+}
+
+export function rowSeriesKey(
+	row: Record<string, unknown> | undefined,
+	field: string,
+	kind: SeriesKind,
+): string | null {
+	if (!row || !field) return null;
+	if (kind === "date") {
+		const parsed = parseSeriesDate(rowRaw(row, field));
+		return parsed?.key ?? null;
+	}
+	const v = rowField(row, field);
+	return v === "" ? null : v;
+}
+
+export function seriesSteps(
+	rows: Record<string, unknown>[] | undefined,
+	field: string,
+	kind: SeriesKind,
+): SeriesStep[] {
+	if (!field) return [];
+	const seen = new Map<string, SeriesStep>();
+	for (const row of rows ?? []) {
+		if (kind === "date") {
+			const parsed = parseSeriesDate(rowRaw(row, field));
+			if (!parsed || seen.has(parsed.key)) continue;
+			seen.set(parsed.key, {
+				key: parsed.key,
+				label: parsed.key,
+				sort: parsed.sort,
+			});
+			continue;
+		}
+		const v = rowField(row, field);
+		if (v === "" || seen.has(v)) continue;
+		seen.set(v, { key: v, label: v, sort: 0 });
+	}
+	const out = [...seen.values()];
+	if (kind === "date") {
+		out.sort((a, b) => a.sort - b.sort || a.key.localeCompare(b.key));
+	} else {
+		out.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+	}
+	return out;
+}
+
+/** Missing timestamps do not match a concrete step. `SERIES_ALL` shows every row. */
+export function rowMatchesSeries(
+	row: Record<string, unknown> | undefined,
+	field: string | undefined,
+	kind: SeriesKind,
+	stepKey: string | undefined,
+): boolean {
+	if (!field) return true;
+	if (!stepKey) return true;
+	const got = rowSeriesKey(row, field, kind);
+	if (got == null) return false;
+	return got === stepKey;
 }

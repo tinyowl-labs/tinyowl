@@ -10,6 +10,20 @@
 		nodes: Map<string, HTMLElement>;
 	} = $props();
 
+	/**
+	 * On-map layout from docs/.scratch/collaboration/presence-cursor.svg
+	 * (Inkscape group matrices). Artboard is 5× CSS pixels.
+	 */
+	const S = 0.2;
+	const tipX = 1.0138296 * 45 - 1.1586075;
+	const tipY = 1.00663 * 42 - 4.0000742;
+	const avCx = 1.1116976 * 155 - 60.608581;
+	const avCy = 1.1102257 * 200 - 23.311381;
+	const avR = 60 * ((1.1116976 + 1.1102257) / 2);
+	const avLeft = (avCx - avR - tipX) * S;
+	const avTop = (avCy - avR - tipY) * S;
+	const avSize = avR * 2 * S;
+
 	function register(node: HTMLElement, id: string) {
 		nodes.set(id, node);
 		return {
@@ -33,30 +47,38 @@
 			style="visibility:hidden;transform:translate3d(-9999px,-9999px,0)"
 			title={c.displayName}
 		>
-			<div
-				class="absolute left-[11px] top-[22px] size-6 overflow-hidden rounded-full shadow-sm ring-[1.5px] ring-white"
-			>
-				<UserAvatar
-					userId={c.userId}
-					name={c.displayName}
-					class="size-6 rounded-full"
-				/>
-			</div>
 			<svg
-				width="25"
-				height="35"
-				viewBox="0 0 12.5 17.5"
-				class="relative z-10 drop-shadow-md"
+				class="relative z-0 overflow-visible drop-shadow-md"
+				width="1"
+				height="1"
+				viewBox="0 0 1 1"
 				aria-hidden="true"
 			>
-				<path
-					fill={c.color}
-					stroke="#fff"
-					stroke-width="1.1"
-					stroke-linejoin="round"
-					d="M5.66 12.37H5.46L5.32 12.5.5 16.88V1.2L11.78 12.37H5.66Z"
-				/>
+				<g transform="scale({S}) translate({-tipX} {-tipY})">
+					<g transform="matrix(1.0138296,0,0,1.00663,-1.1586075,-4.0000742)">
+						<path
+							fill={c.color}
+							stroke="#fff"
+							stroke-width="2.2"
+							stroke-linejoin="round"
+							vector-effect="non-scaling-stroke"
+							d="M96.6 153.7H94.6L93.2 155 45 198.8V42L157.8 153.7H96.6Z"
+						/>
+					</g>
+				</g>
 			</svg>
+			<div
+				class="absolute z-10 rounded-full"
+				style="left:{avLeft}px;top:{avTop}px;width:{avSize}px;height:{avSize}px;box-shadow:0 0 0 2.2px #fff"
+			>
+				<div class="size-full overflow-hidden rounded-full">
+					<UserAvatar
+						userId={c.userId}
+						name={c.displayName}
+						class="size-full rounded-full"
+					/>
+				</div>
+			</div>
 		</div>
 	{/each}
 </div>

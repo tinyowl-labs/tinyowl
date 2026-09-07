@@ -24,6 +24,7 @@
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
     import LayerStylePanel from "./LayerStylePanel.svelte";
+    import LayerSeriesBar from "./LayerSeriesBar.svelte";
     import PickPager from "./PickPager.svelte";
     import EditModeBar from "./EditModeBar.svelte";
     import FeatureCreateForm from "./FeatureCreateForm.svelte";
@@ -54,6 +55,10 @@
         resolveHeight,
         rowByEntityId,
         rowMatchesFilter,
+        rowMatchesSeries,
+        resolveSeriesKind,
+        SERIES_ALL,
+        seriesSteps,
         type LayerView,
     } from "./layerViews";
     import type { ProjectTileset } from "./tilesetTypes";
@@ -110,7 +115,11 @@
         destroyDiffOverlay,
         overlayEntityInfo,
         submitEditBuffer,
+        fetchDevelopTip,
         syncDiffOverlay,
+        fromPeerAwareness,
+        overlayIsLive,
+        PEER_AWARENESS_DS_NAME,
         type DiffFeature,
         type GeoJsonGeometry,
         DIFF_OP_FILL,
@@ -134,8 +143,11 @@
     import CommentBalloons from "./CommentBalloons.svelte";
     import {
         connectMapPresence,
+        displayNameFromUser,
+        MAX_OVERLAY_ITEMS,
         type MapPresenceHandle,
         type PresencePeer,
+        type PresenceSelection,
     } from "$lib/map-presence";
     import {
         createPresenceLayer,
@@ -147,7 +159,10 @@
         deleteComment,
         fetchComments,
         patchComment,
+        pendingCommentId,
+        reconcileComments,
         subscribeComments,
+        type CommentAuthor,
         type CommentDraft,
         type CommentFilter,
         type CommentsRealtimeHandle,
@@ -157,10 +172,12 @@
         getOrCreateCommentDs,
         pickCommentId,
         syncCommentPins,
+        setCommentPinEmphasis,
         clampLonLatToScene,
         commentClampNeedsRetry,
         clearCommentHeightCache,
         firstHeightFromGeometry,
+        COMMENT_PENDING,
     } from "./layerSceneComments";
 
     type EntityMeta = {
@@ -220,6 +237,10 @@
         placeRadius?: number | null;
         /** Fly to this layer's extent when there is no isolate / highlight. */
         focusLayer?: string;
+        /** Bump after a develop commit so CZML datasources reload. */
+        dataEpoch?: number;
+        /** Called after a successful develop commit (parent refetches layers). */
+        onCommitted?: () => void;
     };
 
     let {
@@ -250,6 +271,8 @@
         placeLng = null,
         placeRadius = null,
         focusLayer = "",
+        dataEpoch = 0,
+        onCommitted,
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -308,6 +331,7 @@
     let commitBusy = $state(false);
     let commitError = $state("");
     let commitDoneId = $state("");
+    let commitDoneStatus = $state<"committed" | "conflicted" | "">("");
     let drawMode = $state<DrawGeomMode>("Polygon");
     let drawUseHeight = $state(true);
     let snapMode = $state<SnapMode>("mesh");
@@ -412,10 +436,35 @@
     let renderRequestRemovers: Array<() => void> = [];
     let presencePeers = $state<PresencePeer[]>([]);
     let presenceRoster = $state<PresenceRosterCursor[]>([]);
+    const presenceDockPeers = $derived(
+        presencePeers.map((p) => ({
+            ...p,
+            overlayStale: Boolean(
+                ((p.buffer?.length ?? 0) > 0 ||
+                    (p.selection?.length ?? 0) > 0) &&
+                    !overlayIsLive(p, developCommit),
+            ),
+        })),
+    );
+    const awarenessSig = $derived(
+        presencePeers
+            .map((p) =>
+                JSON.stringify({
+                    u: p.userId,
+                    b: p.based_on ?? "",
+                    r: p.tracking_ref ?? "",
+                    s: p.selection ?? [],
+                    f: p.buffer ?? [],
+                }),
+            )
+            .join("\n") + `|${developCommit}`,
+    );
     const presenceCursorNodes = new Map<string, HTMLElement>();
     let presenceHidden = $state(false);
     let presenceConnected = $state(false);
     let presenceHandle: MapPresenceHandle | null = null;
+    let developCommit = $state("");
+    let awarenessDataSource: any = null;
 
     const presenceMember = $derived(
         Boolean(($page.data as { isMember?: boolean } | undefined)?.isMember),
@@ -440,6 +489,8 @@
     let commentsError = $state("");
     let commentDataSource: any = null;
     let commentsLoadGen = 0;
+    const commentEchoIds = new Set<string>();
+    let hoveredCommentId = $state<string | null>(null);
     let ctxLon = 0;
     let ctxLat = 0;
     let ctxHeight = 0;
@@ -487,6 +538,8 @@
     let lastInteropFlyKey = "";
     let filterToView = $state(false);
     let styleLayerIdx = $state<number | null>(null);
+    let focusedLayerName = $state("");
+    let seriesStepByLayer = $state<Record<string, string>>({});
     let inViewEntityKeys = $state<string[]>([]);
     let inViewModelHashes = $state<string[]>([]);
     let inViewThrottle: ReturnType<typeof setTimeout> | null = null;
@@ -1222,15 +1275,25 @@
     function isViewFiltered(layerName: string, entityId: string): boolean {
         const layer = layers.find((l) => l.name === layerName);
         const view = activeView(layer?.views, layer?.activeViewId ?? "");
-        if (!view?.filter?.field) return false;
-        const row = rowByEntityId(rows[layerName], entityId);
+        const seriesField = view?.style.seriesField;
+        if (!view?.filter?.field && !seriesField) return false;
+        const tableRows = rows[layerName];
+        const row = rowByEntityId(tableRows, entityId);
         if (!row) {
             const buf = editBuffer.entries.find(
                 (e) => e.table === layerName && e.entityId === entityId,
             );
             if (buf?.op === "insert") return false;
         }
-        return !rowMatchesFilter(row, view.filter);
+        if (view?.filter?.field && !rowMatchesFilter(row, view.filter)) {
+            return true;
+        }
+        if (seriesField) {
+            const kind = resolveSeriesKind(view.style, tableRows);
+            const step = seriesStepByLayer[layerName] ?? SERIES_ALL;
+            if (!rowMatchesSeries(row, seriesField, kind, step)) return true;
+        }
+        return false;
     }
 
     function showAllHiddenEntities() {
@@ -2045,6 +2108,20 @@
         return geometryFromCesiumEntity(entity);
     }
 
+    function presenceSelectionPayload(): PresenceSelection[] {
+        const out: PresenceSelection[] = [];
+        for (const key of layerSelection.keys().slice(0, MAX_OVERLAY_ITEMS)) {
+            const { layer, id } = parseSelectionKey(key);
+            if (!layer || !id) continue;
+            out.push({
+                table: layer,
+                entityId: id,
+                geometry: geometryForDelete(layer, id),
+            });
+        }
+        return out;
+    }
+
     function deleteBufferedFeature(table: string, entityId: string) {
         if (!canWrite || !table || !entityId) return;
         const geom = geometryForDelete(table, entityId);
@@ -2142,6 +2219,7 @@
         commitBusy = true;
         commitError = "";
         commitDoneId = "";
+        commitDoneStatus = "";
         try {
             const res = await submitEditBuffer(
                 projectSlug,
@@ -2149,9 +2227,20 @@
                 message,
                 editBuffer.entries,
             );
+            if (res.status === "conflicted") {
+                commitDoneId = res.commit_id;
+                commitDoneStatus = "conflicted";
+                commitError =
+                    res.error ||
+                    "Conflicts with develop; unmerged commit kept. Refresh and re-commit.";
+                return;
+            }
             editBuffer.clear();
             commitMessage = "";
-            commitDoneId = res.changeset_id;
+            commitDoneId = res.commit_id;
+            commitDoneStatus = "committed";
+            if (res.develop) developCommit = res.develop;
+            onCommitted?.();
         } catch (e) {
             commitError = e instanceof Error ? e.message : "Commit failed";
         } finally {
@@ -4119,10 +4208,19 @@
                     ds: commentDataSource,
                     comments,
                     filter: commentFilter,
-                    selectedId: selectedCommentId,
                     pending: pendingComment,
                     sketch: commentSketchVerts,
                     sketchMode: commentDrawMode,
+                    pendingUserId: presenceUserId,
+                    ...commentPinFills(),
+                });
+                setCommentPinEmphasis({
+                    ds: commentDataSource,
+                    comments,
+                    filter: commentFilter,
+                    hoveredId: hoveredCommentId,
+                    selectedId: selectedCommentId,
+                    ...commentPinFills(),
                 });
             }
             paintCommentBalloons();
@@ -4337,6 +4435,7 @@
             const packetCount = layer.packets?.length ?? 0;
             const needsLoad =
                 !ds ||
+                ds.__epoch !== dataEpoch ||
                 (ds.__packetCount !== undefined &&
                     ds.__packetCount !== packetCount);
 
@@ -4354,6 +4453,7 @@
                     );
                     if (gen !== layerLoadGen) return;
                     ds.__packetCount = packetCount;
+                    ds.__epoch = dataEpoch;
                     ds.show = layer.visible;
                     indexCzmlEntities(ds, layer.name);
                     await viewer.dataSources.add(ds);
@@ -4585,6 +4685,8 @@
 
     function openLayerStyle(idx: number) {
         styleLayerIdx = styleLayerIdx === idx ? null : idx;
+        const name = layers[idx]?.name;
+        if (name && styleLayerIdx === idx) focusedLayerName = name;
     }
 
     onMount(() => {
@@ -4607,9 +4709,8 @@
             rasters.map((c) => (c.bbox_wgs84 ?? []).join(",")).join(";"),
     );
     let layerContentKey = $derived(
-        layers
-            .map((l) => `${l.name}:${l.packets?.length ?? 0}`)
-            .join("|"),
+        `${dataEpoch}|` +
+            layers.map((l) => `${l.name}:${l.packets?.length ?? 0}`).join("|"),
     );
     let viewApplyKey = $derived(
         layers
@@ -4619,6 +4720,45 @@
             )
             .join("|"),
     );
+    let seriesFocusName = $derived.by(() => {
+        const styled =
+            styleLayerIdx !== null ? (layers[styleLayerIdx]?.name ?? "") : "";
+        return (
+            styled ||
+            layerSelection.primaryLayer ||
+            editBuffer.targetLayer ||
+            focusedLayerName
+        );
+    });
+    let seriesControls = $derived(
+        layers.flatMap((layer) => {
+            if (layer.name !== seriesFocusName) return [];
+            const view = activeView(layer.views, layer.activeViewId ?? "");
+            const field = view?.style.seriesField;
+            if (!view || !field) return [];
+            const tableRows = rows[layer.name];
+            const kind = resolveSeriesKind(view.style, tableRows);
+            return [
+                {
+                    name: layer.name,
+                    field,
+                    steps: seriesSteps(tableRows, field, kind),
+                },
+            ];
+        }),
+    );
+    let seriesApplyKey = $derived(
+        seriesControls
+            .map(
+                (c) =>
+                    `${c.name}:${seriesStepByLayer[c.name] ?? SERIES_ALL}`,
+            )
+            .join("|"),
+    );
+
+    function setSeriesStep(layerName: string, key: string) {
+        seriesStepByLayer = { ...seriesStepByLayer, [layerName]: key };
+    }
 
     $effect(() => {
         if (styleLayerIdx === null) return;
@@ -4647,6 +4787,29 @@
         viewApplyKey;
         if (!ready || !started) return;
         applyLayerViews();
+    });
+
+    $effect(() => {
+        const keep = new Set(
+            layers
+                .filter(
+                    (l) =>
+                        activeView(l.views, l.activeViewId ?? "")?.style
+                            .seriesField,
+                )
+                .map((l) => l.name),
+        );
+        const extra = Object.keys(seriesStepByLayer).filter((k) => !keep.has(k));
+        if (extra.length === 0) return;
+        const next = { ...seriesStepByLayer };
+        for (const k of extra) delete next[k];
+        seriesStepByLayer = next;
+    });
+
+    $effect(() => {
+        seriesApplyKey;
+        if (!ready || !started) return;
+        applyHiddenVisibility();
     });
 
     $effect(() => {
@@ -4864,8 +5027,80 @@
             presencePeers = [];
             presenceRoster = [];
             layer?.destroy();
+            try {
+                destroyDiffOverlay(viewer, awarenessDataSource);
+            } catch {
+                /* ignore */
+            }
+            awarenessDataSource = null;
             void handle?.stop();
         };
+    });
+
+    $effect(() => {
+        const slug = projectSlug;
+        const token = accessToken;
+        dataEpoch;
+        if (!slug || !presenceMember) {
+            developCommit = "";
+            return;
+        }
+        let cancelled = false;
+        const pull = () => {
+            void fetchDevelopTip(slug, token).then((id) => {
+                if (!cancelled) developCommit = id;
+            });
+        };
+        pull();
+        const tick = setInterval(pull, 8_000);
+        return () => {
+            cancelled = true;
+            clearInterval(tick);
+        };
+    });
+
+    $effect(() => {
+        const h = presenceHandle;
+        if (!h || presenceHidden || !presenceConnected) return;
+        editBuffer.entries;
+        selectionSig;
+        developCommit;
+        h.publishOverlay({
+            tracking_ref: "develop",
+            based_on: developCommit,
+            selection: presenceSelectionPayload(),
+            buffer: editBuffer.entries,
+        });
+    });
+
+    $effect(() => {
+        awarenessSig;
+        if (!ready || !viewer || !Cesium) return;
+        const features = fromPeerAwareness(
+            presencePeers,
+            developCommit,
+            (table, id) =>
+                geometryFromCesiumEntity(
+                    findEntityByKey(toSelectionKey(table, id)),
+                ),
+        );
+        void syncDiffOverlay(
+            Cesium,
+            viewer,
+            features,
+            PEER_AWARENESS_DS_NAME,
+        ).then((ds) => {
+            awarenessDataSource = ds;
+            try {
+                if (ds) {
+                    ds.show = true;
+                    viewer.dataSources.raiseToTop(ds);
+                }
+            } catch {
+                /* ignore */
+            }
+            bumpRender();
+        });
     });
 
     async function reloadComments() {
@@ -4877,7 +5112,7 @@
         try {
             const list = await fetchComments(projectSlug, accessToken);
             if (gen !== commentsLoadGen) return;
-            comments = list;
+            comments = reconcileComments(comments, list, commentEchoIds);
             commentsError = "";
             bumpRender();
         } catch (e) {
@@ -4887,51 +5122,137 @@
         }
     }
 
-    async function postComment(body: string, parentId?: string) {
+    function localCommentAuthor(): CommentAuthor {
+        const uid = presenceUserId;
+        const prior = comments.find((c) => c.created_by === uid)?.author;
+        if (prior) {
+            return {
+                id: uid,
+                display_name: prior.display_name,
+                has_avatar: prior.has_avatar,
+            };
+        }
+        return {
+            id: uid,
+            display_name: displayNameFromUser($page.data?.user) || "You",
+            has_avatar: false,
+        };
+    }
+
+    function commentById(id: string | null | undefined): MapComment | undefined {
+        if (!id) return undefined;
+        return comments.find((c) => c.id === id);
+    }
+
+    async function postComment(body: string, parentId?: string): Promise<boolean> {
         const text = body.trim();
-        if (!text) return;
-        commentsBusy = true;
-        commentsError = "";
-        try {
-            const             payload: {
-                body: string;
-                parent_id?: string;
-                layer_name?: string;
-                feature_id?: string;
-                lon?: number;
-                lat?: number;
-                geometry?: GeoJsonGeometry;
-            } = { body: text };
-            if (parentId) {
-                payload.parent_id = parentId;
-            } else if (pendingComment) {
-                payload.lon = pendingComment.lon;
-                payload.lat = pendingComment.lat;
-                if (pendingComment.geometry) {
-                    payload.geometry = pendingComment.geometry;
-                }
-                if (pendingComment.layerName && pendingComment.featureId) {
-                    payload.layer_name = pendingComment.layerName;
-                    payload.feature_id = pendingComment.featureId;
-                }
-            } else {
-                return;
+        if (!text) return false;
+
+        const payload: {
+            body: string;
+            parent_id?: string;
+            layer_name?: string;
+            feature_id?: string;
+            lon?: number;
+            lat?: number;
+            geometry?: GeoJsonGeometry;
+        } = { body: text };
+
+        let lon = 0;
+        let lat = 0;
+        let geometry: GeoJsonGeometry | null | undefined;
+        let layerName: string | null | undefined;
+        let featureId: string | null | undefined;
+        const draft = pendingComment;
+
+        if (parentId) {
+            payload.parent_id = parentId;
+            const parent =
+                commentById(parentId) ?? commentById(commentRootId(parentId));
+            const root = parent?.parent_id
+                ? (commentById(parent.parent_id) ?? parent)
+                : parent;
+            if (root) {
+                lon = root.lon;
+                lat = root.lat;
+                geometry = root.geometry;
+                layerName = root.layer_name;
+                featureId = root.feature_id;
             }
+        } else if (draft) {
+            payload.lon = draft.lon;
+            payload.lat = draft.lat;
+            lon = draft.lon;
+            lat = draft.lat;
+            if (draft.geometry) {
+                payload.geometry = draft.geometry;
+                geometry = draft.geometry;
+            }
+            if (draft.layerName && draft.featureId) {
+                payload.layer_name = draft.layerName;
+                payload.feature_id = draft.featureId;
+                layerName = draft.layerName;
+                featureId = draft.featureId;
+            }
+        } else {
+            return false;
+        }
+
+        const tempId = pendingCommentId();
+        const now = new Date().toISOString();
+        const uid = presenceUserId;
+        try {
+            comments = [
+                ...comments,
+                {
+                    id: tempId,
+                    project_slug: projectSlug,
+                    body: text,
+                    status: "open",
+                    parent_id: parentId ?? null,
+                    layer_name: layerName ?? null,
+                    feature_id: featureId ?? null,
+                    lon,
+                    lat,
+                    geometry: geometry ?? null,
+                    created_by: uid,
+                    created_at: now,
+                    updated_at: now,
+                    author: localCommentAuthor(),
+                },
+            ];
+            commentsError = "";
+            if (!parentId) {
+                pendingComment = null;
+                commentAdding = false;
+                selectedCommentId = tempId;
+            }
+            bumpRender();
+
             const created = await createComment(
                 projectSlug,
                 accessToken,
                 payload,
             );
-            pendingComment = null;
-            commentAdding = false;
+            commentEchoIds.add(created.id);
+            comments = comments.map((c) => (c.id === tempId ? created : c));
             selectedCommentId = created.parent_id ?? created.id;
-            await reloadComments();
             commentsRealtime?.notify();
+            void reloadComments();
+            bumpRender();
+            if (!parentId) void flyToComment(created.id);
+            return true;
         } catch (e) {
+            comments = comments.filter((c) => c.id !== tempId);
+            if (!parentId) {
+                pendingComment = draft;
+                commentAdding = true;
+                selectedCommentId = null;
+            }
             commentsError =
                 e instanceof Error ? e.message : "Could not post comment";
-        } finally {
-            commentsBusy = false;
+            bumpRender();
+            return false;
         }
     }
 
@@ -4981,6 +5302,7 @@
             if (existing.status === "resolved" && commentFilter === "open") {
                 commentFilter = "all";
             }
+            void flyToComment(existing.id);
             return;
         }
         selectedCommentId = null;
@@ -4997,6 +5319,38 @@
                         : [ctxLon, ctxLat],
             },
         };
+    }
+
+    function commentPinFills() {
+        const c = mapColors();
+        return {
+            openFill: c.marker,
+            resolvedFill: c.muted,
+            pendingFill: COMMENT_PENDING,
+        };
+    }
+
+    async function flyToComment(id: string) {
+        if (!viewer || !Cesium) return;
+        const hit = comments.find((c) => c.id === id);
+        if (!hit) return;
+        const root = hit.parent_id
+            ? (comments.find((c) => c.id === hit.parent_id) ?? hit)
+            : hit;
+        const exclude = commentDataSource?.entities?.values
+            ? [...commentDataSource.entities.values]
+            : [];
+        const pos = clampLonLatToScene(
+            Cesium,
+            viewer,
+            root.lon,
+            root.lat,
+            firstHeightFromGeometry(root.geometry),
+            exclude,
+        );
+        if (!pos) return;
+        const sphere = new Cesium.BoundingSphere(pos, 80);
+        await flyCameraToSphere(sphere, 0.65);
     }
 
     function startCommentAdd() {
@@ -5139,10 +5493,12 @@
     $effect(() => {
         comments;
         commentFilter;
-        selectedCommentId;
         pendingComment;
         commentSketchCount;
         commentDrawMode;
+        presenceUserId;
+        themePrefs.accentHue;
+        themePrefs.bgBase;
         if (!ready || !viewer || !Cesium) return;
         if (!presenceMember) {
             if (commentDataSource) {
@@ -5168,10 +5524,34 @@
             ds: commentDataSource,
             comments,
             filter: commentFilter,
-            selectedId: selectedCommentId,
             pending: pendingComment,
             sketch: commentSketchVerts,
             sketchMode: commentDrawMode,
+            pendingUserId: presenceUserId,
+            ...commentPinFills(),
+        });
+        setCommentPinEmphasis({
+            ds: commentDataSource,
+            comments,
+            filter: commentFilter,
+            hoveredId: hoveredCommentId,
+            selectedId: selectedCommentId,
+            ...commentPinFills(),
+        });
+        bumpRender();
+    });
+
+    $effect(() => {
+        hoveredCommentId;
+        selectedCommentId;
+        if (!commentDataSource) return;
+        setCommentPinEmphasis({
+            ds: commentDataSource,
+            comments,
+            filter: commentFilter,
+            hoveredId: hoveredCommentId,
+            selectedId: selectedCommentId,
+            ...commentPinFills(),
         });
         bumpRender();
     });
@@ -5750,6 +6130,7 @@
         if (!commentsEnabled) {
             commentAdding = false;
             pendingComment = null;
+            hoveredCommentId = null;
             clearCommentSketch();
             clearCommentSelection();
         }
@@ -5834,6 +6215,9 @@
                 canWrite={canWrite}
                 busy={commentsBusy}
                 error={commentsError}
+                drawMode={commentDrawMode}
+                sketchCount={commentSketchCount}
+                canFinish={commentCanFinishSketch}
                 onFilter={(next) => (commentFilter = next)}
                 onSelect={(id) => {
                     if (id) {
@@ -5843,14 +6227,18 @@
                         commentAdding = false;
                         clearCommentSketch();
                         selectedCommentId = id;
+                        void flyToComment(id);
                     } else {
                         clearCommentSelection();
                     }
                 }}
+                onHover={(id) => (hoveredCommentId = id)}
                 onAdd={startCommentAdd}
                 onCancelAdd={stopCommentAdd}
                 onCancelPending={stopCommentAdd}
-                onPost={(body) => void postComment(body)}
+                onPost={(body) => postComment(body)}
+                onDrawMode={setCommentDrawMode}
+                onFinish={finishCommentSketch}
                 onClose={() => {
                     commentsEnabled = false;
                     stopCommentAdd();
@@ -5859,40 +6247,37 @@
         {/if}
     </div>
 
-    {#if canWrite && editEnabled && editLayer}
+    {#if (canWrite && editEnabled && editLayer) || seriesControls.length > 0}
         <div
-            class="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center"
+            class="pointer-events-auto absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-1"
         >
-            <EditModeBar
-                layer={editLayer}
-                mode={drawMode}
-                canFinish={drawCanFinish && !anyFormOpen}
-                canAddPart={drawCanAddPart && !anyFormOpen && !vertexSession}
-                canDelete={!anyFormOpen}
-                useHeight={drawUseHeight}
-                snap={snapMode}
-                vertexEditing={Boolean(vertexSession)}
-                onMode={setDrawMode}
-                onUseHeight={setDrawUseHeight}
-                onSnap={(m) => (snapMode = m)}
-                onFinish={finishDrawDraft}
-                onAddPart={addDrawPart}
-                onDelete={deleteSelectedFeatures}
-            />
-        </div>
-    {:else if canWrite && commentAdding && !pendingComment}
-        <div
-            class="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center"
-        >
-            <EditModeBar
-                layer="Comment"
-                mode={commentDrawMode}
-                canFinish={commentCanFinishSketch}
-                showHeight={false}
-                showSnap={false}
-                onMode={setCommentDrawMode}
-                onFinish={finishCommentSketch}
-            />
+            {#each seriesControls as series (series.name)}
+                <LayerSeriesBar
+                    layerName={series.name}
+                    field={series.field}
+                    steps={series.steps}
+                    stepKey={seriesStepByLayer[series.name] ?? SERIES_ALL}
+                    onStep={(key) => setSeriesStep(series.name, key)}
+                />
+            {/each}
+            {#if canWrite && editEnabled && editLayer}
+                <EditModeBar
+                    layer={editLayer}
+                    mode={drawMode}
+                    canFinish={drawCanFinish && !anyFormOpen}
+                    canAddPart={drawCanAddPart && !anyFormOpen && !vertexSession}
+                    canDelete={!anyFormOpen}
+                    useHeight={drawUseHeight}
+                    snap={snapMode}
+                    vertexEditing={Boolean(vertexSession)}
+                    onMode={setDrawMode}
+                    onUseHeight={setDrawUseHeight}
+                    onSnap={(m) => (snapMode = m)}
+                    onFinish={finishDrawDraft}
+                    onAddPart={addDrawPart}
+                    onDelete={deleteSelectedFeatures}
+                />
+            {/if}
         </div>
     {/if}
 
@@ -6028,7 +6413,8 @@
                 onToggleCoverage={toggleCoverage}
                 onToggleLayer={toggleLayer}
                 onOpenStyle={openLayerStyle}
-                styleLayerName={styleLayerIdx !== null
+                onSelectLayer={(name) => (focusedLayerName = name)}
+                styleLayerName={styleLayerIdx !== null}
                     ? (layers[styleLayerIdx]?.name ?? "")
                     : ""}
                 onApplyHidden={applyHiddenVisibility}
@@ -6042,6 +6428,7 @@
                 onFlyToCoverage={flyToCoverage}
                 onFlyToModel={flyToModel}
                 {joinedKeys}
+                seriesStepByLayer={seriesStepByLayer}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
@@ -6180,7 +6567,7 @@
                                         class="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-foreground hover:bg-primary/20 disabled:opacity-50"
                                         disabled={commitBusy ||
                                             !commitMessage.trim()}
-                                        title="Submit as pending changeset (does not write canonical)"
+                                        title="Commit to develop (required message)"
                                     >
                                         <CheckIcon class="size-3" />
                                         {commitBusy ? "Sending…" : "Commit"}
@@ -6193,15 +6580,15 @@
                                 {/if}
                             </form>
                         {/if}
-                        {#if commitDoneId}
+                        {#if commitDoneId && commitDoneStatus === "committed"}
                             <p
                                 class="shrink-0 border-t border-border px-1.5 py-1 text-[10px] text-muted-foreground"
                             >
-                                Pending
+                                On develop
                                 <a
                                     class="font-medium text-foreground underline-offset-2 hover:underline"
-                                    href="/{projectSlug}/review/{commitDoneId}"
-                                    >review</a
+                                    href="/{projectSlug}/history"
+                                    >history</a
                                 >
                             </p>
                         {/if}
@@ -6299,7 +6686,7 @@
                 commentAdding = false;
                 clearCommentSketch();
             }}
-            onReply={(body, parentId) => void postComment(body, parentId)}
+            onReply={(body, parentId) => postComment(body, parentId)}
             onResolve={(id, status) => void resolveComment(id, status)}
             onDelete={(id) => void removeComment(id)}
         />
@@ -6333,7 +6720,7 @@
     >
         {#if presenceMember && ready && presenceConnected}
             <PresenceDock
-                peers={presencePeers}
+                peers={presenceDockPeers}
                 hidden={presenceHidden}
                 onToggleHidden={() => {
                     void presenceHandle?.setHidden(!presenceHidden);

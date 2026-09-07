@@ -19,6 +19,10 @@ export type DiffFeature = {
     geometry: GeoJsonGeometry | null;
     /** Before geometry for updates when it differs from `geometry`. */
     oldGeometry?: GeoJsonGeometry | null;
+    /** Peer-awareness tint; omit for the local op-colour table. */
+    color?: string;
+    /** When false, Cesium must not pick this overlay (peer ghosts). */
+    pickable?: boolean;
 };
 
 /** One column from go-geodiff ListChanges (server may attach GeoJSON). */

@@ -21,15 +21,16 @@
 <div class="flex flex-col gap-6">
     <div>
         <h2 class="text-base font-semibold text-foreground">
-            {pending ? "Import submitted for review" : "Project is live"}
+            {pending ? "Import submitted for review" : "Committed to develop"}
         </h2>
         <p class="text-sm text-muted-foreground mt-1 max-w-lg">
             {#if pending}
-                {title || slug} did not change yet. Approve the changeset to add
-                the table to canonical — same gate as map edits.
+                {title || slug} did not change yet. This leftover pending row
+                still needs approve — new imports land on develop without that
+                gate.
             {:else}
-                {title || slug} is on the server. Browse the table, attach more
-                media, or link foreign keys from Manage / Layers → Schema.
+                {title || slug} is on develop. Members see it on Layers now.
+                Publishing to viewers is promote to main from Publish.
             {/if}
         </p>
     </div>
@@ -38,7 +39,7 @@
         <p
             class="rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm text-foreground"
         >
-            {pending ? "Pending" : "Imported"}
+            {pending ? "Pending" : "On develop"}
             <span class="font-mono text-primary">{tableKey}</span>
             {#if rowCount}
                 <span class="text-muted-foreground">· {rowCount} rows</span>
@@ -51,7 +52,14 @@
             href="/{slug}/review/{changesetId}"
             class="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground no-underline"
         >
-            Open review
+            Open leftover review
+        </a>
+    {:else if !pending}
+        <a
+            href="/{slug}/review"
+            class="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground no-underline"
+        >
+            Publish to viewers
         </a>
     {/if}
 

@@ -4,7 +4,7 @@
     import PanelRightIcon from "@lucide/svelte/icons/panel-right";
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
-    import { goto } from "$app/navigation";
+    import { goto, invalidateAll } from "$app/navigation";
     import { page } from "$app/stores";
     import { untrack } from "svelte";
     import type { ProjectTileset } from "$lib/components/dashboard/tilesetTypes";
@@ -637,6 +637,7 @@
     /** Last completed CZML fetch identity — skip duplicate $effect runs. */
     let czmlFetchedKey = "";
     let czmlInFlightKey = "";
+    let dataEpoch = $state(0);
 
     let schemaTables = $state<SchemaTable[]>([]);
     let schemaEdges = $state<SchemaEdge[]>([]);
@@ -687,7 +688,7 @@
             .join("|");
     }
 
-    async function loadAllCzml() {
+    async function loadAllCzml(force = false) {
         const slug = $page.params.project;
         const names = untrack(() => tableNames);
         const colsByTable = untrack(() => tables);
@@ -695,7 +696,11 @@
             (colsByTable[name] ?? []).some((c) => /^_?geom/i.test(c)),
         );
         const fetchKey = `${slug}\0${spatial.join("\0")}`;
-        if (fetchKey === czmlFetchedKey || fetchKey === czmlInFlightKey) return;
+        if (
+            !force &&
+            (fetchKey === czmlFetchedKey || fetchKey === czmlInFlightKey)
+        )
+            return;
 
         const gen = ++czmlLoadGen;
         czmlInFlightKey = fetchKey;
@@ -764,7 +769,7 @@
             return;
         }
         const key = layersContentKey(results);
-        if (key !== czmlContentKey || persistQueue.length > 0) {
+        if (force || key !== czmlContentKey || persistQueue.length > 0) {
             czmlContentKey = key;
             mapLayers = results;
         }
@@ -808,7 +813,7 @@
             );
             if (!res.ok) return;
             const body = (await res.json()) as { views?: LayerView[] };
-            if (!body.views) return;
+            const saved = body.views ?? [];
             const idx = mapLayers.findIndex((l) => l.name === layerName);
             if (idx < 0) return;
             const layer = mapLayers[idx]!;
@@ -816,9 +821,20 @@
                 0,
                 (layer.views ?? []).findIndex((v) => v.id === layer.activeViewId),
             );
-            layer.views = body.views;
+            // Keep the submitted style (seriesField, ramps, …). The server
+            // only needs to mint IDs — older binaries drop unknown style keys.
+            const merged = views.map((local, i) => {
+                const remote = saved[i];
+                if (!remote) return local;
+                return {
+                    ...local,
+                    id: remote.id || local.id,
+                    source: remote.source ?? local.source,
+                };
+            });
+            layer.views = merged;
             layer.activeViewId =
-                body.views[oldIdx]?.id ?? body.views[0]?.id ?? "";
+                merged[oldIdx]?.id ?? merged[0]?.id ?? "";
             mapLayers = [...mapLayers];
         } catch {
             /* keep session views */
@@ -1024,6 +1040,13 @@
                                 ? resolvedLayer
                                 : ""
                         }
+                        {dataEpoch}
+                        onCommitted={() => {
+                            dataEpoch += 1;
+                            czmlFetchedKey = "";
+                            void loadAllCzml(true);
+                            void invalidateAll();
+                        }}
                     />
                 {:else}
                     <CesiumLoading />

@@ -34,9 +34,12 @@
         DEFAULT_HEIGHT_TO,
         DEFAULT_CLUSTER_PIXEL_RANGE,
         layerHasPoints,
+        resolveSeriesKind,
+        seriesSteps,
         type LayerStyle,
         type LayerView,
         type LayerViewFilter,
+        type SeriesKind,
         type StyleRenderer,
     } from "./layerViews";
 
@@ -127,6 +130,16 @@
         current?.style.heightField
             ? numericRange(rows, current.style.heightField)
             : null,
+    );
+    const seriesKind = $derived(
+        current?.style.seriesField
+            ? resolveSeriesKind(current.style, rows)
+            : null,
+    );
+    const seriesCount = $derived(
+        current?.style.seriesField && seriesKind
+            ? seriesSteps(rows, current.style.seriesField, seriesKind).length
+            : 0,
     );
     const pointsOnly = $derived(isPointLayer(layer.packets));
     const hasPoints = $derived(layerHasPoints(layer.packets));
@@ -260,6 +273,21 @@
             }
             return { ...v, filter: { ...v.filter, value } };
         });
+    }
+
+    function setSeriesField(field: string) {
+        patchStyle((s) => ({
+            ...s,
+            seriesField: field || undefined,
+            seriesKind: field ? s.seriesKind : undefined,
+        }));
+    }
+
+    function setSeriesKind(kind: "" | SeriesKind) {
+        patchStyle((s) => ({
+            ...s,
+            seriesKind: kind || undefined,
+        }));
     }
 
     function apply() {
@@ -805,6 +833,54 @@
                     onchange={(e) =>
                         setFilterValue((e.currentTarget as HTMLInputElement).value)}
                 />
+            </div>
+
+            <Separator />
+            <div class="space-y-3">
+                <p class="text-sm font-medium">Time series</p>
+                <label class="block space-y-1.5">
+                    <span class="text-xs text-muted-foreground">Field</span>
+                    <select
+                        class={fieldCls}
+                        value={current.style.seriesField ?? ""}
+                        disabled={!canEdit}
+                        onchange={(e) =>
+                            setSeriesField(
+                                (e.currentTarget as HTMLSelectElement).value,
+                            )}
+                    >
+                        <option value="">None</option>
+                        {#each fields as f}
+                            <option value={f}>{f}</option>
+                        {/each}
+                    </select>
+                </label>
+                {#if current.style.seriesField}
+                    <label class="block space-y-1.5">
+                        <span class="text-xs text-muted-foreground">Values</span>
+                        <select
+                            class={fieldCls}
+                            value={current.style.seriesKind ?? ""}
+                            disabled={!canEdit}
+                            onchange={(e) =>
+                                setSeriesKind(
+                                    (e.currentTarget as HTMLSelectElement)
+                                        .value as "" | SeriesKind,
+                                )}
+                        >
+                            <option value="">Auto ({seriesKind === "date" ? "dates" : "phases"})</option>
+                            <option value="date">Dates</option>
+                            <option value="category">Phases</option>
+                        </select>
+                    </label>
+                    <p class="text-xs text-muted-foreground">
+                        Scrub this column on the map.
+                        {#if seriesCount > 0}
+                            {seriesCount} {seriesCount === 1 ? "step" : "steps"}.
+                        {/if}
+                        Rows without a value skip that step.
+                    </p>
+                {/if}
             </div>
         {/if}
 

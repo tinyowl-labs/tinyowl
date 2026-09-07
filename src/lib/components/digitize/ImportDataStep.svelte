@@ -165,6 +165,21 @@
                 ),
             );
             fd.append("message", message.trim());
+            let baseCommit = "";
+            try {
+                const refsRes = await fetch(
+                    `/api/v1/projects/${encodeURIComponent(slug)}/refs`,
+                    { headers: { Authorization: `Bearer ${accessToken}` } },
+                );
+                if (refsRes.ok) {
+                    const refs = (await refsRes.json()) as { develop?: string };
+                    baseCommit = refs.develop ?? "";
+                }
+            } catch {
+                /* server defaults omitted base to current develop */
+            }
+            if (baseCommit) fd.append("base_commit", baseCommit);
+            fd.append("target_ref", "develop");
             // Soft progress while request is in flight
             const tick = window.setInterval(() => {
                 if (phase === "importing" && progressPct < 70) {
@@ -180,6 +195,10 @@
                     headers: {
                         Authorization: `Bearer ${accessToken}`,
                         "X-TinyOwl-Message": message.trim(),
+                        "X-TinyOwl-Target-Ref": "develop",
+                        ...(baseCommit
+                            ? { "X-TinyOwl-Base-Commit": baseCommit }
+                            : {}),
                     },
                     body: fd,
                 },
@@ -202,8 +221,9 @@
                 rows: data.rows ?? rowCount,
                 format: data.format || format,
                 pending:
-                    res.status === 202 || data.status === "pending",
-                changesetId: data.changeset_id || undefined,
+                    res.status === 202 ||
+                    data.status === "pending",
+                changesetId: data.commit_id || data.changeset_id || undefined,
             });
         } catch (err) {
             error = err instanceof Error ? err.message : "Import failed";
@@ -229,8 +249,8 @@
             <h2 class="text-base font-semibold text-foreground">Add a table</h2>
             <p class="text-sm text-muted-foreground mt-0.5 max-w-lg">
                 Drop a CSV or GeoJSON. Columns become <em>this</em> project’s
-                schema — rename freely. A commit message is required; into an
-                existing project the table is pending until review.
+                schema — rename freely. A commit message is required; the table
+                lands on develop for members immediately.
             </p>
         </div>
         <div class="flex gap-1.5 text-[11px]">
@@ -255,7 +275,7 @@
             disabled={busy}
             required
             maxlength={500}
-            placeholder="Required — same review gate as map edits"
+            placeholder="Required — commit lands on develop"
         ></textarea>
     </label>
 

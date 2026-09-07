@@ -50,7 +50,13 @@
     let cluster: MarkerClusterGroup | null = null;
     let geoLayer: LeafletGeoJSON | null = null;
     let didFit = false;
+    let lastFitKey = "";
     let stopResize: (() => void) | undefined;
+
+    function featuresKey(list: Feature[]): string {
+        if (!list.length) return "";
+        return `${list.length}:${list[0]?.id ?? ""}:${list[list.length - 1]?.id ?? ""}`;
+    }
 
     onMount(() => {
         mounted = true;
@@ -150,45 +156,63 @@
         }
 
         if (otherFeatures.length) {
-            geoLayer = L.geoJSON(
-                {
-                    type: "FeatureCollection",
-                    features: otherFeatures,
-                } as GeoJSON.FeatureCollection,
-                {
-                    style: (feat) => {
-                        const id = String(feat?.properties?.id ?? "");
-                        const op = parseDiffOp(feat?.properties?.type);
-                        const role =
-                            feat?.properties?.role === "before"
-                                ? "before"
-                                : "after";
-                        const selected =
-                            selectedId != null && id === selectedId;
-                        const p = paint(op, selected, role);
-                        return {
-                            color: p.fillColor,
-                            weight: selected && role === "after" ? 3 : 2,
-                            fillColor: p.fillColor,
-                            fillOpacity:
-                                role === "before"
-                                    ? 0.12
-                                    : op === "head"
-                                      ? 0.18
-                                      : 0.35,
-                            dashArray: p.dashArray,
-                        };
+            try {
+                geoLayer = L.geoJSON(
+                    {
+                        type: "FeatureCollection",
+                        features: otherFeatures,
+                    } as GeoJSON.FeatureCollection,
+                    {
+                        style: (feat) => {
+                            const id = String(feat?.properties?.id ?? "");
+                            const op = parseDiffOp(feat?.properties?.type);
+                            const role =
+                                feat?.properties?.role === "before"
+                                    ? "before"
+                                    : "after";
+                            const selected =
+                                selectedId != null && id === selectedId;
+                            const p = paint(op, selected, role);
+                            return {
+                                color: p.fillColor,
+                                weight: selected && role === "after" ? 3 : 2,
+                                fillColor: p.fillColor,
+                                fillOpacity:
+                                    role === "before"
+                                        ? 0.12
+                                        : op === "head"
+                                          ? 0.18
+                                          : 0.35,
+                                dashArray: p.dashArray,
+                            };
+                        },
                     },
-                },
-            ).addTo(m);
+                ).addTo(m);
+            } catch (err) {
+                console.error("ReviewMap: geojson", err);
+                geoLayer = null;
+            }
         }
 
+        const key = featuresKey(features);
+        if (key !== lastFitKey) {
+            didFit = false;
+        }
         if (!didFit) {
-            const bounds = cluster.getBounds();
-            const geoBounds = geoLayer?.getBounds();
-            let combined = bounds.isValid() ? bounds : null;
-            if (geoBounds?.isValid()) {
-                combined = combined ? combined.extend(geoBounds) : geoBounds;
+            let combined: ReturnType<LeafletMap["getBounds"]> | null = null;
+            try {
+                const bounds = cluster.getBounds();
+                if (bounds.isValid()) combined = bounds;
+            } catch {
+                /* empty cluster */
+            }
+            try {
+                const geoBounds = geoLayer?.getBounds();
+                if (geoBounds?.isValid()) {
+                    combined = combined ? combined.extend(geoBounds) : geoBounds;
+                }
+            } catch {
+                /* empty geo layer */
             }
             if (combined?.isValid()) {
                 m.fitBounds(combined, {
@@ -197,6 +221,7 @@
                     animate: false,
                 });
                 didFit = true;
+                lastFitKey = key;
             }
         }
     }
@@ -220,6 +245,7 @@
                 tuneLeafletBasemap(m, isDark());
                 m.invalidateSize();
                 didFit = false;
+                lastFitKey = "";
                 redrawFeatures();
                 if (!cancelled) mapReady = true;
             } catch (err) {
@@ -236,6 +262,7 @@
             geoLayer = null;
             Lref = null;
             didFit = false;
+            lastFitKey = "";
             destroyLeafletMap(map);
             map = null;
         };

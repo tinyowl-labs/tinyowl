@@ -27,6 +27,9 @@
         rgbaToHex,
         rowByEntityId,
         rowMatchesFilter,
+        rowMatchesSeries,
+        resolveSeriesKind,
+        SERIES_ALL,
     } from "./layerViews";
 
     type Props = {
@@ -41,6 +44,8 @@
         onToggleCoverage?: (hash: string) => void;
         onToggleLayer?: (idx: number) => void;
         onOpenStyle?: (idx: number) => void;
+        /** Layer row clicked in the scene graph (table focus). */
+        onSelectLayer?: (name: string) => void;
         styleLayerName?: string;
         onApplyHidden?: () => void;
         onFlyTo?: () => void;
@@ -55,6 +60,8 @@
         filterToView?: boolean;
         /** FK-joined keys (not in layerSelection) — secondary highlight. */
         joinedKeys?: string[];
+        /** Session time-series step per layer (`SERIES_ALL` / omitted = show all). */
+        seriesStepByLayer?: Record<string, string>;
         /** Writers see layer-select + Tab hint for Cesium edit mode. */
         canWrite?: boolean;
         class?: string;
@@ -72,6 +79,7 @@
         onToggleCoverage,
         onToggleLayer,
         onOpenStyle,
+        onSelectLayer,
         styleLayerName = "",
         onApplyHidden,
         onFlyTo,
@@ -84,6 +92,7 @@
         inViewModelHashes = [],
         filterToView = $bindable(false),
         joinedKeys = [],
+        seriesStepByLayer = {},
         canWrite = false,
         class: klass = "",
     }: Props = $props();
@@ -202,9 +211,16 @@
     function filterEntities(layer: LayerData, ents: EntityRow[]): EntityRow[] {
         return ents.filter((e) => {
             const view = activeView(layer.views, layer.activeViewId ?? "");
+            const tableRows = rows[layer.name];
+            const row = rowByEntityId(tableRows, e.entityId);
             if (view?.filter?.field) {
-                const row = rowByEntityId(rows[layer.name], e.entityId);
                 if (!rowMatchesFilter(row, view.filter)) return false;
+            }
+            const seriesField = view?.style.seriesField;
+            if (seriesField) {
+                const kind = resolveSeriesKind(view.style, tableRows);
+                const step = seriesStepByLayer[layer.name] ?? SERIES_ALL;
+                if (!rowMatchesSeries(row, seriesField, kind, step)) return false;
             }
             if (filterToView) return inViewEntitySet.has(e.key);
             return true;
@@ -246,6 +262,7 @@
     }
 
     function selectEditLayer(name: string) {
+        onSelectLayer?.(name);
         if (!canWrite) return;
         editBuffer.setTargetLayer(name);
     }

@@ -49,6 +49,17 @@
     const pendingChangesets = $derived(
         ((data as any)?.pendingChangesets as any[]) ?? [],
     );
+    const developCommits = $derived(
+        ((data as any)?.developCommits as any[]) ?? [],
+    );
+    const conflictedCommits = $derived(
+        ((data as any)?.conflictedCommits as any[]) ?? [],
+    );
+    const activityCount = $derived(
+        conflictedCommits.length +
+            pendingChangesets.length +
+            (developCommits.length || diffs.length),
+    );
     const mappings = $derived(((data as any)?.mappings as any[]) ?? []);
 
     const bbox = $derived(((project as any)?.bbox as string) ?? null);
@@ -375,18 +386,23 @@
                 <span class="text-sm font-medium text-foreground"
                     >Recent activity</span
                 >
-                {#if diffs.length + pendingChangesets.length > 0}
+                {#if activityCount > 0}
                     <span class="text-xs text-muted-foreground"
-                        >({diffs.length + pendingChangesets.length})</span
+                        >({activityCount})</span
                     >
                 {/if}
                 <a
-                    href="/{slug}/history"
+                    href="/{slug}/review"
                     class="ml-auto text-xs text-primary hover:underline"
+                    >Publish</a
+                >
+                <a
+                    href="/{slug}/history"
+                    class="text-xs text-primary hover:underline"
                     >Time machine</a
                 >
             </div>
-            {#if diffs.length === 0 && pendingChangesets.length === 0}
+            {#if activityCount === 0}
                 <div
                     class="px-4 py-6 text-center text-sm text-muted-foreground"
                 >
@@ -394,6 +410,35 @@
                 </div>
             {:else}
                 <div class="divide-y divide-border max-h-80 overflow-y-auto">
+                    {#each conflictedCommits as c}
+                        <a
+                            href="/{slug}/history/{c.id}"
+                            class="px-4 py-2.5 flex items-start justify-between gap-3 text-xs hover:bg-accent/40"
+                        >
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span
+                                        class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-500/15 text-red-400"
+                                        >conflicted</span
+                                    >
+                                    <span class="text-foreground truncate"
+                                        >{c.message?.trim() ||
+                                            "Untitled commit"}</span
+                                    >
+                                </div>
+                                <div
+                                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground"
+                                >
+                                    <span>{formatDate(c.created_at)}</span>
+                                    <span>unmerged — develop did not move</span>
+                                </div>
+                            </div>
+                            <span
+                                class="font-mono text-muted-foreground shrink-0"
+                                >{(c.id ?? c.changeset_sha ?? "").slice(0, 7)}</span
+                            >
+                        </a>
+                    {/each}
                     {#each pendingChangesets as cs}
                         <a
                             href="/{slug}/review/{cs.id}"
@@ -403,7 +448,7 @@
                                 <div class="flex items-center gap-2">
                                     <span
                                         class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400"
-                                        >pending</span
+                                        >leftover</span
                                     >
                                     <span class="text-foreground truncate"
                                         >{cs.message?.trim() ||
@@ -439,27 +484,30 @@
                             >
                         </a>
                     {/each}
-                    {#each diffs as diff}
+                    {#each developCommits.length ? developCommits : diffs as row}
+                        {@const isCommit = Boolean(row.id && !row.seq)}
                         <a
-                            href="/{slug}/history/{diff.seq}"
+                            href={isCommit
+                                ? `/${slug}/history`
+                                : `/${slug}/history/${row.seq}`}
                             class="px-4 py-2.5 flex items-start justify-between gap-3 text-xs hover:bg-accent/40"
                         >
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2">
                                     <span
-                                        class="font-mono text-muted-foreground shrink-0"
-                                        >#{diff.seq}</span
+                                        class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400"
+                                        >{isCommit ? "develop" : `#${row.seq}`}</span
                                     >
                                     <span class="text-foreground truncate"
-                                        >{diff.message?.trim() ||
+                                        >{row.message?.trim() ||
                                             "Untitled push"}</span
                                     >
                                 </div>
                                 <div
                                     class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground"
                                 >
-                                    <span>{formatDate(diff.created_at)}</span>
-                                    {#each entityChips(diff.geodiff_summary) as s}
+                                    <span>{formatDate(row.created_at)}</span>
+                                    {#each entityChips(row.geodiff_summary) as s}
                                         <span>
                                             {s.table}
                                             {#if s.insert}<span
@@ -480,7 +528,7 @@
                             </div>
                             <span
                                 class="font-mono text-muted-foreground shrink-0"
-                                >{diff.sha256?.slice(0, 7) ?? ""}</span
+                                >{(row.id ?? row.sha256 ?? "").toString().slice(0, 7)}</span
                             >
                         </a>
                     {/each}
