@@ -60,6 +60,8 @@
         placeName: string | null;
         termUri: string | null;
         periodLabel: string | null;
+        conceptUri: string | null;
+        subjectLabel: string | null;
         browse?: boolean;
     };
 
@@ -117,6 +119,8 @@
             placeName: data.placeName,
             termUri: data.termUri,
             periodLabel: data.periodLabel,
+            conceptUri: data.conceptUri,
+            subjectLabel: data.subjectLabel,
         } satisfies SearchParams),
     );
 
@@ -232,6 +236,8 @@
             placeName: string | null;
             termUri: string | null;
             periodLabel: string | null;
+            conceptUri: string | null;
+            subjectLabel: string | null;
         }> = {},
         nav: { replaceState?: boolean } = {},
     ) {
@@ -292,6 +298,14 @@
                     overrides.periodLabel !== undefined
                         ? overrides.periodLabel
                         : data.periodLabel,
+                conceptUri:
+                    overrides.conceptUri !== undefined
+                        ? overrides.conceptUri
+                        : data.conceptUri,
+                subjectLabel:
+                    overrides.subjectLabel !== undefined
+                        ? overrides.subjectLabel
+                        : data.subjectLabel,
                 semantic: data.semantic ? undefined : false,
             }),
             { keepFocus: true, noScroll: true, ...nav },
@@ -458,6 +472,8 @@
     placeName={data.placeName}
     termUri={data.termUri}
     periodLabel={data.periodLabel}
+    conceptUri={data.conceptUri}
+    subjectLabel={data.subjectLabel}
     results={displayProjects}
     persistFilters={!data.browse}
     onTemporalCommit={data.browse ? undefined : onTemporalCommit}
@@ -658,7 +674,7 @@
                             </button>
                             {#if expanded[proj.slug]}
                                 <div class="mt-1 space-y-0.5">
-                                    {#each ents as entity}
+                                    {#each ents as entity (`${entity.entity_type}:${entity.entity_id}:${entity.column_name}`)}
                                         <a
                                             href={entityHref(proj.slug, entity)}
                                             class="flex items-baseline gap-1.5 rounded px-1 py-0.5 text-[11px] no-underline hover:bg-accent/60 hover:text-primary"

@@ -1,6 +1,6 @@
 import type { PlaceHit } from "./placeHit";
 
-/** PeriodO (and later other) hits from GET /api/v1/terms. */
+/** Catalog hits from GET /api/v1/terms (PeriodO periods, AAT + FISH concepts). */
 
 export type TermHit = {
 	id: string;

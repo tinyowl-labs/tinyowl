@@ -204,6 +204,7 @@ export async function loadDiscoverySearch(
     parsed.dateTo != null ||
     parsed.tags.length > 0 ||
     parsed.vocabularies.length > 0 ||
+    parsed.conceptUri != null ||
     parsed.projects.length > 0 ||
     parsed.types.length > 0;
 
@@ -223,6 +224,7 @@ export async function loadDiscoverySearch(
     if (parsed.dateTo != null) params.set("date_to", String(parsed.dateTo));
     for (const t of parsed.tags) params.append("tag", t);
     for (const v of parsed.vocabularies) params.append("vocab", v);
+    if (parsed.conceptUri) params.append("vocab", parsed.conceptUri);
     for (const p of parsed.projects) params.append("project", p);
 
     try {
@@ -280,6 +282,8 @@ export async function loadDiscoverySearch(
     placeName: parsed.placeName,
     termUri: parsed.termUri,
     periodLabel: parsed.periodLabel,
+    conceptUri: parsed.conceptUri,
+    subjectLabel: parsed.subjectLabel,
     accessToken,
   };
 }
@@ -382,6 +386,8 @@ export async function loadHomeDiscovery(args: LoadArgs): Promise<DiscoveryPageDa
     placeName: null,
     termUri: null,
     periodLabel: null,
+    conceptUri: null,
+    subjectLabel: null,
     accessToken,
   };
 }

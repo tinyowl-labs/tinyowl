@@ -38,6 +38,10 @@ export type SearchParams = {
   termUri: string | null;
   /** PeriodO prefLabel for the chip (`?period=`), display-only. */
   periodLabel: string | null;
+  /** AAT (subject) URI (`?concept=`). */
+  conceptUri: string | null;
+  /** AAT prefLabel for the chip (`?subject=`), display-only. */
+  subjectLabel: string | null;
 };
 
 export const DEFAULT_SEARCH_RADIUS = 5000;
@@ -126,6 +130,8 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     placeName: (sp.get("place") ?? "").trim() || null,
     termUri: (sp.get("term") ?? "").trim() || null,
     periodLabel: (sp.get("period") ?? "").trim() || null,
+    conceptUri: (sp.get("concept") ?? "").trim() || null,
+    subjectLabel: (sp.get("subject") ?? "").trim() || null,
   };
 }
 
@@ -147,6 +153,8 @@ export function buildSearchParams(input: {
   placeName?: string | null;
   termUri?: string | null;
   periodLabel?: string | null;
+  conceptUri?: string | null;
+  subjectLabel?: string | null;
 }): URLSearchParams {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
@@ -234,6 +242,10 @@ export function buildSearchParams(input: {
   if (term) params.set("term", term);
   const period = (input.periodLabel ?? "").trim();
   if (period) params.set("period", period);
+  const concept = (input.conceptUri ?? "").trim();
+  if (concept) params.set("concept", concept);
+  const subject = (input.subjectLabel ?? "").trim();
+  if (subject) params.set("subject", subject);
 
   return params;
 }
@@ -258,7 +270,9 @@ export function hasActiveSearch(p: SearchParams): boolean {
     p.projects.length > 0 ||
     p.types.length > 0 ||
     Boolean(p.termUri) ||
-    Boolean(p.periodLabel)
+    Boolean(p.periodLabel) ||
+    Boolean(p.conceptUri) ||
+    Boolean(p.subjectLabel)
   );
 }
 

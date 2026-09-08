@@ -112,6 +112,7 @@
     };
     type PlaceItem = { kind: "place"; place: PlaceHit };
     type PeriodItem = { kind: "period"; hit: TermHit };
+    type ConceptItem = { kind: "concept"; hit: TermHit };
     type ProjectItem = { kind: "project"; project: ProjectHit };
     type LayerItem = { kind: "layer"; layer: LayerHit };
     type ArtefactItem = { kind: "artefact"; artefact: ArtefactHit };
@@ -130,6 +131,7 @@
         | ValueItem
         | PlaceItem
         | PeriodItem
+        | ConceptItem
         | ProjectItem
         | LayerItem
         | ArtefactItem
@@ -174,6 +176,10 @@
         termUri?: string | null;
         /** PeriodO prefLabel restored from `?period=` */
         periodLabel?: string | null;
+        /** AAT URI restored from `?concept=` */
+        conceptUri?: string | null;
+        /** AAT prefLabel restored from `?subject=` */
+        subjectLabel?: string | null;
         /** Combobox listbox id (overlay vs page to avoid duplicate ids). */
         listboxId?: string;
         /**
@@ -213,6 +219,8 @@
         placeLabel = null,
         termUri = null,
         periodLabel = null,
+        conceptUri = null,
+        subjectLabel = null,
         listboxId = "search-mention-list",
         palette = false,
         bare = false,
@@ -284,6 +292,7 @@
     let termSuggestions = $state<string[]>([]);
     let placeHits = $state<PlaceHit[]>([]);
     let periodHits = $state.raw<TermHit[]>([]);
+    let conceptHits = $state.raw<TermHit[]>([]);
     let projectHits = $state<ProjectHit[]>([]);
     let layerHits = $state<LayerHit[]>([]);
     let artefactHits = $state<ArtefactHit[]>([]);
@@ -302,6 +311,11 @@
     } | null>(null);
     const periodChip = $derived(
         periodLabel ? { title: periodLabel, uri: termUri ?? "" } : null,
+    );
+    const conceptChip = $derived(
+        subjectLabel
+            ? { title: subjectLabel, uri: conceptUri ?? "" }
+            : null,
     );
     let appliedPlaceLabel = $state<string | null>(null);
     let projectChipTitles = $state<Record<string, string>>({});
@@ -378,6 +392,7 @@
         hasImageChip ||
             hasSpatialChip ||
             Boolean(periodChip) ||
+            Boolean(conceptChip) ||
             activeTags.length > 0 ||
             activeVocabs.length > 0 ||
             activeLayers.length > 0 ||
@@ -415,6 +430,7 @@
             value.trim().length >= 2 &&
             (placeHits.length > 0 ||
                 periodHits.length > 0 ||
+                conceptHits.length > 0 ||
                 projectHits.length > 0 ||
                 layerHits.length > 0 ||
                 artefactHits.length > 0 ||
@@ -458,6 +474,8 @@
         void activeProjects.length;
         void hasImageChip;
         void hasSpatialChip;
+        void periodChip;
+        void conceptChip;
         const el = chipRow;
         if (!el) {
             chipFadeLeft = false;
@@ -476,6 +494,8 @@
             dropdownOpen ||
             hasImageChip ||
             hasSpatialChip ||
+            Boolean(periodChip) ||
+            Boolean(conceptChip) ||
             activeTags.length > 0 ||
             activeVocabs.length > 0 ||
             activeLayers.length > 0 ||
@@ -502,9 +522,17 @@
         return periodHits.map((hit) => ({ kind: "period" as const, hit }));
     }
 
+    function conceptItems(): ConceptItem[] {
+        return conceptHits.map((hit) => ({ kind: "concept" as const, hit }));
+    }
+
     function periodSubtitle(hit: TermHit): string {
         const years = formatTermYears(hit);
         return [hit.spatial, years].filter(Boolean).join(" · ");
+    }
+
+    function conceptSubtitle(hit: TermHit): string {
+        return hit.context || hit.kind.replaceAll("_", " ");
     }
 
     function projectItems(via?: ProjectHit["via"]): ProjectItem[] {
@@ -564,6 +592,7 @@
                 ...artefactItems(),
                 ...cellItems(),
                 ...periodItems(),
+                ...conceptItems(),
                 ...placeItems(),
                 ...projectItems("name"),
                 ...projectItems("geo"),
@@ -572,6 +601,7 @@
         return [
             ...projectItems("name"),
             ...periodItems(),
+            ...conceptItems(),
             ...placeItems(),
             ...projectItems("geo"),
         ];
@@ -681,12 +711,15 @@
         if (mentionMode === "layer") return layerItems();
         if (mentionMode === "artefact") return artefactItems();
         if (mentionMode === "row") return rowItems();
-        return termSuggestions.map((t) => ({
-            kind: "value" as const,
-            id: `vocab:${t}`,
-            label: t,
-            mode: "vocab" as const,
-        }));
+        return [
+            ...conceptItems(),
+            ...termSuggestions.map((t) => ({
+                kind: "value" as const,
+                id: `vocab:${t}`,
+                label: t,
+                mode: "vocab" as const,
+            })),
+        ];
     });
 
     function ghostFill(item: MenuItem): string | null {
@@ -740,10 +773,12 @@
             if (item.kind === "artefact") return `${prefix}${item.artefact.label}`;
             if (item.kind === "entity") return `${prefix}@entity:${item.entity.id}`;
             if (item.kind === "cell") return `${prefix}${item.cell.match}`;
+            if (item.kind === "concept") return item.hit.label;
             return null;
         }
         if (item.kind === "place") return item.place.label;
         if (item.kind === "period") return item.hit.label;
+        if (item.kind === "concept") return item.hit.label;
         if (item.kind === "project") return item.project.title;
         if (item.kind === "layer") return item.layer.label;
         if (item.kind === "artefact") return item.artefact.label;
@@ -987,6 +1022,8 @@
         dateTo?: number | null;
         termUri?: string | null;
         periodLabel?: string | null;
+        conceptUri?: string | null;
+        subjectLabel?: string | null;
     }) {
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
@@ -1000,7 +1037,14 @@
             next.dateFrom !== undefined || next.dateTo !== undefined;
         const applyingPeriod =
             next.termUri !== undefined || next.periodLabel !== undefined;
-        if (nextProjects.length === 1 && !applyingDates && !applyingPeriod) {
+        const applyingConcept =
+            next.conceptUri !== undefined || next.subjectLabel !== undefined;
+        if (
+            nextProjects.length === 1 &&
+            !applyingDates &&
+            !applyingPeriod &&
+            !applyingConcept
+        ) {
             const slug = nextProjects[0]!;
             const placeBBox = nextBBox;
             const placeLat = nextLat;
@@ -1071,6 +1115,14 @@
                     next.periodLabel !== undefined
                         ? next.periodLabel
                         : (periodChip?.title ?? periodLabel ?? null),
+                conceptUri:
+                    next.conceptUri !== undefined
+                        ? next.conceptUri
+                        : (conceptChip?.uri || conceptUri || null),
+                subjectLabel:
+                    next.subjectLabel !== undefined
+                        ? next.subjectLabel
+                        : (conceptChip?.title ?? subjectLabel ?? null),
                 semantic: semantic ? undefined : false,
                 mediaHash:
                     next.mediaHash !== undefined
@@ -1217,6 +1269,7 @@
         loading = false;
         placeHits = [];
         periodHits = [];
+        conceptHits = [];
         projectHits = [];
         layerHits = [];
         artefactHits = [];
@@ -1730,6 +1783,20 @@
         queueMicrotask(() => inputEl?.focus());
     }
 
+    function applyConcept(hit: TermHit) {
+        closeMention();
+        abortSuggestions();
+        value = "";
+        if (atSearch || palette) {
+            navigate({
+                q: "",
+                conceptUri: hit.uri,
+                subjectLabel: hit.label,
+            });
+        }
+        queueMicrotask(() => inputEl?.focus());
+    }
+
     function removePeriod() {
         if (atSearch) {
             navigate({
@@ -1737,6 +1804,15 @@
                 dateTo: null,
                 termUri: null,
                 periodLabel: null,
+            });
+        }
+    }
+
+    function removeConcept() {
+        if (atSearch) {
+            navigate({
+                conceptUri: null,
+                subjectLabel: null,
             });
         }
     }
@@ -1823,6 +1899,10 @@
         }
         if (item.kind === "period") {
             void applyPeriod(item.hit);
+            return;
+        }
+        if (item.kind === "concept") {
+            applyConcept(item.hit);
             return;
         }
         if (item.kind === "project") {
@@ -2081,6 +2161,10 @@
             removePeriod();
             return;
         }
+        if (conceptChip) {
+            removeConcept();
+            return;
+        }
         if (activeVocabs.length > 0) {
             removeVocab(activeVocabs[activeVocabs.length - 1]!);
             return;
@@ -2111,6 +2195,7 @@
             !mentionOpen &&
             (hasSpatialChip ||
                 Boolean(periodChip) ||
+                Boolean(conceptChip) ||
                 activeTags.length > 0 ||
                 activeVocabs.length > 0 ||
                 activeLayers.length > 0 ||
@@ -2191,6 +2276,7 @@
             placesReq += 1;
             placeHits = [];
             periodHits = [];
+            conceptHits = [];
             projectHits = [];
             layerHits = [];
             artefactHits = [];
@@ -2206,7 +2292,7 @@
         loadingPlaces = true;
         try {
             const slug = scopedSlug;
-            const [omnibox, scoped, periods] = await Promise.all([
+            const [omnibox, scoped, periods, concepts] = await Promise.all([
                 searchOmnibox(prefix, { accessToken }),
                 slug
                     ? searchProjectScope(slug, prefix, {
@@ -2215,10 +2301,12 @@
                       })
                     : Promise.resolve({ layers: [], artefacts: [], values: [] }),
                 searchTerms(prefix, { kind: "period", limit: 8 }),
+                searchTerms(prefix, { kind: "concept", limit: 8 }),
             ]);
             if (req !== placesReq) return;
             placeHits = omnibox.places;
             periodHits = periods;
+            conceptHits = concepts;
             projectHits = slug
                 ? omnibox.projects.filter(
                       (p) => p.slug.toLowerCase() !== slug.toLowerCase(),
@@ -2231,6 +2319,7 @@
             if (req !== placesReq) return;
             placeHits = [];
             periodHits = [];
+            conceptHits = [];
             projectHits = [];
             layerHits = [];
             artefactHits = [];
@@ -2250,6 +2339,7 @@
         const wantSlashHits = mentionMode === "slash";
         const wantTags = mentionMode === "tag" || mentionMode === "kinds";
         const wantTerms = mentionMode === "vocab" || mentionMode === "kinds";
+        const wantConcepts = mentionMode === "vocab";
         const wantPlaces =
             mentionMode === "place" ||
             mentionMode === "kinds" ||
@@ -2281,6 +2371,7 @@
             if (mentionMode === "place") placeHits = [];
             if (mentionMode === "project") projectHits = [];
             if (mentionMode === "entity") entityHits = [];
+            if (mentionMode === "vocab") conceptHits = [];
             return;
         }
 
@@ -2314,6 +2405,18 @@
                 );
             } else {
                 termSuggestions = [];
+            }
+            if (wantConcepts && prefix.length >= 2) {
+                jobs.push(
+                    (async () => {
+                        conceptHits = await searchTerms(prefix, {
+                            kind: "concept",
+                            limit: 8,
+                        });
+                    })(),
+                );
+            } else if (mentionMode === "vocab") {
+                conceptHits = [];
             }
             if (wantPlaces && prefix.length >= 2) {
                 jobs.push(
@@ -2419,6 +2522,7 @@
         } catch {
             if (wantTags) tagSuggestions = [];
             if (wantTerms) termSuggestions = [];
+            if (wantConcepts) conceptHits = [];
             if (wantPlaces) placeHits = [];
             if (wantProjects) projectHits = [];
             if (wantEntities) entityHits = [];
@@ -2539,6 +2643,21 @@
                                 class="size-3 shrink-0 text-muted-foreground"
                             />
                             <span class="truncate">{periodChip.title}</span>
+                            <XIcon class="size-3 text-muted-foreground" />
+                        </button>
+                    {/if}
+                    {#if conceptChip}
+                        <button
+                            type="button"
+                            tabindex="-1"
+                            class="{chipBtn} max-w-[16rem]"
+                            onclick={removeConcept}
+                            title="Subject filter"
+                        >
+                            <BookMarkedIcon
+                                class="size-3 shrink-0 text-muted-foreground"
+                            />
+                            <span class="truncate">{conceptChip.title}</span>
                             <XIcon class="size-3 text-muted-foreground" />
                         </button>
                     {/if}
@@ -2797,6 +2916,8 @@
                     {:else}
                         {#each menuItems as item, i (item.kind === "period"
                             ? `period:${item.hit.uri}`
+                            : item.kind === "concept"
+                            ? `concept:${item.hit.uri}`
                             : item.kind === "place"
                             ? `place:${item.place.id}`
                             : item.kind === "project"
@@ -2892,6 +3013,20 @@
                                             class="mt-0.5 block truncate text-[11px] text-muted-foreground"
                                             >{periodSubtitle(item.hit) ||
                                                 "Period"}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "concept"}
+                                    <BookMarkedIcon
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.hit.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{conceptSubtitle(item.hit) ||
+                                                "Concept"}</span
                                         >
                                     </span>
                                 {:else if item.kind === "place"}

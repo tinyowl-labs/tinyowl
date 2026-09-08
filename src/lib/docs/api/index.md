@@ -67,7 +67,7 @@ No authentication required.
 | `GET` | `/api/v1/search/lexicon` | List periods from PeriodO vocabulary |
 | `GET` | `/api/v1/search/lexicon/tags?prefix=` | Tag autocomplete |
 | `GET` | `/api/v1/search/lexicon/terms?prefix=` | Mapped value autocomplete |
-| `GET` | `/api/v1/terms?q=&kind=period&limit=` | PeriodO term typeahead (`start_year` / `end_year` for date filters) |
+| `GET` | `/api/v1/terms?q=&kind=period\|concept\|material\|object_type\|style\|monument\|event&limit=` | Catalog typeahead. PeriodO when `kind` is omitted or `period` (`start_year` / `end_year`). AAT + FISH as `kind=concept` (or a facet: materials / objects / styles / monument types / events). 503 while warming. |
 | `GET` | `/api/v1/vocab/search?q=&vocab=periodo\|aat\|crm&limit=` | Search external vocabularies |
 | `GET` | `/api/v1/projects/centroids` | List all projects with centroid coords (map overview) |
 | `GET` | `/api/v1/projects/{slug}` | Get project detail (title, description, bbox, dates, tags, counts, visibility, licence, embargo) |

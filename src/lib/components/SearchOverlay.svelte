@@ -58,6 +58,12 @@
 	const urlPeriod = $derived(
 		($page.url.searchParams.get("period") ?? "").trim() || null,
 	);
+	const urlConcept = $derived(
+		($page.url.searchParams.get("concept") ?? "").trim() || null,
+	);
+	const urlSubject = $derived(
+		($page.url.searchParams.get("subject") ?? "").trim() || null,
+	);
 	const urlDateFrom = $derived.by(() => {
 		const n = Number($page.url.searchParams.get("date_from"));
 		return Number.isFinite(n) ? n : null;
@@ -138,6 +144,8 @@
 					placeLabel={urlPlace}
 					termUri={urlTerm}
 					periodLabel={urlPeriod}
+					conceptUri={urlConcept}
+					subjectLabel={urlSubject}
 					dateFrom={urlDateFrom}
 					dateTo={urlDateTo}
 					placeholder={scopeSlug

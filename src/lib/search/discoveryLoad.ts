@@ -72,5 +72,7 @@ export type DiscoveryPageData = {
   termUri: string | null;
   /** PeriodO prefLabel (`?period=`). */
   periodLabel: string | null;
+  conceptUri: string | null;
+  subjectLabel: string | null;
   accessToken: string | null;
 };

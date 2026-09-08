@@ -53,6 +53,8 @@
         placeName?: string | null;
         termUri?: string | null;
         periodLabel?: string | null;
+        conceptUri?: string | null;
+        subjectLabel?: string | null;
         results: DiscoveryProject[];
         /** When false, temporal + viewport filters stay client-side (home browse). */
         persistFilters?: boolean;
@@ -88,6 +90,8 @@
         placeName = null,
         termUri = null,
         periodLabel = null,
+        conceptUri = null,
+        subjectLabel = null,
         results,
         persistFilters = false,
         onTemporalCommit,
@@ -315,6 +319,8 @@
                     placeLabel={placeName}
                     {termUri}
                     {periodLabel}
+                    {conceptUri}
+                    {subjectLabel}
                     {accessToken}
                     {autofocus}
                     {examples}
