@@ -3,7 +3,14 @@ import type { RequestHandler } from "./$types";
 
 const BG_BASES = new Set(["pitch", "dark", "dim", "stone", "paper"]);
 const RADII = new Set(["sharp", "rounded", "pill"]);
-const BLURS = new Set(["none", "subtle", "glass"]);
+const SURFACES = new Set(["none", "tinted", "glass"]);
+const COLOR_SCHEMES = new Set(["system", "light", "dark"]);
+
+function parseSurface(raw: unknown): string | null {
+  if (raw === "subtle") return "tinted";
+  if (typeof raw === "string" && SURFACES.has(raw)) return raw;
+  return null;
+}
 
 function sanitizeTheme(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== "object") return null;
@@ -19,8 +26,12 @@ function sanitizeTheme(raw: unknown): Record<string, unknown> | null {
   if (typeof src.radius === "string" && RADII.has(src.radius)) {
     out.radius = src.radius;
   }
-  if (typeof src.blur === "string" && BLURS.has(src.blur)) {
-    out.blur = src.blur;
+  const surface = parseSurface(src.surface) ?? parseSurface(src.blur);
+  if (surface) {
+    out.surface = surface;
+  }
+  if (typeof src.colorScheme === "string" && COLOR_SCHEMES.has(src.colorScheme)) {
+    out.colorScheme = src.colorScheme;
   }
   return Object.keys(out).length > 0 ? out : null;
 }

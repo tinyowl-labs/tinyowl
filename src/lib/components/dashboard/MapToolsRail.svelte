@@ -1,15 +1,10 @@
 <script lang="ts">
-    import PlusIcon from "@lucide/svelte/icons/plus";
-    import MinusIcon from "@lucide/svelte/icons/minus";
     import RulerIcon from "@lucide/svelte/icons/ruler";
     import MessageCircleIcon from "@lucide/svelte/icons/message-circle";
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import CheckIcon from "@lucide/svelte/icons/check";
     import XIcon from "@lucide/svelte/icons/x";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
-    import HomeIcon from "@lucide/svelte/icons/home";
-    import ArrowDownToLineIcon from "@lucide/svelte/icons/arrow-down-to-line";
-    import CompassIcon from "@lucide/svelte/icons/compass";
     import MousePointer2Icon from "@lucide/svelte/icons/mouse-pointer-2";
     import SquareDashedIcon from "@lucide/svelte/icons/square-dashed";
     import LassoIcon from "@lucide/svelte/icons/lasso";
@@ -17,8 +12,6 @@
     import EyeIcon from "@lucide/svelte/icons/eye";
     import FocusIcon from "@lucide/svelte/icons/focus";
     import CopyIcon from "@lucide/svelte/icons/copy";
-    import NetworkIcon from "@lucide/svelte/icons/network";
-    import type { Snippet } from "svelte";
     import type { MeasureMode, MeasureRecord } from "$lib/measure";
     import {
         elevationProfile,
@@ -29,6 +22,13 @@
     } from "$lib/measure";
     import ElevationProfile from "$lib/measure/ElevationProfile.svelte";
     import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
+    import {
+        currentChord,
+        formatChord,
+        keyboardPrefs,
+        type ShortcutId,
+    } from "$lib/shortcuts";
+    import { viewportMenu } from "./viewportMenu.svelte";
 
     type Props = {
         enabled?: boolean;
@@ -40,12 +40,7 @@
         selectionCount?: number;
         selectionTool?: SelectionToolMode;
         isolating?: boolean;
-        onZoomIn?: () => void;
-        onZoomOut?: () => void;
         onFlyToSelection?: () => void;
-        onFlyHome?: () => void;
-        onFlyTopDown?: () => void;
-        onLockNorth?: () => void;
         onClearSelection?: () => void;
         onHideSelected?: () => void;
         onShowSelected?: () => void;
@@ -64,10 +59,6 @@
         canEnterEdit?: boolean;
         onEnterEdit?: () => void;
         onExitEdit?: () => void;
-        /** Extra rail stacked under zoom / home (view chrome). */
-        extraRail?: Snippet;
-        /** Split instance graph vs globe. */
-        showGraph?: boolean;
     };
 
     let {
@@ -80,12 +71,7 @@
         selectionCount = 0,
         selectionTool = $bindable<SelectionToolMode>("click"),
         isolating = false,
-        onZoomIn,
-        onZoomOut,
         onFlyToSelection,
-        onFlyHome,
-        onFlyTopDown,
-        onLockNorth,
         onClearSelection,
         onHideSelected,
         onShowSelected,
@@ -102,21 +88,28 @@
         canEnterEdit = false,
         onEnterEdit,
         onExitEdit,
-        extraRail,
-        showGraph = $bindable(false),
     }: Props = $props();
 
     let selectionOpen = $state(false);
     let copiedId = $state<string | null>(null);
 
+    const chordLabel = $derived.by(() => {
+        void keyboardPrefs.chords;
+        return (id: ShortcutId) => formatChord(currentChord(id));
+    });
+
     const measureModes = $derived.by(() => {
         const modes: { id: MeasureMode; label: string; shortcut: string }[] = [
-            { id: "point", label: "Point", shortcut: "P" },
-            { id: "length", label: "Length", shortcut: "L" },
-            { id: "area", label: "Area", shortcut: "A" },
+            { id: "point", label: "Point", shortcut: chordLabel("map-measure-point") },
+            { id: "length", label: "Length", shortcut: chordLabel("map-measure-length") },
+            { id: "area", label: "Area", shortcut: chordLabel("map-measure-area") },
         ];
         if (dim === "3d") {
-            modes.push({ id: "volume", label: "Vol", shortcut: "V" });
+            modes.push({
+                id: "volume",
+                label: "Vol",
+                shortcut: chordLabel("map-measure-volume"),
+            });
         }
         return modes;
     });
@@ -128,50 +121,41 @@
         volume: "Vol",
     };
 
-    const selectTools: {
-        id: SelectionToolMode;
-        label: string;
-        hint: string;
-        shortcut: string;
-        icon: typeof MousePointer2Icon;
-    }[] = [
+    const selectTools = $derived([
         {
-            id: "click",
+            id: "click" as const,
             label: "Click",
             hint: "Click · Shift add · Ctrl remove",
-            shortcut: "1",
+            shortcut: chordLabel("map-select-click"),
             icon: MousePointer2Icon,
         },
         {
-            id: "box",
+            id: "box" as const,
             label: "Box",
             hint: "Shift+drag add · Ctrl+drag remove",
-            shortcut: "2",
+            shortcut: chordLabel("map-select-box"),
             icon: SquareDashedIcon,
         },
         {
-            id: "lasso",
+            id: "lasso" as const,
             label: "Lasso",
             hint: "Shift+drag add · Ctrl+drag remove",
-            shortcut: "3",
+            shortcut: chordLabel("map-select-lasso"),
             icon: LassoIcon,
         },
-    ];
+    ]);
 
     const hasSelection = $derived(selectionCount > 0);
     const inSelectMode = $derived(
         !enabled && !commentsEnabled && !editEnabled,
     );
 
-    function toggleGraph() {
-        showGraph = !showGraph;
-    }
     const editTitle = $derived(
         editEnabled
-            ? "Stop drawing (Tab)"
+            ? `Stop editing (${chordLabel("map-edit-toggle")})`
             : canEnterEdit
-              ? "Draw (Tab)"
-              : "Select a layer to draw (Tab)",
+              ? `Edit (${chordLabel("map-edit-toggle")})`
+              : `Select a layer to edit (${chordLabel("map-edit-toggle")})`,
     );
 
     const activeSelect = $derived(
@@ -180,6 +164,7 @@
 
     function closePanels() {
         selectionOpen = false;
+        viewportMenu.release("rail:select");
         enabled = false;
         commentsEnabled = false;
         if (editEnabled) {
@@ -188,12 +173,22 @@
         }
     }
 
+    function openSelectionPanel() {
+        viewportMenu.claim("rail:select");
+        selectionOpen = true;
+    }
+
     function toggleSelection() {
         if (!inSelectMode) {
             closePanels();
             return;
         }
-        selectionOpen = !selectionOpen;
+        if (selectionOpen) {
+            selectionOpen = false;
+            viewportMenu.release("rail:select");
+        } else {
+            openSelectionPanel();
+        }
     }
 
     function toggleMeasure() {
@@ -222,8 +217,15 @@
         if (next === "volume" && dim !== "3d") return;
         mode = next;
         selectionOpen = false;
+        viewportMenu.release("rail:select");
         if (!enabled) enabled = true;
     }
+
+    $effect(() => {
+        if (viewportMenu.id !== "rail:select" && selectionOpen) {
+            selectionOpen = false;
+        }
+    });
 
     function recordSub(rec: MeasureRecord): string | null {
         if (rec.mode === "length") return formatLengthSubtext(rec.vertices);
@@ -272,12 +274,12 @@
 <div class="pointer-events-auto flex items-start gap-2">
     <div class="flex flex-col gap-2">
         <div
-            class="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/95 shadow-lg backdrop-blur-sm"
+            class="surface flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border shadow-lg"
         >
             <button
                 type="button"
                 class="{railBtn} {inSelectMode
-                    ? 'bg-primary/15 text-foreground'
+                    ? 'selected hover:text-selected-foreground'
                     : ''}"
                 title="Select ({activeSelect.label}, {activeSelect.shortcut})"
                 aria-label="Select"
@@ -290,9 +292,11 @@
             <button
                 type="button"
                 class="{railBtn} {enabled
-                    ? 'bg-primary/15 text-foreground'
+                    ? 'selected hover:text-selected-foreground'
                     : ''}"
-                title={enabled ? "Stop measuring (M)" : "Measure (M)"}
+                title={enabled
+                    ? `Stop measuring (${chordLabel("map-measure-toggle")})`
+                    : `Measure (${chordLabel("map-measure-toggle")})`}
                 aria-label="Measure"
                 aria-pressed={enabled}
                 onclick={toggleMeasure}
@@ -304,10 +308,10 @@
                 <button
                     type="button"
                     class="{railBtn} {editEnabled
-                        ? 'bg-primary/15 text-foreground'
+                        ? 'selected hover:text-selected-foreground'
                         : ''}"
                     title={editTitle}
-                    aria-label="Draw"
+                    aria-label="Edit"
                     aria-pressed={editEnabled}
                     disabled={!editEnabled && !canEnterEdit}
                     onclick={toggleEdit}
@@ -320,11 +324,11 @@
                 <button
                     type="button"
                     class="{railBtn} {commentsEnabled
-                        ? 'bg-primary/15 text-foreground'
+                        ? 'selected hover:text-selected-foreground'
                         : ''}"
                     title={commentsEnabled
-                        ? "Hide comments (C)"
-                        : "Comments (C)"}
+                        ? `Hide comments (${chordLabel("map-comments-toggle")})`
+                        : `Comments (${chordLabel("map-comments-toggle")})`}
                     aria-label="Comments"
                     aria-pressed={commentsEnabled}
                     onclick={toggleComments}
@@ -332,84 +336,12 @@
                     <MessageCircleIcon class="size-3.5" />
                 </button>
             {/if}
-
-            <button
-                type="button"
-                class="{railBtn} {showGraph
-                    ? 'bg-primary/15 text-foreground'
-                    : ''}"
-                title={showGraph ? "Hide graph (G)" : "Graph (G)"}
-                aria-label="Graph"
-                aria-pressed={showGraph}
-                onclick={toggleGraph}
-            >
-                <NetworkIcon class="size-3.5" />
-            </button>
         </div>
-
-        <div
-            class="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/95 shadow-lg backdrop-blur-sm"
-        >
-            {#if onFlyHome}
-                <button
-                    type="button"
-                    class={railBtn}
-                    title="Home (H)"
-                    aria-label="Home"
-                    onclick={() => onFlyHome()}
-                >
-                    <HomeIcon class="size-3.5" />
-                </button>
-            {/if}
-            <button
-                type="button"
-                class={railBtn}
-                title="Zoom in"
-                aria-label="Zoom in"
-                disabled={!onZoomIn}
-                onclick={() => onZoomIn?.()}
-            >
-                <PlusIcon class="size-3.5" />
-            </button>
-            <button
-                type="button"
-                class={railBtn}
-                title="Zoom out"
-                aria-label="Zoom out"
-                disabled={!onZoomOut}
-                onclick={() => onZoomOut?.()}
-            >
-                <MinusIcon class="size-3.5" />
-            </button>
-            {#if onFlyTopDown}
-                <button
-                    type="button"
-                    class={railBtn}
-                    title="Top-down"
-                    aria-label="Top-down"
-                    onclick={() => onFlyTopDown()}
-                >
-                    <ArrowDownToLineIcon class="size-3.5" />
-                </button>
-            {/if}
-            {#if onLockNorth}
-                <button
-                    type="button"
-                    class={railBtn}
-                    title="North up"
-                    aria-label="North up"
-                    onclick={() => onLockNorth()}
-                >
-                    <CompassIcon class="size-3.5" />
-                </button>
-            {/if}
-        </div>
-        {@render extraRail?.()}
     </div>
 
     {#if selectionOpen}
         <div
-            class="flex w-48 flex-col gap-0.5 rounded-lg border border-border bg-background/95 p-1 text-xs shadow-lg backdrop-blur-sm"
+            class="surface flex w-48 flex-col gap-0.5 rounded-lg border border-border p-1 text-xs shadow-lg"
         >
             <div
                 class="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
@@ -420,7 +352,7 @@
                 <button
                     type="button"
                     class="{menuItem} {selectionTool === tool.id
-                        ? 'bg-secondary font-medium'
+                        ? 'selected'
                         : ''}"
                     onclick={() => setSelectTool(tool.id)}
                 >
@@ -454,7 +386,7 @@
                                 class="size-3.5 shrink-0 text-muted-foreground"
                             />
                             <span class="flex-1">Fly to</span>
-                            <span class={kbd}>F</span>
+                            <span class={kbd}>{chordLabel("map-fly-to")}</span>
                         </button>
                     {/if}
                     <button
@@ -499,7 +431,7 @@
                                 class="size-3.5 shrink-0 text-muted-foreground"
                             />
                             <span class="flex-1">Isolate selected</span>
-                            <span class={kbd}>I</span>
+                            <span class={kbd}>{chordLabel("map-isolate")}</span>
                         </button>
                     {/if}
                 </div>
@@ -515,16 +447,16 @@
                             class="size-3.5 shrink-0 text-muted-foreground"
                         />
                         <span class="flex-1">Clear isolate</span>
-                        <span class={kbd}>U</span>
+                        <span class={kbd}>{chordLabel("map-exit-isolate")}</span>
                     </button>
                 </div>
             {/if}
         </div>
     {:else if isolating || selectionCount > 1}
         <div
-            class="flex overflow-hidden rounded-md border shadow-sm backdrop-blur-sm {isolating
-                ? 'border-primary/30 bg-primary/10'
-                : 'border-border bg-background/95'}"
+            class="flex overflow-hidden rounded-md border shadow-sm {isolating
+                ? 'selected'
+                : 'surface border-border'}"
         >
             <button
                 type="button"
@@ -534,7 +466,7 @@
                 title={isolating ? "Show isolate options" : "Show selection"}
                 onclick={() => {
                     closePanels();
-                    selectionOpen = true;
+                    openSelectionPanel();
                 }}
             >
                 {isolating
@@ -557,7 +489,7 @@
 
     {#if enabled}
         <div
-            class="flex w-72 flex-col gap-1.5 rounded-lg border border-border bg-background/95 p-2 text-xs shadow-lg backdrop-blur-sm"
+            class="surface flex w-72 flex-col gap-1.5 rounded-lg border border-border p-2 text-xs shadow-lg"
         >
             <div
                 class="flex items-center overflow-hidden rounded-md border border-border"
@@ -701,7 +633,7 @@
     {:else if records.length > 0 && !selectionOpen && !editEnabled && !commentsEnabled}
         <button
             type="button"
-            class="rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+            class="surface rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground shadow-sm hover:text-foreground"
             title="Show measurements"
             onclick={() => {
                 closePanels();

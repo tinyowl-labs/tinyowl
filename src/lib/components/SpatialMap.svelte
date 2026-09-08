@@ -661,6 +661,7 @@
         selectedSlug;
         themePrefs.accentHue;
         themePrefs.bgBase;
+        themePrefs.colorScheme;
         if (map && Lref) {
             tuneLeafletBasemap(map, isDark());
             syncResultMarkers();
@@ -682,6 +683,7 @@
         previewRadius;
         themePrefs.accentHue;
         themePrefs.bgBase;
+        themePrefs.colorScheme;
         if (map && Lref) {
             tuneLeafletBasemap(map, isDark());
             syncSpatialGraphics();
@@ -728,7 +730,7 @@
 
         {#if chrome}
             <div
-                class="leaflet-map-chrome pointer-events-auto absolute inset-x-2 top-2 z-10 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-0.5 text-[11px] shadow-sm backdrop-blur-sm"
+                class="leaflet-map-chrome surface pointer-events-auto absolute inset-x-2 top-2 z-10 flex items-center gap-1 rounded-lg border border-border p-0.5 text-[11px] shadow-sm"
             >
                 <div
                     class="grid min-w-0 flex-1 grid-cols-2 gap-0.5 rounded-md bg-muted/50 p-0.5"

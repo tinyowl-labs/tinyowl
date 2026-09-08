@@ -21,6 +21,7 @@
         predicateHints?: string[];
         /** Optional graph.bands labels */
         bands?: { membership?: string; order?: string } | null;
+        sourceType?: string;
     };
 
     let {
@@ -29,6 +30,7 @@
         canWrite = false,
         predicateHints = [],
         bands = null,
+        sourceType = "",
     }: Props = $props();
 
     let relations = $state<EntityRelation[]>([]);
@@ -159,6 +161,12 @@
     function entityHref(type: string, id: string): string {
         return entityLayersHref(slug, { layer: type, highlight: id });
     }
+
+    $effect(() => {
+        if (!sourceType) return;
+        sourceTypeFilter = sourceType;
+        form = { ...form, source_type: sourceType };
+    });
 
     $effect(() => {
         void slug;

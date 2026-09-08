@@ -226,10 +226,12 @@
     let editConcept = $state("");
     let vocabResults = $state<VocabResult[]>([]);
     let vocabLoading = $state(false);
+    let vocabWarming = $state(false);
     let manualSearchQuery = $state("");
     let pickerMode = $state<"search" | "manual">("search");
     let pickerVocabs = $state<string[]>([...SHARED_VOCABS]);
     let searchTimer: ReturnType<typeof setTimeout> | null = null;
+    let searchAbort: AbortController | null = null;
 
     let annotationForm = $state<HTMLFormElement | null>(null);
     let mappingForm = $state<HTMLFormElement | null>(null);
@@ -260,14 +262,32 @@
     });
 
     function closePicker() {
+        searchAbort?.abort();
+        searchAbort = null;
         editingKey = null;
         editConcept = "";
         vocabResults = [];
         vocabLoading = false;
+        vocabWarming = false;
         manualSearchQuery = "";
         pickerMode = "search";
         pickerVocabs = [...SHARED_VOCABS];
         if (searchTimer) clearTimeout(searchTimer);
+    }
+
+    async function sleepMs(ms: number, signal: AbortSignal) {
+        await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, ms);
+            const onAbort = () => {
+                clearTimeout(timer);
+                reject(new DOMException("Aborted", "AbortError"));
+            };
+            if (signal.aborted) {
+                onAbort();
+                return;
+            }
+            signal.addEventListener("abort", onAbort, { once: true });
+        });
     }
 
     async function searchVocab(query: string) {
@@ -275,31 +295,75 @@
         if (!q) {
             vocabResults = [];
             vocabLoading = false;
+            vocabWarming = false;
             return;
         }
+        searchAbort?.abort();
+        const ctrl = new AbortController();
+        searchAbort = ctrl;
         vocabLoading = true;
+        vocabWarming = false;
         vocabResults = [];
 
-        async function fetchVocab(vocab: string) {
-            const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 5000);
-            try {
-                const res = await fetch(
-                    `/api/v1/vocab/search?vocab=${vocab}&q=${encodeURIComponent(q)}&limit=10`,
-                    { signal: ctrl.signal },
-                );
-                clearTimeout(timer);
-                return res.ok ? await res.json() : [];
-            } catch {
-                return [];
+        async function fetchVocab(vocab: string): Promise<VocabResult[]> {
+            const budget = vocab === "periodo" ? 90_000 : 12_000;
+            const deadline = Date.now() + budget;
+            while (!ctrl.signal.aborted) {
+                let res: Response;
+                try {
+                    res = await fetch(
+                        `/api/v1/vocab/search?vocab=${vocab}&q=${encodeURIComponent(q)}&limit=10`,
+                        { signal: ctrl.signal },
+                    );
+                } catch {
+                    return [];
+                }
+                if (
+                    res.status === 503 &&
+                    vocab === "periodo" &&
+                    Date.now() < deadline
+                ) {
+                    vocabWarming = true;
+                    const retry = Number(res.headers.get("Retry-After"));
+                    const waitMs =
+                        Number.isFinite(retry) && retry > 0
+                            ? retry * 1000
+                            : 2000;
+                    try {
+                        await sleepMs(waitMs, ctrl.signal);
+                    } catch {
+                        return [];
+                    }
+                    continue;
+                }
+                if (!res.ok) return [];
+                try {
+                    return (await res.json()) as VocabResult[];
+                } catch {
+                    return [];
+                }
             }
+            return [];
         }
 
-        const lists = await Promise.all(pickerVocabs.map((v) => fetchVocab(v)));
-        vocabResults = lists
-            .flat()
-            .sort((a: VocabResult, b: VocabResult) => b.score - a.score);
-        vocabLoading = false;
+        try {
+            await Promise.all(
+                pickerVocabs.map(async (v) => {
+                    const list = await fetchVocab(v);
+                    if (ctrl.signal.aborted || list.length === 0) return;
+                    vocabResults = [...vocabResults, ...list].sort(
+                        (a: VocabResult, b: VocabResult) =>
+                            b.score - a.score,
+                    );
+                }),
+            );
+        } finally {
+            if (searchAbort === ctrl) {
+                vocabLoading = false;
+                vocabWarming = false;
+                searchAbort = null;
+            }
+        }
     }
 
     function vocabsForValue(row: ValueMappingRow, col: ColumnMappingRow): string[] {
@@ -332,9 +396,11 @@
     }
 
     function startManualEdit() {
+        searchAbort?.abort();
         pickerMode = "manual";
         vocabResults = [];
         vocabLoading = false;
+        vocabWarming = false;
     }
 
     function applyResult(
@@ -901,15 +967,18 @@
                                                             >
                                                                 {#if vocabLoading}
                                                                     <div
-                                                                        class="flex items-center gap-2 px-2 py-4 text-xs text-muted-foreground"
+                                                                        class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground"
                                                                     >
                                                                         <LoaderIcon
                                                                             class="size-3.5 animate-spin"
                                                                         />
-                                                                        Searching…
+                                                                        {vocabWarming
+                                                                            ? "Loading PeriodO…"
+                                                                            : "Searching…"}
                                                                     </div>
-                                                                {:else if vocabResults.length > 0}
-                                                                    {#each vocabResults as result}
+                                                                {/if}
+                                                                {#if vocabResults.length > 0}
+                                                                    {#each vocabResults as result (result.uri)}
                                                                         <button
                                                                             type="button"
                                                                             onclick={() =>
@@ -941,7 +1010,7 @@
                                                                             >
                                                                         </button>
                                                                     {/each}
-                                                                {:else}
+                                                                {:else if !vocabLoading}
                                                                     <p
                                                                         class="px-2 py-4 text-xs text-muted-foreground"
                                                                     >

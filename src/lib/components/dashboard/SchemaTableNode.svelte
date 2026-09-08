@@ -45,11 +45,13 @@
 <div
     class="w-[280px] overflow-visible rounded-xl border bg-card text-foreground shadow-md ring-1 ring-black/5 dark:ring-white/5
         {selected
-        ? 'border-primary/50 shadow-lg shadow-primary/10'
+        ? 'selected'
         : 'border-border'}"
 >
     <div
-        class="flex items-center gap-2 rounded-t-xl border-b border-border bg-muted/50 px-3 py-2.5"
+        class="flex items-center gap-2 rounded-t-xl border-b px-3 py-2.5 {selected
+            ? 'border-selected-foreground/20 bg-selected-foreground/10'
+            : 'border-border bg-muted/50'}"
     >
         <Table2Icon class="size-3.5 shrink-0 text-muted-foreground" />
         <span
@@ -67,16 +69,16 @@
             <li
                 class="relative flex h-7 items-center gap-2 pr-3 pl-3 text-[11px]
                     {linked
-                    ? 'bg-primary/10 text-foreground'
+                    ? 'bg-selected/15 text-foreground'
                     : 'text-muted-foreground'}"
             >
                 <span
-                    class="absolute inset-y-0 left-0 w-0.5 bg-primary {linked
+                    class="absolute inset-y-0 left-0 w-0.5 bg-selected {linked
                         ? ''
                         : 'invisible'}"
                 ></span>
                 <span
-                    class="absolute inset-y-0 right-0 w-0.5 bg-primary {linked
+                    class="absolute inset-y-0 right-0 w-0.5 bg-selected {linked
                         ? ''
                         : 'invisible'}"
                 ></span>
@@ -105,7 +107,7 @@
                 <span
                     class="shrink-0 rounded px-1 py-px font-sans text-[9px] font-medium uppercase tracking-wider
                         {linked
-                        ? 'bg-primary/15 text-primary'
+                        ? 'bg-selected/20 text-selected'
                         : 'bg-muted text-muted-foreground/80'}"
                     >{shortType(col.type)}</span
                 >

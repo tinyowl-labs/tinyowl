@@ -44,6 +44,7 @@
     $effect(() => {
         themePrefs.accentHue;
         themePrefs.bgBase;
+        themePrefs.colorScheme;
         if (!mounted || !container || !browser) return;
 
         let cancelled = false;

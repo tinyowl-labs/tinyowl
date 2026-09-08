@@ -4,6 +4,7 @@
     import PanelRightIcon from "@lucide/svelte/icons/panel-right";
     import PencilIcon from "@lucide/svelte/icons/pencil";
     import PlusIcon from "@lucide/svelte/icons/plus";
+    import Columns3Icon from "@lucide/svelte/icons/columns-3";
     import { Tabs } from "$lib/components/ui/tabs/index.js";
     import { goto, invalidateAll } from "$app/navigation";
     import { page } from "$app/stores";
@@ -19,6 +20,7 @@
     import {
         entityIdsFromPackets,
         parseNdjsonCzml,
+        rowsFromPackets,
     } from "$lib/components/dashboard/czmlLoad";
     import type {
         SchemaTable,
@@ -41,7 +43,7 @@
         type LookupOpt,
     } from "$lib/project/schemaFields";
     import { fromEditBuffer } from "$lib/geoDiff";
-    import { isTypingTarget } from "$lib/components/dashboard/mapShortcuts";
+    import { isTypingTarget, matchPrefShortcut } from "$lib/shortcuts";
     import { browserMediaUrl } from "$lib/project/mediaUrl";
     import CesiumLoading from "$lib/components/CesiumLoading.svelte";
     import {
@@ -49,20 +51,52 @@
         parseBBox,
     } from "$lib/search/params";
 
+    type ViewingRef = "main" | "develop";
+
     let { data } = $props();
 
     const project = $derived(data?.project as Record<string, unknown> | null);
+    const isMember = $derived(
+        Boolean((data as any)?.isMember ?? ($page.data as any)?.isMember),
+    );
     const canWrite = $derived(
         ["owner", "admin", "collaborator"].includes(
             String((data as any)?.role ?? ($page.data as any)?.role ?? "viewer"),
         ),
     );
+    const viewingRef = $derived<ViewingRef>(
+        !isMember
+            ? "main"
+            : $page.url.searchParams.get("ref") === "main"
+              ? "main"
+              : "develop",
+    );
+    const canMutate = $derived(canWrite && viewingRef !== "main");
+
+    $effect(() => {
+        if (!browser) return;
+        editBuffer.bindProject($page.params.project ?? "");
+    });
+
     const tables = $derived(
         (data?.tables as Record<string, string[]> | null) ?? {},
     );
-    const rows = $derived(
+    let mapLayers = $state<LayerData[]>([]);
+    const serverRows = $derived(
         (data?.rows as Record<string, Record<string, unknown>[]> | null) ?? {},
     );
+    const rows = $derived.by(() => {
+        const out: Record<string, Record<string, unknown>[]> = {
+            ...serverRows,
+        };
+        for (const layer of mapLayers) {
+            if (!layer.packets?.length) continue;
+            if ((out[layer.name]?.length ?? 0) > 0) continue;
+            const fromCzml = rowsFromPackets(layer.packets, layer.name);
+            if (fromCzml.length) out[layer.name] = fromCzml;
+        }
+        return out;
+    });
     const accessToken = $derived((data?.accessToken as string) ?? "");
     const mediaByEntity = $derived.by(() => {
         const raw =
@@ -177,10 +211,15 @@
         const build = tableColumnBuilder;
         const out: LayersColumns = {};
         if (!build) return out;
+        void editBuffer.schemaAdds;
         for (const name of tableNames) {
+            const cols = [
+                ...(tables[name] ?? []),
+                ...editBuffer.addedColumnsFor(name),
+            ];
             out[name] = build(
                 name,
-                tables,
+                { ...tables, [name]: cols },
                 mediaByEntity,
                 tableLookups[name],
             );
@@ -204,6 +243,8 @@
         layer?: string;
         highlight?: string;
         q?: string | null;
+        rows?: string[] | null;
+        ref?: ViewingRef | null;
     }): string {
         const params = new URLSearchParams();
         if (opts.mode === "map" && opts.dim === "3d") {
@@ -228,12 +269,48 @@
                 ? opts.q
                 : $page.url.searchParams.get("q");
         if (q) params.set("q", q);
+        const nextRows =
+            opts.rows !== undefined
+                ? (opts.rows ?? [])
+                : $page.url.searchParams.getAll("row");
+        for (const row of nextRows) {
+            if (row.trim()) params.append("row", row);
+        }
         for (const key of ["bbox", "lat", "lng", "radius", "place"] as const) {
             const v = $page.url.searchParams.get(key);
             if (v) params.set(key, v);
         }
+        const nextRef =
+            opts.ref === null
+                ? "develop"
+                : opts.ref !== undefined
+                  ? opts.ref
+                  : $page.url.searchParams.get("ref") === "main"
+                    ? "main"
+                    : "develop";
+        if (nextRef === "main") params.set("ref", "main");
         const qs = params.toString();
         return qs ? `?${qs}` : "";
+    }
+
+    function withViewingRef(path: string): string {
+        if (viewingRef !== "main") return path;
+        return path.includes("?") ? `${path}&ref=main` : `${path}?ref=main`;
+    }
+
+    function setViewingRef(ref: ViewingRef) {
+        if (!isMember) return;
+        const slug = $page.params.project;
+        if (!slug) return;
+        void goto(
+            `/${slug}/layers${layersSearch({
+                mode: viewMode,
+                dim: mapDim,
+                layer: activeTab,
+                ref,
+            })}`,
+            { replaceState: true, noScroll: true },
+        );
     }
 
     function clearSearchQ() {
@@ -244,6 +321,7 @@
                 mode: viewMode,
                 dim: mapDim,
                 q: "",
+                rows: [],
             })}`,
             { replaceState: true, noScroll: true },
         );
@@ -279,6 +357,9 @@
     );
 
     const searchQ = $derived(String((data as { searchQ?: string })?.searchQ ?? ""));
+    const searchRows = $derived(
+        ((data as { searchRows?: string[] })?.searchRows ?? []) as string[],
+    );
     const placeBBox = $derived(parseBBox($page.url.searchParams.get("bbox")));
     const placeLat = $derived.by(() => {
         const n = Number($page.url.searchParams.get("lat"));
@@ -306,7 +387,7 @@
 
     $effect(() => {
         const id = highlightId;
-        if (searchQ && searchHits.length > 0) return;
+        if ((searchQ || searchRows.length > 0) && searchHits.length > 0) return;
         if (id && id !== lastUrlHighlight) {
             lastUrlHighlight = id;
             const layer = resolvedLayer || layerParam || activeTab;
@@ -319,12 +400,14 @@
 
     $effect(() => {
         const q = searchQ;
+        const rowSig = searchRows.join("\0");
         const hits = searchHits;
-        const sig = q
-            ? `${q}\0${hits.map((h) => `${h.entity_type}:${h.entity_id}`).join(",")}`
+        const isolating = Boolean(q) || searchRows.length > 0;
+        const sig = isolating
+            ? `${q}\0${rowSig}\0${hits.map((h) => `${h.entity_type}:${h.entity_id}`).join(",")}`
             : "";
         untrack(() => {
-            if (!q) {
+            if (!isolating) {
                 layerSelection.exitIsolate();
                 return;
             }
@@ -344,12 +427,36 @@
         void sig;
     });
 
-    let schemaToolsOpen = $state(false);
-    let schemaTool = $state<"lists" | "links" | "many" | "edges">("lists");
+    let schemaHeldClosed = $state(false);
+    const schemaFocusTable = $derived(
+        activeTab && activeTab !== SCHEMA_TAB
+            ? activeTab
+            : (tableNames[0] ?? ""),
+    );
+    const schemaToolsOpen = $derived(
+        (viewMode === "table" || viewMode === "schema") &&
+            !schemaHeldClosed &&
+            Boolean(activeTab && activeTab !== SCHEMA_TAB),
+    );
+
+    function selectSchemaTable(name: string) {
+        if (!name || name === SCHEMA_TAB) return;
+        if (activeTab !== name) activeTab = name;
+    }
+
+    function toggleSchemaTools(e?: Event) {
+        e?.preventDefault();
+        e?.stopPropagation();
+        schemaHeldClosed = !schemaHeldClosed;
+    }
+    let schemaTool = $state<"lists" | "links" | "many" | "media" | "edges">(
+        "lists",
+    );
     const schemaToolTabs: { id: typeof schemaTool; label: string }[] = [
         { id: "lists", label: "Lists" },
         { id: "links", label: "Links" },
         { id: "many", label: "Many-to-many" },
+        { id: "media", label: "Media" },
         { id: "edges", label: "Ad-hoc" },
     ];
     let tableEditEnabled = $state(false);
@@ -357,6 +464,9 @@
         null,
     );
     let addRowTable = $state<string | null>(null);
+    let addColOpen = $state(false);
+    let addColName = $state("");
+    let addColError = $state("");
 
     type LazyCmp = any;
     let LayerSceneCmp = $state<LazyCmp>(null);
@@ -366,6 +476,7 @@
     let FkLinkerCmp = $state<LazyCmp | null>(null);
     let PromoteLookupCmp = $state<LazyCmp | null>(null);
     let PromoteJunctionCmp = $state<LazyCmp | null>(null);
+    let MediaLinkerCmp = $state<LazyCmp | null>(null);
     let FeatureCreateFormCmp = $state<LazyCmp | null>(null);
 
     $effect(() => {
@@ -398,7 +509,7 @@
         if (
             viewMode === "schema" &&
             schemaToolsOpen &&
-            canWrite &&
+            canMutate &&
             accessToken &&
             !FkLinkerCmp
         ) {
@@ -411,7 +522,7 @@
         if (
             viewMode === "schema" &&
             schemaToolsOpen &&
-            canWrite &&
+            canMutate &&
             accessToken &&
             !PromoteLookupCmp
         ) {
@@ -424,13 +535,26 @@
         if (
             viewMode === "schema" &&
             schemaToolsOpen &&
-            canWrite &&
+            canMutate &&
             accessToken &&
             !PromoteJunctionCmp
         ) {
             void import("$lib/components/digitize/PromoteJunction.svelte").then(
                 (m) => {
                     PromoteJunctionCmp = m.default;
+                },
+            );
+        }
+        if (
+            viewMode === "schema" &&
+            schemaToolsOpen &&
+            canMutate &&
+            accessToken &&
+            !MediaLinkerCmp
+        ) {
+            void import("$lib/components/digitize/MediaLinker.svelte").then(
+                (m) => {
+                    MediaLinkerCmp = m.default;
                 },
             );
         }
@@ -449,7 +573,7 @@
                 tableColumnBuilder = m.buildColumns;
             });
         }
-        if (canWrite && !FeatureCreateFormCmp) {
+        if (canMutate && !FeatureCreateFormCmp) {
             void import("$lib/components/dashboard/FeatureCreateForm.svelte").then(
                 (m) => {
                     FeatureCreateFormCmp = m.default;
@@ -494,8 +618,15 @@
         if (inTables) tablesEverShown = true;
     });
 
+    $effect(() => {
+        if (viewingRef !== "main") return;
+        tableEditEnabled = false;
+        tableAttrEdit = null;
+        addRowTable = null;
+    });
+
     function toggleTableEdit() {
-        if (!canWrite) return;
+        if (!canMutate) return;
         if (tableEditEnabled) {
             tableEditEnabled = false;
             tableAttrEdit = null;
@@ -512,7 +643,7 @@
     }
 
     function openTableAttrEdit(table: string, entityId: string) {
-        if (!canWrite || !tableEditEnabled || !entityId) return;
+        if (!canMutate || !tableEditEnabled || !entityId) return;
         if (
             tableAttrEdit?.table === table &&
             tableAttrEdit.entityId === entityId
@@ -566,7 +697,7 @@
     }
 
     function deleteSelectedTableRows() {
-        if (!canWrite || !tableEditEnabled) return;
+        if (!canMutate || !tableEditEnabled) return;
         const table = activeTab;
         if (!table) return;
         const ids: string[] = [];
@@ -589,9 +720,34 @@
     }
 
     function openAddTableRow(name: string) {
-        if (!canWrite || !name) return;
+        if (!canMutate || !name) return;
         handleTabChange(name);
         addRowTable = name;
+    }
+
+    function columnsForTable(name: string): string[] {
+        void editBuffer.schemaAdds;
+        return [...(tables[name] ?? []), ...editBuffer.addedColumnsFor(name)];
+    }
+
+    function confirmAddColumn() {
+        const table = activeTab;
+        if (!canMutate || !table || table === SCHEMA_TAB) return;
+        const name = addColName.trim();
+        const existing = columnsForTable(table).map((c) => c.toLowerCase());
+        if (existing.includes(name.toLowerCase())) {
+            addColError = "That column already exists.";
+            return;
+        }
+        const err = editBuffer.addColumn(table, name);
+        if (err) {
+            addColError = err;
+            return;
+        }
+        addColName = "";
+        addColError = "";
+        addColOpen = false;
+        tableEditEnabled = true;
     }
 
     function confirmAddTableRow(attrs: Record<string, string>) {
@@ -629,7 +785,7 @@
         if (!columnId || columnId.startsWith("_")) return false;
         const nk = columnId.toLowerCase();
         if (nk === "source_id" || nk === "entity_type") return false;
-        return attrFieldsForTable(tables[table] ?? []).includes(columnId);
+        return attrFieldsForTable(columnsForTable(table)).includes(columnId);
     }
 
     function commitTableCell(
@@ -639,22 +795,17 @@
         value: string,
     ) {
         const id = String(row.source_id ?? row.SOURCE_ID ?? "");
-        if (!id) return;
+        if (!id || !canMutate) return;
         editBuffer.upsertAttributes(table, id, { [columnId]: value });
     }
 
     $effect(() => {
-        if (!browser || !canWrite) return;
+        if (!browser || !canMutate) return;
         const onKey = (ev: KeyboardEvent) => {
             if (!inTables) return;
             if (isTypingTarget(ev.target)) return;
-            if (
-                ev.key === "Tab" &&
-                !ev.shiftKey &&
-                !ev.metaKey &&
-                !ev.ctrlKey &&
-                !ev.altKey
-            ) {
+            const id = matchPrefShortcut(ev, ["tables"]);
+            if (id === "tables-edit-toggle") {
                 if (tableAttrEdit) return;
                 ev.preventDefault();
                 toggleTableEdit();
@@ -672,10 +823,7 @@
                 }
                 return;
             }
-            if (
-                tableEditEnabled &&
-                (ev.key === "Delete" || ev.key === "Backspace")
-            ) {
+            if (tableEditEnabled && id === "tables-delete") {
                 ev.preventDefault();
                 deleteSelectedTableRows();
             }
@@ -766,7 +914,6 @@
         return () => document.removeEventListener("fullscreenchange", onFs);
     });
 
-    let mapLayers = $state<LayerData[]>([]);
     let mapLoading = $state(false);
     let czmlLoadGen = 0;
     let czmlContentKey = "";
@@ -803,16 +950,16 @@
             tableAttrEdit.table === activeTab &&
             tableAttrEdit.entityId === id
         ) {
-            return "bg-accent ring-1 ring-inset ring-primary/20";
+            return "selected";
         }
         if (layerSelection.selected.has(key)) {
             if (layerSelection.primaryKey === key) {
-                return "bg-accent ring-1 ring-inset ring-primary/20";
+                return "selected";
             }
-            return "bg-accent/40";
+            return "bg-selected/40 text-foreground";
         }
         if (joinedSet.has(key)) return "bg-accent/40";
-        if (buffered) return "bg-primary/10";
+        if (buffered) return "bg-selected/15";
         return "";
     }
 
@@ -833,7 +980,7 @@
         const spatial = names.filter((name) =>
             (colsByTable[name] ?? []).some((c) => /^_?geom/i.test(c)),
         );
-        const fetchKey = `${slug}\0${spatial.join("\0")}`;
+        const fetchKey = `${slug}\0${viewingRef}\0${spatial.join("\0")}`;
         if (
             !force &&
             (fetchKey === czmlFetchedKey || fetchKey === czmlInFlightKey)
@@ -853,7 +1000,7 @@
         let viewsByLayer: Record<string, LayerView[]> = {};
         try {
             const vr = await fetch(
-                `/api/v1/projects/${slug}/layer-views`,
+                withViewingRef(`/api/v1/projects/${slug}/layer-views`),
                 { headers: authHeaders() },
             );
             if (vr.ok) {
@@ -868,7 +1015,9 @@
             if (gen !== czmlLoadGen) return;
             try {
                 const res = await fetch(
-                    `/api/v1/projects/${slug}/layers/${name}/czml`,
+                    withViewingRef(
+                        `/api/v1/projects/${slug}/layers/${name}/czml`,
+                    ),
                     { headers: authHeaders() },
                 );
                 if (res.ok) {
@@ -914,7 +1063,7 @@
         czmlFetchedKey = fetchKey;
         czmlInFlightKey = "";
         if (initial) mapLoading = false;
-        if (canWrite) {
+        if (canMutate) {
             for (const item of persistQueue) {
                 persistLayerViews(item.name, item.views);
             }
@@ -936,6 +1085,7 @@
     }
 
     async function persistLayerViewsNow(layerName: string, views: LayerView[]) {
+        if (!canMutate) return;
         const slug = $page.params.project;
         try {
             const res = await fetch(
@@ -1027,9 +1177,12 @@
         tilesetsLoading = true;
         try {
             const slug = $page.params.project;
-            const res = await fetch(`/api/v1/projects/${slug}/tilesets`, {
-                headers: authHeaders(),
-            });
+            const res = await fetch(
+                withViewingRef(`/api/v1/projects/${slug}/tilesets`),
+                {
+                    headers: authHeaders(),
+                },
+            );
             if (res.ok) {
                 const body = await res.json();
                 tilesets = Array.isArray(body) ? body : [];
@@ -1060,9 +1213,12 @@
     async function loadCoverages() {
         try {
             const slug = $page.params.project;
-            const res = await fetch(`/api/v1/projects/${slug}/coverages`, {
-                headers: authHeaders(),
-            });
+            const res = await fetch(
+                withViewingRef(`/api/v1/projects/${slug}/coverages`),
+                {
+                    headers: authHeaders(),
+                },
+            );
             if (!res.ok) {
                 coverages = [];
                 return;
@@ -1085,6 +1241,7 @@
     $effect(() => {
         const mode = viewMode;
         const namesKey = tableNamesKey;
+        const ref = viewingRef;
         // Do NOT depend on mapDim — refetching CZML on 2D/3D toggle remounts
         // datasources and looks like a full reload.
         if (namesKey) {
@@ -1093,16 +1250,19 @@
         if (mode === "map" && namesKey) {
             void loadAllCzml();
         }
+        void ref;
     });
 
     $effect(() => {
         if (viewMode === "map" && mapDim === "3d") {
+            void viewingRef;
             void loadTilesets();
         }
     });
 
     $effect(() => {
         if (viewMode === "map") {
+            void viewingRef;
             void loadCoverages();
         }
     });
@@ -1164,20 +1324,23 @@
                         onSelectTileset={selectTileset}
                         onToggleFullscreen={toggleMapFullscreen}
                         onDimChange={setMapDim}
-                        canEditViews={canWrite}
-                        canWrite={canWrite}
+                        canEditViews={canMutate}
+                        canWrite={canMutate}
                         tables={tables}
                         onPersistViews={persistLayerViews}
                         {diffFeatures}
                         {joinedKeys}
-                        searchQ={searchQ}
+                        searchQ={searchQ || searchRows.join(" ")}
                         onClearSearchQ={clearSearchQ}
                         placeBBox={placeBBox}
                         placeLat={placeLat}
                         placeLng={placeLng}
                         placeRadius={placeRadius}
                         focusLayer={
-                            viewMode === "map" && !searchQ && !highlightId
+                            viewMode === "map" &&
+                            !searchQ &&
+                            searchRows.length === 0 &&
+                            !highlightId
                                 ? resolvedLayer
                                 : ""
                         }
@@ -1192,9 +1355,12 @@
                         schemaEdges={schemaEdges}
                         {mediaByEntity}
                         onOpenTable={(name: string) => handleTabChange(name)}
-                        onAddTableRow={canWrite
+                        onAddTableRow={canMutate
                             ? (name: string) => openAddTableRow(name)
                             : undefined}
+                        {viewingRef}
+                        onSetViewingRef={setViewingRef}
+                        showRefToggle={isMember}
                     />
                 {:else}
                     <CesiumLoading />
@@ -1219,53 +1385,119 @@
                             contentClass="mt-5 flex flex-1 min-h-0 flex-col overflow-hidden"
                             lazy
                         >
-                            {#snippet afterSeparator()}
-                                {#if canWrite}
-                                    <button
-                                        type="button"
-                                        onclick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            if (viewMode === "table" && activeTab)
-                                                openAddTableRow(activeTab);
-                                        }}
-                                        class="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
-                                        title="Add row"
-                                        aria-label="Add row"
-                                    >
-                                        <PlusIcon class="size-4" />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onclick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            toggleTableEdit();
-                                        }}
-                                        class="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 transition-colors {tableEditEnabled
-                                            ? 'bg-background text-foreground shadow-sm'
-                                            : 'text-muted-foreground hover:text-foreground'}"
-                                        title={tableEditEnabled
-                                            ? "Stop editing (Tab)"
-                                            : "Edit attributes (Tab)"}
-                                        aria-label="Edit attributes"
-                                        aria-pressed={tableEditEnabled}
-                                    >
-                                        <PencilIcon class="size-4" />
-                                    </button>
-                                {/if}
-                            {/snippet}
                             {#snippet trailing()}
-                                {#if viewMode === "schema"}
+                                {#if canMutate && viewMode === "table"}
+                                    <div class="relative flex shrink-0 items-center gap-0.5">
+                                        <button
+                                            type="button"
+                                            onclick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                if (activeTab && activeTab !== SCHEMA_TAB)
+                                                    openAddTableRow(activeTab);
+                                            }}
+                                            class="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                            title="Add row"
+                                            aria-label="Add row"
+                                        >
+                                            <PlusIcon class="size-4" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onclick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                addColOpen = !addColOpen;
+                                                addColError = "";
+                                            }}
+                                            class="inline-flex items-center justify-center rounded-md p-1.5 transition-colors {addColOpen
+                                                ? 'bg-background text-foreground shadow-sm'
+                                                : 'text-muted-foreground hover:text-foreground'}"
+                                            title="Add column"
+                                            aria-label="Add column"
+                                            aria-expanded={addColOpen}
+                                        >
+                                            <Columns3Icon class="size-4" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onclick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                toggleTableEdit();
+                                            }}
+                                            class="inline-flex items-center justify-center rounded-md p-1.5 transition-colors {tableEditEnabled
+                                                ? 'bg-background text-foreground shadow-sm'
+                                                : 'text-muted-foreground hover:text-foreground'}"
+                                            title={tableEditEnabled
+                                                ? "Stop editing (Tab)"
+                                                : "Edit attributes (Tab)"}
+                                            aria-label="Edit attributes"
+                                            aria-pressed={tableEditEnabled}
+                                        >
+                                            <PencilIcon class="size-4" />
+                                        </button>
+                                        {#if addColOpen}
+                                            <form
+                                                class="surface absolute right-0 top-[calc(100%+0.35rem)] z-30 w-56 rounded-lg border border-border p-2 shadow-lg"
+                                                onsubmit={(e) => {
+                                                    e.preventDefault();
+                                                    confirmAddColumn();
+                                                }}
+                                            >
+                                                <label
+                                                    class="block text-[11px] text-muted-foreground"
+                                                    for="add-col-name"
+                                                    >Column name</label
+                                                >
+                                                <input
+                                                    id="add-col-name"
+                                                    class="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+                                                    bind:value={addColName}
+                                                    placeholder="notes"
+                                                    autocomplete="off"
+                                                />
+                                                {#if addColError}
+                                                    <p
+                                                        class="mt-1 text-[11px] text-destructive"
+                                                    >
+                                                        {addColError}
+                                                    </p>
+                                                {/if}
+                                                <div
+                                                    class="mt-2 flex justify-end gap-1"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        class="rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                                        onclick={() =>
+                                                            (addColOpen = false)}
+                                                        >Cancel</button
+                                                    >
+                                                    <button
+                                                        type="submit"
+                                                        class="rounded-md bg-primary/15 px-2 py-1 text-[11px] font-medium"
+                                                        >Add</button
+                                                    >
+                                                </div>
+                                            </form>
+                                        {/if}
+                                    </div>
+                                {/if}
+                                {#if inTables}
                                     <button
                                         type="button"
-                                        onclick={() =>
-                                            (schemaToolsOpen = !schemaToolsOpen)}
+                                        onclick={(e) => toggleSchemaTools(e)}
                                         class="rounded-md p-1.5 transition-colors {schemaToolsOpen
                                             ? 'bg-secondary text-foreground'
                                             : 'text-muted-foreground hover:text-foreground'}"
-                                        title="Schema tools"
+                                        title={schemaToolsOpen
+                                            ? "Hide schema tools"
+                                            : "Show schema tools"}
                                         aria-pressed={schemaToolsOpen}
+                                        aria-label={schemaToolsOpen
+                                            ? "Hide schema tools"
+                                            : "Show schema tools"}
                                     >
                                         <PanelRightIcon class="size-4" />
                                     </button>
@@ -1279,6 +1511,8 @@
                                                 tables={schemaTables}
                                                 edges={schemaEdges}
                                                 loading={schemaLoading}
+                                                selectedTable={schemaFocusTable}
+                                                onSelectTable={selectSchemaTable}
                                             />
                                         {/if}
                                     </div>
@@ -1303,7 +1537,7 @@
                                             {/if}
                                         </p>
                                     {/if}
-                                    {#if canWrite && tableEditEnabled && viewMode === "table"}
+                                    {#if canMutate && tableEditEnabled && viewMode === "table"}
                                         <p
                                             class="shrink-0 pb-2 text-[11px] text-muted-foreground"
                                         >
@@ -1315,19 +1549,24 @@
                                         <p
                                             class="shrink-0 pb-2 text-[11px] text-muted-foreground"
                                         >
-                                            Session buffer · {bufferSummary}
+                                            Session · {bufferSummary}
                                             {#if (editBuffer.pendingByTable[tabValue] ?? 0) > 0}
                                                 · {editBuffer.pendingByTable[tabValue]}
                                                 on this table
                                             {/if}
-                                            ·
-                                            <button
-                                                type="button"
-                                                class="font-medium text-foreground underline-offset-2 hover:underline"
-                                                onclick={() => setViewMode("map")}
-                                            >
-                                                Commit from the map
-                                            </button>
+                                            {#if canMutate}
+                                                ·
+                                                <button
+                                                    type="button"
+                                                    class="font-medium text-foreground underline-offset-2 hover:underline"
+                                                    onclick={() => setViewMode("map")}
+                                                >
+                                                    Commit from the map
+                                                </button>
+                                            {:else}
+                                                · viewing published main
+                                                (read-only)
+                                            {/if}
                                         </p>
                                     {/if}
                                     {#if tableRows.length > 0}
@@ -1456,7 +1695,7 @@
                                             >
                                                 No rows in this table yet.
                                             </p>
-                                            {#if canWrite}
+                                            {#if canMutate}
                                                 <button
                                                     type="button"
                                                     class="mt-3 text-sm font-medium text-foreground underline-offset-2 hover:underline"
@@ -1492,7 +1731,7 @@
                         </div>
                     {/if}
                 </div>
-                {#if addRowTable && FeatureCreateFormCmp && canWrite}
+                {#if addRowTable && FeatureCreateFormCmp && canMutate}
                     <div
                         class="pointer-events-none absolute right-4 bottom-4 z-20"
                     >
@@ -1501,7 +1740,7 @@
                             geomType="none"
                             mode="create"
                             fields={attrFieldsForTable(
-                                tables[addRowTable] ?? [],
+                                columnsForTable(addRowTable),
                             ).filter(
                                 (c) =>
                                     c !== "source_id" && c !== "entity_type",
@@ -1515,22 +1754,18 @@
                         />
                     </div>
                 {/if}
-                {#if viewMode === "schema" && schemaToolsOpen}
+                {#if inTables && schemaToolsOpen}
                     <aside
-                        class="w-[22rem] shrink-0 overflow-y-auto border-l border-border bg-card/60 px-4 py-4 space-y-4"
+                        class="w-[22rem] shrink-0 overflow-y-auto border-l border-border surface px-4 py-4 space-y-4"
                     >
-                        {#if canWrite && accessToken}
-                            <div>
-                                <h2 class="text-sm font-semibold text-foreground">
-                                    Schema tools
-                                </h2>
-                                <p class="text-xs text-muted-foreground mt-0.5">
-                                    Turn imported columns into lookups, foreign
-                                    keys, or many-to-many links.
-                                </p>
-                            </div>
+                        {#if schemaFocusTable}
+                            <p class="text-xs font-medium text-foreground">
+                                {schemaFocusTable}
+                            </p>
+                        {/if}
+                        {#if canMutate && accessToken}
                             <div
-                                class="grid grid-cols-2 gap-1 rounded-md border border-border p-1"
+                                class="grid grid-cols-2 gap-1 rounded-md bg-muted p-1"
                                 role="tablist"
                                 aria-label="Schema tool"
                             >
@@ -1549,12 +1784,14 @@
                                     </button>
                                 {/each}
                             </div>
+                            {#key schemaFocusTable}
                             {#if schemaTool === "lists" && PromoteLookupCmp}
                                 <PromoteLookupCmp
                                     {accessToken}
                                     slug={$page.params.project ?? ""}
                                     tables={schemaTables}
                                     edges={schemaEdges}
+                                    focusTable={schemaFocusTable}
                                     onSaved={() => {
                                         schemaLoaded = false;
                                         void loadSchema();
@@ -1568,6 +1805,7 @@
                                     slug={$page.params.project ?? ""}
                                     tables={schemaTables}
                                     edges={schemaEdges}
+                                    focusTable={schemaFocusTable}
                                     onSaved={() => {
                                         schemaLoaded = false;
                                         void loadSchema();
@@ -1578,6 +1816,20 @@
                                     {accessToken}
                                     slug={$page.params.project ?? ""}
                                     tables={schemaTables}
+                                    focusTable={schemaFocusTable}
+                                    onSaved={() => {
+                                        schemaLoaded = false;
+                                        void loadSchema();
+                                        dataEpoch += 1;
+                                        void invalidateAll();
+                                    }}
+                                />
+                            {:else if schemaTool === "media" && MediaLinkerCmp}
+                                <MediaLinkerCmp
+                                    {accessToken}
+                                    slug={$page.params.project ?? ""}
+                                    tables={schemaTables}
+                                    focusTable={schemaFocusTable}
                                     onSaved={() => {
                                         schemaLoaded = false;
                                         void loadSchema();
@@ -1589,14 +1841,17 @@
                                 <EntityRelationsPanelCmp
                                     slug={$page.params.project ?? ""}
                                     {accessToken}
-                                    {canWrite}
+                                    canWrite={canMutate}
+                                    sourceType={schemaFocusTable}
                                 />
                             {/if}
+                            {/key}
                         {:else if EntityRelationsPanelCmp}
                             <EntityRelationsPanelCmp
                                 slug={$page.params.project ?? ""}
                                 {accessToken}
-                                {canWrite}
+                                canWrite={canMutate}
+                                sourceType={schemaFocusTable}
                             />
                         {/if}
                     </aside>

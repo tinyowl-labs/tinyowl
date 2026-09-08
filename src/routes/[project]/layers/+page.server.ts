@@ -1,5 +1,6 @@
 import type { PageServerLoad } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
+import { tableHasGeom } from "$lib/project/schemaFields";
 
 type TableRow = Record<string, unknown>;
 type MediaItem = {
@@ -19,6 +20,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   const highlight = url.searchParams.get("highlight") ?? "";
   const viewRaw = url.searchParams.get("view") ?? "";
   const dimRaw = url.searchParams.get("dim") ?? "";
+  const refQS = url.searchParams.get("ref") === "main" ? "?ref=main" : "";
   // view=3d is a short form of view=map&dim=3d.
   const view =
     viewRaw === "3d" ||
@@ -37,6 +39,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
         : "";
   const tileset = url.searchParams.get("tileset") ?? "";
   const searchQ = (url.searchParams.get("q") ?? "").trim();
+  const searchRows = url.searchParams.getAll("row").map((r) => r.trim()).filter(Boolean);
 
   const accessToken = await locals.getAccessToken();
   const headers: Record<string, string> = {};
@@ -45,7 +48,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   let tables: Record<string, string[]> = {};
   try {
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables${refQS}`,
       { headers },
     );
     if (res.ok) {
@@ -55,12 +58,17 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   } catch (_) {}
 
   const tableNames = Object.keys(tables);
+  const loadSpatialRows = view === "table" || view === "schema";
   const allRows: Record<string, TableRow[]> = {};
   await Promise.all(
     tableNames.map(async (name) => {
+      if (!loadSpatialRows && tableHasGeom(tables[name])) {
+        allRows[name] = [];
+        return;
+      }
       try {
         const res = await fetch(
-          `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${name}/rows`,
+          `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${name}/rows${refQS}`,
           { headers },
         );
         allRows[name] = res.ok ? ((await res.json()).rows ?? []) : [];
@@ -110,16 +118,27 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     match_value: string;
   };
   let searchHits: SearchEntityHit[] = [];
-  if (searchQ) {
+  if (searchQ || searchRows.length > 0) {
     try {
-      const qs = new URLSearchParams({ q: searchQ, limit: "50" });
+      const qs = new URLSearchParams({ limit: "50" });
+      if (searchQ) qs.set("q", searchQ);
+      if (layer.trim()) qs.set("layer", layer.trim());
+      for (const row of searchRows) qs.append("row", row);
+      if (url.searchParams.get("ref") === "main") qs.set("ref", "main");
       const res = await fetch(
         `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/search-entities?${qs}`,
         { headers },
       );
       if (res.ok) {
         const rows = await res.json();
-        searchHits = Array.isArray(rows) ? rows : [];
+        const all = Array.isArray(rows) ? rows : [];
+        const layerKey = layer.trim().toLowerCase();
+        searchHits = layerKey
+          ? all.filter(
+              (h: SearchEntityHit) =>
+                (h.entity_type ?? "").toLowerCase() === layerKey,
+            )
+          : all;
       }
     } catch {
       /* best-effort */
@@ -162,6 +181,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     mediaByEntity,
     accessToken,
     searchQ,
+    searchRows,
     searchHits,
   };
 };

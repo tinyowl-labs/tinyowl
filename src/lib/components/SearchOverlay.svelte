@@ -3,8 +3,11 @@
 	import { afterNavigate } from "$app/navigation";
 	import { page } from "$app/stores";
 	import { onMount } from "svelte";
-	import XIcon from "@lucide/svelte/icons/x";
 	import SearchComposer from "$lib/components/SearchComposer.svelte";
+	import {
+		DEFAULT_SEARCH_RADIUS,
+		parseBBox,
+	} from "$lib/search/params";
 	import {
 		isSearchModK,
 		searchOverlay,
@@ -27,6 +30,28 @@
 		pageProject?.title || scopeSlug || "",
 	);
 
+	const urlLayer = $derived(
+		($page.url.searchParams.get("layer") ?? "").trim() || null,
+	);
+	const urlRows = $derived($page.url.searchParams.getAll("row"));
+	const urlPlace = $derived(
+		($page.url.searchParams.get("place") ?? "").trim() || null,
+	);
+	const urlLat = $derived.by(() => {
+		const n = Number($page.url.searchParams.get("lat"));
+		return Number.isFinite(n) ? n : null;
+	});
+	const urlLng = $derived.by(() => {
+		const n = Number($page.url.searchParams.get("lng"));
+		return Number.isFinite(n) ? n : null;
+	});
+	const urlRadius = $derived.by(() => {
+		const raw = $page.url.searchParams.get("radius");
+		if (raw == null || raw === "") return DEFAULT_SEARCH_RADIUS;
+		const n = Number(raw);
+		return Number.isFinite(n) ? n : DEFAULT_SEARCH_RADIUS;
+	});
+	const urlBBox = $derived(parseBBox($page.url.searchParams.get("bbox")));
 	const accessToken = $derived(
 		(($page.data as { accessToken?: string | null } | undefined)
 			?.accessToken ?? null) as string | null,
@@ -61,12 +86,16 @@
 		/>
 		<Dialog.Content
 			trapFocus
-			class="fixed left-1/2 top-[12vh] z-[2001] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 overflow-visible rounded-xl border border-border bg-background p-2 shadow-lg outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+			class="fixed left-1/2 top-[12vh] z-[2001] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 overflow-visible border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
 			onOpenAutoFocus={(e) => {
 				e.preventDefault();
 				requestAnimationFrame(() => composer?.focusField?.());
 			}}
 			onEscapeKeydown={(e) => {
+				if (document.activeElement?.hasAttribute("data-chip-edit")) {
+					e.preventDefault();
+					return;
+				}
 				if (document.getElementById("search-overlay-list")) {
 					e.preventDefault();
 				}
@@ -74,34 +103,30 @@
 		>
 			<Dialog.Title class="sr-only">Search</Dialog.Title>
 			<Dialog.Description class="sr-only">
-				Search projects, places, and — when inside a project — layers, artefacts, and entity ids. Escape dismisses typeahead then closes. Tab completes ghost text when the search field is focused. # chips a project tag.
+				Search projects, places, and — when inside a project — layers, artefacts, and entity ids. Escape dismisses typeahead then closes. Tab completes the suggestion without searching. Enter searches, or opens the highlighted row. Type / in a project for layer, row, entity, artefact, or place filters. # chips a project tag.
 			</Dialog.Description>
-			<div class="flex items-start gap-1">
-				<div class="min-w-0 flex-1">
-					{#if searchOverlay.open}
-						<SearchComposer
-							bind:this={composer}
-							accessToken={accessToken}
-							palette
-							listboxId="search-overlay-list"
-							projects={scopeSlug ? [scopeSlug] : []}
-							projectLabels={scopeSlug && scopeTitle
-								? { [scopeSlug]: scopeTitle }
-								: {}}
-                            placeholder={scopeSlug
-								? `Search in ${scopeTitle}…  @ filters · # tag`
-								: "Search projects or places…  @ filters · # tag"}
-							class="shadow-none"
-						/>
-					{/if}
-				</div>
-				<Dialog.Close
-					class="mt-1 shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-					aria-label="Close search"
-				>
-					<XIcon class="size-4" />
-				</Dialog.Close>
-			</div>
+			{#if searchOverlay.open}
+				<SearchComposer
+					bind:this={composer}
+					accessToken={accessToken}
+					palette
+					listboxId="search-overlay-list"
+					projects={scopeSlug ? [scopeSlug] : []}
+					projectLabels={scopeSlug && scopeTitle
+						? { [scopeSlug]: scopeTitle }
+						: {}}
+					layers={urlLayer ? [urlLayer] : []}
+					rows={urlRows}
+					lat={urlLat}
+					lng={urlLng}
+					radius={urlRadius}
+					bbox={urlBBox}
+					placeLabel={urlPlace}
+					placeholder={scopeSlug
+						? `Search in ${scopeTitle}…  /layer · /row · @ filters · # tag`
+						: "Search projects or places…  @ filters · # tag"}
+				/>
+			{/if}
 		</Dialog.Content>
 	</Dialog.Portal>
 </Dialog.Root>

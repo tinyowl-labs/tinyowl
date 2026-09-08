@@ -1,23 +1,19 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
-    import { page } from "$app/stores";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import Building2Icon from "@lucide/svelte/icons/building-2";
-    import Header from "$lib/components/ui/header.svelte";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
     import { Field, FieldLabel } from "$lib/components/ui/field/index.js";
 
     let { data, form } = $props();
-    const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const orgs = $derived(data?.orgs ?? []);
     let showCreate = $state(false);
 </script>
 
 <svelte:head><title>Organisations — echidna</title></svelte:head>
 
-<div class="flex h-screen flex-col overflow-hidden">
-    <Header subtitle="Organisations" {hasSession} />
+<div class="flex h-full flex-col overflow-hidden">
     <main class="min-h-0 flex-1 overflow-y-auto bg-background">
         <div class="mx-auto max-w-5xl px-6 py-6">
             <div class="mb-6 flex items-center justify-between gap-4">

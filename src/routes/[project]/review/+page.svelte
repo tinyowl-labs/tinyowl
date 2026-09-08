@@ -558,7 +558,7 @@
                                     />
                                     {#if showMapToggle}
                                     <div
-                                        class="absolute top-2 left-2 z-[1100] flex rounded-md border border-border bg-background/90 shadow-sm overflow-hidden"
+                                        class="surface absolute top-2 left-2 z-[1100] flex overflow-hidden rounded-md border border-border shadow-sm"
                                     >
                                         <button
                                             type="button"

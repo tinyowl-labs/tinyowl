@@ -115,7 +115,7 @@
 </script>
 
 <div
-	class="flex max-h-[min(32rem,70vh)] w-80 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
+	class="surface flex max-h-[min(32rem,70vh)] w-80 flex-col overflow-hidden rounded-lg border border-border text-xs shadow-lg"
 >
 	<div class="flex items-center gap-1 border-b border-border px-2 py-1.5">
 		<MessageCircleIcon class="size-3.5 text-muted-foreground" />

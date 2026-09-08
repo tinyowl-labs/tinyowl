@@ -198,16 +198,17 @@ export default defineConfig({
   // `@cesium/engine` MUST be optimized: its CJS deps (mersenne-twister, …) have no
   // default ESM export, so native exclude-mode imports fail in Vite dev.
   resolve: {
-    // One Svelte runtime. Prebundling @xyflow/svelte otherwise inlines a second
-    // svelte/internal/client (next_sibling_getter stays undefined on SchemaGraph).
+    // One Svelte runtime. Prebundling Svelte component libraries otherwise
+    // inlines a second svelte/internal/client (next_sibling_getter stays
+    // undefined — SchemaGraph via xyflow, artefacts similar-panel via lucide).
     dedupe: ["svelte"],
   },
   ssr: {
     external: ["cesium", "@cesium/engine"],
-    noExternal: ["@xyflow/svelte"],
+    noExternal: ["@xyflow/svelte", "@lucide/svelte"],
   },
   optimizeDeps: {
-    exclude: ["cesium", "@xyflow/svelte"],
+    exclude: ["cesium", "@xyflow/svelte", "@lucide/svelte"],
     include: ["@cesium/engine"],
   },
   server: {

@@ -312,6 +312,34 @@ export function formatRadius(m: number): string {
   return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)}km`;
 }
 
+const MIN_SEARCH_RADIUS_M = 200;
+const MAX_SEARCH_RADIUS_M = 20_000_000;
+
+/** Parse chip input (`5km`, `800m`, `5.0km`, or a bare number). */
+export function parseRadius(
+  raw: string,
+  currentMetres: number,
+): number | null {
+  const s = raw.trim().toLowerCase().replace(/\s+/g, "");
+  if (!s) return null;
+  const suffixed = /^([\d.]+)(km|m)$/.exec(s);
+  let metres: number;
+  if (suffixed) {
+    const n = Number(suffixed[1]);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    metres = suffixed[2] === "km" ? n * 1000 : n;
+  } else {
+    const n = Number(s);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    metres = currentMetres >= 1000 ? n * 1000 : n;
+  }
+  if (!Number.isFinite(metres)) return null;
+  return Math.min(
+    MAX_SEARCH_RADIUS_M,
+    Math.max(MIN_SEARCH_RADIUS_M, Math.round(metres)),
+  );
+}
+
 export function formatLatLng(lat: number, lng: number, digits = 2): string {
   return `${lat.toFixed(digits)}, ${lng.toFixed(digits)}`;
 }

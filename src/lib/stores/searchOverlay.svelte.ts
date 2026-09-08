@@ -1,5 +1,7 @@
 /** App-wide Ctrl/Cmd+K search overlay. */
 
+import { matchPrefShortcut } from "$lib/shortcuts";
+
 let open = $state(false);
 let pageHost = $state<{ focus: () => void } | null>(null);
 
@@ -40,7 +42,6 @@ export const searchOverlay = {
 };
 
 export function isSearchModK(e: KeyboardEvent): boolean {
-	if (e.defaultPrevented || e.repeat || e.altKey || e.shiftKey) return false;
-	if (e.key !== "k" && e.key !== "K") return false;
-	return e.metaKey || e.ctrlKey;
+	if (e.repeat) return false;
+	return matchPrefShortcut(e, ["global"], { typing: false }) === "search-toggle";
 }

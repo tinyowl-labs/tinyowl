@@ -10,10 +10,11 @@
         accessToken: string;
         slug: string;
         tables: SchemaTable[];
+        focusTable?: string;
         onSaved?: () => void;
     };
 
-    let { accessToken, slug, tables, onSaved }: Props = $props();
+    let { accessToken, slug, tables, focusTable = "", onSaved }: Props = $props();
 
     let junctionTable = $state("");
     let message = $state("");
@@ -25,7 +26,11 @@
     let toId = $state("");
     let addMessage = $state("");
 
-    let sourceTable = $derived(tables[0]?.name ?? "");
+    let sourceTable = $derived(
+        (focusTable && tables.some((t) => t.name === focusTable)
+            ? focusTable
+            : tables[0]?.name) ?? "",
+    );
     const sourceCols = $derived(
         tables.find((t) => t.name === sourceTable)?.columns ?? [],
     );

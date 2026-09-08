@@ -1,6 +1,5 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
-    import { page } from "$app/stores";
     import { browser } from "$app/environment";
     import { enhance } from "$app/forms";
     import UsersIcon from "@lucide/svelte/icons/users";
@@ -11,7 +10,6 @@
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import CheckIcon from "@lucide/svelte/icons/check";
     import UserPlusIcon from "@lucide/svelte/icons/user-plus";
-    import Header from "$lib/components/ui/header.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import { Button } from "$lib/components/ui/button/index.js";
     import CommitTimeline from "$lib/components/dashboard/CommitTimeline.svelte";
@@ -24,7 +22,6 @@
     let accountMenuEl: HTMLDivElement | undefined = $state();
     let { data, form } = $props();
 
-    const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const user = $derived(data?.user);
     const projects = $derived(data?.projects ?? []);
     const orgs = $derived(data?.orgs ?? []);
@@ -122,9 +119,7 @@
 
 <svelte:head><title>Projects — echidna</title></svelte:head>
 
-<div class="flex flex-col h-screen overflow-hidden">
-    <Header subtitle="Projects" {hasSession} />
-
+<div class="flex h-full flex-col overflow-hidden">
     {#if user}
         <main class="flex-1 min-h-0 overflow-y-auto bg-background">
             <div class="mx-auto max-w-5xl px-6 py-6">
@@ -175,7 +170,7 @@
                         </button>
                         {#if accountOpen}
                             <div
-                                class="absolute left-0 top-full z-50 mt-1 min-w-64 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+                                class="surface absolute left-0 top-full z-50 mt-1 min-w-64 rounded-md border border-border p-1 text-foreground shadow-md"
                                 role="listbox"
                                 aria-label="Accounts"
                             >

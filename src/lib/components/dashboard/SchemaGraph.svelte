@@ -41,10 +41,14 @@
         tables = [],
         edges: schemaEdges = [],
         loading = false,
+        selectedTable = "",
+        onSelectTable,
     }: {
         tables?: SchemaTable[];
         edges?: SchemaEdge[];
         loading?: boolean;
+        selectedTable?: string;
+        onSelectTable?: (name: string) => void;
     } = $props();
 
     const nodeTypes: NodeTypes = {
@@ -57,9 +61,10 @@
     const GAP_Y = 64;
     const GAP_X = 176;
 
-    // Follow Appearance prefs, not OS "system" preference.
+    // Follow Appearance color scheme (system, or light/dark override).
     const flowColorMode = $derived.by(() => {
         themePrefs.bgBase;
+        themePrefs.colorScheme;
         return isDark() ? "dark" : "light";
     });
 
@@ -408,6 +413,26 @@
     });
 
     $effect(() => {
+        const sel = selectedTable;
+        if (!live) return;
+        const cur = nodes;
+        if (!cur.length) return;
+        let changed = false;
+        const next = cur.map((n) => {
+            const selected = n.id === sel;
+            if (Boolean(n.selected) === selected) return n;
+            changed = true;
+            return { ...n, selected };
+        });
+        if (changed) nodes = next;
+    });
+
+    function onNodeClick({ node }: { node: Node }) {
+        const id = node?.id;
+        if (id) onSelectTable?.(id);
+    }
+
+    $effect(() => {
         const key = nodes
             .map(
                 (n) =>
@@ -441,6 +466,7 @@
             proOptions={{ hideAttribution: true }}
             colorMode={flowColorMode}
             class="schema-flow"
+            onnodeclick={onNodeClick}
         >
             <Background
                 gap={22}
@@ -459,7 +485,7 @@
                 class="pointer-events-none !m-3 !left-[7.25rem] flex flex-col gap-1.5"
             >
                 <div
-                    class="pointer-events-auto flex items-center gap-3 rounded-md border border-border bg-card/90 px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm"
+                    class="surface pointer-events-auto flex items-center gap-3 rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-sm"
                 >
                     <span class="inline-flex items-center gap-1.5">
                         <svg
@@ -519,7 +545,7 @@
                     {/if}
                 </div>
                 <p
-                    class="max-w-xs rounded-md border border-dashed border-border bg-card/80 px-2.5 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm"
+                    class="surface max-w-xs rounded-md border border-dashed border-border px-2.5 py-1.5 text-[11px] text-muted-foreground"
                     class:hidden={schemaEdges.length > 0}
                 >
                         No links yet — open schema tools to confirm a foreign

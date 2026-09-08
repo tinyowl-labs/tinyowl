@@ -113,7 +113,7 @@
 {#if open}
     <div
         bind:this={rootEl}
-        class="pointer-events-auto fixed z-[10000] w-52 overflow-hidden rounded-lg border border-border bg-background/98 shadow-lg backdrop-blur-sm"
+        class="surface pointer-events-auto fixed z-[10000] w-52 overflow-hidden rounded-lg border border-border shadow-lg"
         style="left: {x}px; top: {y}px"
         role="menu"
     >

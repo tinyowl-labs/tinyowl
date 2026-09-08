@@ -3,12 +3,11 @@
     import { browser } from "$app/environment";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-    import Header from "$lib/components/ui/header.svelte";
+    import { headerChrome } from "$lib/stores/headerChrome.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
 
     let { data, children } = $props();
 
-    const hasSession = $derived(Boolean($page.data?.user));
     const nav = $derived(data?.nav ?? []);
 
     function isActive(href: string) {
@@ -40,21 +39,22 @@
         window.addEventListener("resize", onResize);
         return () => window.removeEventListener("resize", onResize);
     });
+
+    $effect(() => {
+        headerChrome.setSidebar({
+            collapsed,
+            toggle: () => (collapsed = !collapsed),
+            toggleClass: "hidden lg:inline-flex",
+        });
+        return () => headerChrome.setSidebar(null);
+    });
 </script>
 
 <svelte:head>
     <title>Docs — echidna</title>
 </svelte:head>
 
-<div class="flex flex-col h-screen overflow-hidden">
-    <Header
-        subtitle="Documentation"
-        {hasSession}
-        sidebarCollapsed={collapsed}
-        onSidebarToggle={() => (collapsed = !collapsed)}
-        sidebarToggleClass="hidden lg:inline-flex"
-    />
-
+<div class="flex h-full flex-col overflow-hidden">
     <div class="flex flex-1 min-h-0">
         <!-- Desktop sidebar -->
         <aside
@@ -62,7 +62,7 @@
                 ? 'w-12'
                 : 'w-56'}"
         >
-            <div class="glass-panel flex h-full w-full min-w-0 flex-col">
+            <div class="surface flex h-full w-full min-w-0 flex-col">
                 <nav class="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">
                     {#each nav as group}
                         <div class="mb-0.5">

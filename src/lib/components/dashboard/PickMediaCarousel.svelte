@@ -2,6 +2,7 @@
 	import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
 	import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
 	import ImageIcon from "@lucide/svelte/icons/image";
+	import { withMediaVariant } from "$lib/project/mediaUrl";
 
 	type EntityMedia = { url: string; media_type: string };
 
@@ -51,7 +52,7 @@
 			>
 				{#if current.media_type.startsWith("image") && !brokenSrc[current.url]}
 					<img
-						src={current.url}
+						src={withMediaVariant(current.url, "preview")}
 						alt=""
 						class="h-auto max-h-36 w-full object-contain"
 						onerror={() => {

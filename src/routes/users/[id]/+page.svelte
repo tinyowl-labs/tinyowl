@@ -1,11 +1,8 @@
 <script lang="ts">
-	import { page } from "$app/stores";
-	import Header from "$lib/components/ui/header.svelte";
 	import UserAvatar from "$lib/components/ui/user-avatar.svelte";
 	import SettingsIcon from "@lucide/svelte/icons/settings";
 
 	let { data } = $props();
-	const hasSession = $derived(Boolean($page.data?.user));
 	const profile = $derived(data.profile);
 </script>
 
@@ -13,8 +10,7 @@
 	<title>{profile.display_name} — echidna</title>
 </svelte:head>
 
-<div class="flex h-screen flex-col overflow-hidden">
-	<Header subtitle={profile.display_name} {hasSession} />
+<div class="flex h-full flex-col overflow-hidden">
 	<main class="min-h-0 flex-1 overflow-y-auto bg-background">
 		<div class="mx-auto max-w-5xl px-6 py-8">
 			<div class="mb-10 flex items-start gap-4">

@@ -14,14 +14,20 @@
             (function () {
                 try {
                     var bg = localStorage.getItem("redthread:theme:bgBase") || "dark";
+                    var scheme = localStorage.getItem("redthread:theme:colorScheme") || "system";
                     var hue = Number(localStorage.getItem("redthread:theme:accentHue") || "220");
                     if (!isFinite(hue)) hue = 220;
-                    var bgL = { pitch: 0.07, dark: 0.12, dim: 0.2, stone: 0.9, paper: 0.97 }[bg];
-                    if (bgL == null) bgL = 0.12;
+                    var bgLMap = { pitch: 0.07, dark: 0.12, dim: 0.2, stone: 0.9, paper: 0.97 };
+                    var storedL = bgLMap[bg];
+                    if (storedL == null) storedL = 0.12;
+                    var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+                    var wantDark = scheme === "light" ? false : scheme === "dark" ? true : systemDark;
+                    var bgL = (storedL < 0.5) === wantDark ? storedL : wantDark ? 0.12 : 0.97;
                     var dark = bgL < 0.5;
                     var root = document.documentElement;
                     if (dark) root.classList.add("dark");
                     else root.classList.remove("dark");
+                    root.style.colorScheme = dark ? "dark" : "light";
                     root.style.setProperty("--accent-hue", String(hue));
                     root.style.setProperty("--bg-l", String(bgL));
                 } catch (e) {}

@@ -8,20 +8,15 @@
     import TableIcon from "@lucide/svelte/icons/table";
     import DownloadIcon from "@lucide/svelte/icons/download";
     import Settings from "@lucide/svelte/icons/settings";
-    import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import FileUpIcon from "@lucide/svelte/icons/file-up";
     import GitPullRequestIcon from "@lucide/svelte/icons/git-pull-request";
     import HistoryIcon from "@lucide/svelte/icons/history";
     import WaypointsIcon from "@lucide/svelte/icons/waypoints";
-    import Header from "$lib/components/ui/header.svelte";
     import MobileNav from "$lib/components/ui/mobile-nav.svelte";
-    import { buttonVariants } from "$lib/components/ui/button/button.svelte";
-    import { cn } from "$lib/utils.js";
 
     let { data, children } = $props();
 
-    const hasSession = $derived(Boolean($page.data?.user));
     const project = $derived(data?.project);
     const role = $derived(((data as any)?.role as string) ?? "viewer");
     const isMember = $derived(Boolean((data as any)?.isMember));
@@ -164,20 +159,6 @@
         return true;
     }
 
-    function isGroupActive(group: NavGroup) {
-        return group.items.some((item) => isActive(item.href));
-    }
-
-    function navTriggerClass(active: boolean) {
-        return cn(
-            buttonVariants({ variant: "ghost", size: "sm" }),
-            "gap-1 text-xs font-medium no-underline",
-            active
-                ? "bg-secondary text-foreground hover:bg-secondary"
-                : "text-muted-foreground",
-        );
-    }
-
     let mobileOpen = $state(false);
 
     $effect(() => {
@@ -194,83 +175,7 @@
     <title>{project?.title ?? "Project"} — echidna</title>
 </svelte:head>
 
-<div class="flex flex-col h-screen overflow-hidden">
-    <Header
-        subtitle={project?.title}
-        subtitleHref={data?.slug ? `/${data.slug}` : ""}
-        {hasSession}
-    >
-        {#snippet leading()}
-            <nav
-                class="ml-1 hidden items-center gap-1.5 md:flex"
-                aria-label="Project"
-            >
-                {#each navGroups as group}
-                    {#if group.items.length === 1}
-                        <a
-                            href={group.items[0].href}
-                            class={navTriggerClass(isActive(group.items[0].href))}
-                            aria-current={isActive(group.items[0].href)
-                                ? "page"
-                                : undefined}
-                        >
-                            {group.items[0].label}
-                        </a>
-                    {:else}
-                        <div class="group/navitem relative">
-                            <a
-                                href={group.items[0].href}
-                                class={navTriggerClass(isGroupActive(group))}
-                                aria-haspopup="menu"
-                                aria-current={isGroupActive(group)
-                                    ? "true"
-                                    : undefined}
-                            >
-                                {group.label}
-                                <ChevronDownIcon class="size-3 opacity-60" />
-                            </a>
-                            <div
-                                role="menu"
-                                class="invisible absolute left-0 top-full z-50 min-w-44 pt-2 opacity-0 pointer-events-none group-hover/navitem:visible group-hover/navitem:opacity-100 group-hover/navitem:pointer-events-auto group-focus-within/navitem:visible group-focus-within/navitem:opacity-100 group-focus-within/navitem:pointer-events-auto"
-                            >
-                                <div
-                                    class="rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
-                                >
-                                    {#each group.items as item}
-                                        <a
-                                            href={item.href}
-                                            role="menuitem"
-                                            class={cn(
-                                                "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-xs no-underline outline-none select-none [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
-                                                isActive(item.href)
-                                                    ? "bg-secondary font-medium text-foreground"
-                                                    : "text-popover-foreground hover:bg-accent hover:text-accent-foreground",
-                                            )}
-                                        >
-                                            <item.icon />
-                                            {item.label}
-                                        </a>
-                                    {/each}
-                                </div>
-                            </div>
-                        </div>
-                    {/if}
-                {/each}
-                {#if settingsHref}
-                    <a
-                        href={settingsHref}
-                        class={navTriggerClass(isActive(settingsHref))}
-                        aria-current={isActive(settingsHref)
-                            ? "page"
-                            : undefined}
-                    >
-                        Settings
-                    </a>
-                {/if}
-            </nav>
-        {/snippet}
-    </Header>
-
+<div class="flex h-full flex-col overflow-hidden">
     <MobileNav
         bind:open={mobileOpen}
         title={project?.title ?? "Project"}
@@ -285,11 +190,11 @@
                         <a
                             href={item.href}
                             onclick={() => (mobileOpen = false)}
-                            class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
+                            class="flex items-center gap-3 rounded-md px-3 py-2 text-sm no-underline {isActive(
                                 item.href,
                             )
-                                ? 'bg-secondary text-foreground font-medium'
-                                : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                                ? 'selected'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
                         >
                             <item.icon class="size-4 shrink-0" />
                             {item.label}
@@ -306,11 +211,11 @@
                                     <a
                                         href={item.href}
                                         onclick={() => (mobileOpen = false)}
-                                        class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
+                                        class="flex items-center gap-3 rounded-md px-3 py-2 text-sm no-underline {isActive(
                                             item.href,
                                         )
-                                            ? 'bg-secondary text-foreground font-medium'
-                                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                                            ? 'selected'
+                                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
                                     >
                                         <item.icon class="size-4 shrink-0" />
                                         {item.label}
@@ -324,11 +229,11 @@
                     <a
                         href={settingsHref}
                         onclick={() => (mobileOpen = false)}
-                        class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {isActive(
+                        class="flex items-center gap-3 rounded-md px-3 py-2 text-sm no-underline {isActive(
                             settingsHref,
                         )
-                            ? 'bg-secondary text-foreground font-medium'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'} transition-colors no-underline"
+                            ? 'selected'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
                     >
                         <Settings class="size-4 shrink-0" />
                         Settings

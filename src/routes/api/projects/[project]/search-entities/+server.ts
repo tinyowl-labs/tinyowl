@@ -14,6 +14,11 @@ export const GET: RequestHandler = async ({ locals, params, url, fetch }) => {
   );
   upstream.searchParams.set("q", q);
   upstream.searchParams.set("limit", limit);
+  const layer = url.searchParams.get("layer");
+  if (layer) upstream.searchParams.set("layer", layer);
+  for (const row of url.searchParams.getAll("row")) {
+    if (row.trim()) upstream.searchParams.append("row", row);
+  }
 
   const res = await fetch(upstream.toString(), { headers });
   const body = await res.text();

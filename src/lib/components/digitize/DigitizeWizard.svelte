@@ -1,7 +1,6 @@
 <script lang="ts">
     import CreateProjectStep from "./CreateProjectStep.svelte";
     import ImportDataStep from "./ImportDataStep.svelte";
-    import MediaStep from "./MediaStep.svelte";
     import DoneStep from "./DoneStep.svelte";
     import CheckIcon from "@lucide/svelte/icons/check";
     import FileInputIcon from "@lucide/svelte/icons/file-input";
@@ -15,7 +14,7 @@
     let { accessToken, existingSlug = "", existingTitle = "" }: Props =
         $props();
 
-    type Step = "create" | "import" | "media" | "done";
+    type Step = "create" | "import" | "done";
 
     let step = $state<Step>(existingSlug ? "import" : "create");
     let slug = $state(existingSlug);
@@ -32,7 +31,6 @@
                   label: "Import",
                   hint: "CSV or GeoJSON",
               },
-              { id: "media", label: "Media", hint: "Optional photos" },
               { id: "done", label: "Done", hint: "Browse & link" },
           ]
         : [
@@ -42,7 +40,6 @@
                   label: "Import",
                   hint: "CSV or GeoJSON",
               },
-              { id: "media", label: "Media", hint: "Optional photos" },
               { id: "done", label: "Done", hint: "Browse & link" },
           ];
 
@@ -75,16 +72,16 @@
 
     <nav class="mb-6" aria-label="Progress">
         <ol
-            class="grid gap-2 {steps.length === 3
-                ? 'sm:grid-cols-3'
-                : 'sm:grid-cols-4'}"
+            class="grid gap-2 {steps.length === 2
+                ? 'sm:grid-cols-2'
+                : 'sm:grid-cols-3'}"
         >
-            {#each steps as s, i}
+            {#each steps as s, i (s.id)}
                 {@const active = s.id === step}
                 {@const done = stepIndex(step) > i}
                 <li
                     class="flex items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors {active
-                        ? 'border-primary/60 bg-primary/5'
+                        ? 'selected'
                         : done
                           ? 'border-border bg-card/40'
                           : 'border-border/60 opacity-70'}"
@@ -135,15 +132,8 @@
                         rowCount = info.rows;
                         pendingReview = Boolean(info.pending);
                         changesetId = info.changesetId ?? "";
-                        step = info.pending ? "done" : "media";
+                        step = "done";
                     }}
-                />
-            {:else if step === "media"}
-                <MediaStep
-                    {accessToken}
-                    projectSlug={slug}
-                    onContinue={() => (step = "done")}
-                    onSkip={() => (step = "done")}
                 />
             {:else}
                 <DoneStep

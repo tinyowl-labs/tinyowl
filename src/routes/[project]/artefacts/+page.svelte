@@ -1,39 +1,29 @@
 <script lang="ts">
     import { page } from "$app/stores";
     import ArchiveIcon from "@lucide/svelte/icons/archive";
-    import ImageIcon from "@lucide/svelte/icons/image";
-    import ImageOffIcon from "@lucide/svelte/icons/image-off";
-    import VideoIcon from "@lucide/svelte/icons/video";
-    import MusicIcon from "@lucide/svelte/icons/music";
-    import FileTextIcon from "@lucide/svelte/icons/file-text";
-    import FileWarningIcon from "@lucide/svelte/icons/file-warning";
     import AlertTriangleIcon from "@lucide/svelte/icons/alert-triangle";
-    import XIcon from "@lucide/svelte/icons/x";
-    import ChevronLeft from "@lucide/svelte/icons/chevron-left";
-    import ChevronRight from "@lucide/svelte/icons/chevron-right";
-    import Maximize2Icon from "@lucide/svelte/icons/maximize-2";
-    import MapPinIcon from "@lucide/svelte/icons/map-pin";
-    import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
-    import CopyIcon from "@lucide/svelte/icons/copy";
-    import CheckIcon from "@lucide/svelte/icons/check";
-    import SparklesIcon from "@lucide/svelte/icons/sparkles";
-    import BoxIcon from "@lucide/svelte/icons/box";
+    import PanelRightIcon from "@lucide/svelte/icons/panel-right";
     import { onMount } from "svelte";
-    import { entityLayersHref } from "$lib/project/entityLink";
-    import MediaUpload from "$lib/components/artefacts/MediaUpload.svelte";
-    import ArtefactMicroViewer from "$lib/components/artefacts/ArtefactMicroViewer.svelte";
-    import WorkspaceToolbar from "$lib/components/ui/workspace-toolbar.svelte";
-    import { goto } from "$app/navigation";
+    import ArtefactGridTile from "$lib/components/artefacts/ArtefactGridTile.svelte";
+    import ArtefactDetailAside from "$lib/components/artefacts/ArtefactDetailAside.svelte";
+    import ArtefactMobileSheet from "$lib/components/artefacts/ArtefactMobileSheet.svelte";
+    import ArtefactLightbox from "$lib/components/artefacts/ArtefactLightbox.svelte";
     import {
-        bboxFromGeoJSON,
-        formatBBox,
-        formatDateSpan,
-        searchHref,
-    } from "$lib/search/params";
+        artefactMediaUrl,
+        isGltf,
+        isModel3D,
+        isPdf,
+        isTileset,
+        type ArtefactMediaItem,
+        type ArtefactSimilarHit,
+    } from "$lib/components/artefacts/artefactMedia";
+    import { goto } from "$app/navigation";
+    import { bboxFromGeoJSON, formatBBox } from "$lib/search/params";
 
     let { data } = $props();
 
     const accessToken = $derived(data?.accessToken ?? "");
+    const projectSlug = $derived($page.params.project ?? "");
     const canUpload = $derived(
         ["owner", "admin", "collaborator"].includes(
             String((data as any)?.role ?? "viewer"),
@@ -62,18 +52,6 @@
         bboxFromGeoJSON(projectMeta?.bbox ?? null),
     );
 
-    interface MediaItem {
-        hash: string;
-        media_type: string;
-        file_size: number;
-        url: string;
-        profile?: string;
-        entities: Array<{ entity_type: string; entity_id: string }>;
-        care_allow_public_view?: boolean;
-        care_allow_embed?: boolean;
-        care_note?: string | null;
-    }
-
     type TypeFilter =
         | "all"
         | "image"
@@ -84,7 +62,7 @@
         | "coverage"
         | "other";
 
-    let items = $state<MediaItem[]>([]);
+    let items = $state.raw<ArtefactMediaItem[]>([]);
     let totalItems = $state(0);
     let typeCounts = $state<Record<string, number>>({});
     let loading = $state(false);
@@ -96,28 +74,17 @@
     let sentinel = $state<HTMLDivElement>();
     let typeFilter = $state<TypeFilter>("all");
     let selectedHash = $state<string | null>(null);
+    /** Session-only: panel button collapse stays until reload. */
+    let sidebarHeldClosed = $state(false);
     /** Seeded once from `?media=` so dismissing the picker does not re-open. */
     let seededMedia = $state("");
     let viewerOpen = $state(false);
     let hashCopied = $state(false);
-    let similarItems = $state<
-        Array<{
-            hash: string;
-            media_type: string;
-            url: string;
-            project_slug: string;
-            project_title: string;
-            entity_type?: string;
-            entity_id?: string;
-            distance: number;
-        }>
-    >([]);
+    let similarItems = $state.raw<ArtefactSimilarHit[]>([]);
     let similarStatus = $state("");
     let similarLoading = $state(false);
     let similarSamePeriod = $state(false);
     let similarSameRegion = $state(false);
-    let similarTag = $state("");
-    let similarTagInput = $state("");
     let careSaving = $state(false);
     let careError = $state("");
 
@@ -166,13 +133,10 @@
             careSaving = false;
         }
     }
-    let similarTagSuggestions = $state<string[]>([]);
     let similarFetched = $state(false);
 
     let loadedImages = $state<Set<string>>(new Set());
     let failedImages = $state<Set<string>>(new Set());
-    /** Hashes that fell back from ?variant=preview to the full blob. */
-    let fullThumbHashes = $state<Set<string>>(new Set());
     let missingCount = $state(0);
     let orphanCount = $state(0);
     let integrityError = $state(false);
@@ -183,10 +147,6 @@
         loadedImages = new Set([...loadedImages, hash]);
     }
     function onImageError(hash: string) {
-        if (!fullThumbHashes.has(hash)) {
-            fullThumbHashes = new Set([...fullThumbHashes, hash]);
-            return;
-        }
         failedImages = new Set([...failedImages, hash]);
     }
 
@@ -258,84 +218,15 @@
     }
 
     function mediaUrl(
-        item: MediaItem,
+        item: ArtefactMediaItem,
         opts?: { pdfFit?: boolean; variant?: "preview" | "full" },
     ): string {
-        const params = new URLSearchParams();
-        if (accessToken) params.set("token", accessToken);
-        if (opts?.variant === "preview") params.set("variant", "preview");
-        const qs = params.toString();
-        const base = qs ? `${item.url}?${qs}` : item.url;
-        if (opts?.pdfFit && item.media_type === "application/pdf") {
-            // Fit page width in the embedded viewer; hide chrome where supported.
-            return `${base}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`;
-        }
-        return base;
+        return artefactMediaUrl(item, accessToken, opts);
     }
 
-    /** Grid / panel thumb: baked JPEG only for coverage/TIFF (raster-worker).
-     *  Plain photos rarely have preview_path — requesting ?variant=preview 404s. */
-    function thumbUrl(item: MediaItem): string {
-        if (fullThumbHashes.has(item.hash)) return mediaUrl(item);
-        if (isTiff(item) || item.profile === "coverage") {
-            return mediaUrl(item, { variant: "preview" });
-        }
-        return mediaUrl(item);
-    }
-
-    function isPdf(item: MediaItem): boolean {
-        return item.media_type === "application/pdf";
-    }
-
-    function isTiff(item: MediaItem): boolean {
-        const t = item.media_type.toLowerCase();
-        return t.includes("tiff") || t.includes("geotiff");
-    }
-
-    function isGltf(item: MediaItem): boolean {
-        const t = item.media_type.toLowerCase();
-        return (
-            t.startsWith("model/gltf") ||
-            t === "model/gltf-binary" ||
-            t === "model/gltf+json"
-        );
-    }
-
-    function isTileset(item: MediaItem): boolean {
-        return (
-            item.media_type === "model/vnd.3dtiles" ||
-            item.media_type === "application/vnd.3dtiles+zip" ||
-            item.entities?.some((e) => e.entity_type === "tileset")
-        );
-    }
-
-    function isModel3D(item: MediaItem): boolean {
-        return isTileset(item) || isGltf(item);
-    }
-
-    function tilesetRootUrl(hash: string): string {
-        return `/api/v1/projects/${$page.params.project}/tilesets/${hash}/tileset.json`;
-    }
-
-    /** Micro-viewer source for the selected 3D artefact (no auth query — Resource adds it). */
-    function modelPreviewSource(
-        item: MediaItem,
-    ): { kind: "tileset" | "gltf"; url: string } | null {
-        if (isGltf(item) && !isTileset(item)) {
-            return { kind: "gltf", url: item.url };
-        }
-        if (isTileset(item) || isGltf(item)) {
-            return { kind: "tileset", url: tilesetRootUrl(item.hash) };
-        }
-        return null;
-    }
-
-    function isCoverage(item: MediaItem): boolean {
-        if (item.profile === "coverage") return true;
-        return (
-            isTileset(item) ||
-            item.entities?.some((e) => e.entity_type === "coverage") === true
-        );
+    /** Grid / panel thumb: baked JPEG only — never the original blob. */
+    function thumbUrl(item: ArtefactMediaItem): string {
+        return mediaUrl(item, { variant: "preview" });
     }
 
     function openIn3D(hash: string) {
@@ -346,21 +237,6 @@
             /* ignore */
         }
         goto(`/${slug}/layers?view=3d`);
-    }
-
-    function linkedEntities(item: MediaItem) {
-        return item.entities.filter(
-            (e) =>
-                e.entity_id.trim() !== "" &&
-                e.entity_type.trim() !== "" &&
-                e.entity_type !== "unknown" &&
-                e.entity_type !== "tileset" &&
-                e.entity_type !== "coverage",
-        );
-    }
-
-    function shortHash(hash: string): string {
-        return hash.length > 16 ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : hash;
     }
 
     async function copyHash(hash: string) {
@@ -381,6 +257,12 @@
             ? (items.find((it) => it.hash === selectedHash) ?? null)
             : null,
     );
+    const asideOpen = $derived(Boolean(selected) && !sidebarHeldClosed);
+
+    function toggleAside() {
+        if (asideOpen) sidebarHeldClosed = true;
+        else sidebarHeldClosed = false;
+    }
 
     const mediaParam = $derived(
         ($page.url.searchParams.get("media") ?? "").trim(),
@@ -404,7 +286,12 @@
             : -1,
     );
 
-    function selectItem(item: MediaItem) {
+    function selectItem(item: ArtefactMediaItem, opts?: { toggle?: boolean }) {
+        if ((opts?.toggle ?? true) && selectedHash === item.hash) {
+            selectedHash = null;
+            viewerOpen = false;
+            return;
+        }
         selectedHash = item.hash;
         hashCopied = false;
         similarItems = [];
@@ -425,8 +312,6 @@
         if (similarSameRegion && projectRegion) {
             p.set("bbox", formatBBox(projectRegion));
         }
-        const tag = similarTag.trim();
-        if (tag) p.set("tag", tag);
         return p;
     }
 
@@ -476,49 +361,12 @@
         refetchSimilarIfShown();
     }
 
-    function applySimilarTag(tag: string) {
-        similarTag = tag.trim();
-        similarTagInput = "";
-        similarTagSuggestions = [];
-        refetchSimilarIfShown();
-    }
-
-    function clearSimilarTag() {
-        similarTag = "";
-        similarTagInput = "";
-        similarTagSuggestions = [];
-        refetchSimilarIfShown();
-    }
-
-    let similarTagDebounce: ReturnType<typeof setTimeout> | undefined;
-    async function onSimilarTagInput() {
-        clearTimeout(similarTagDebounce);
-        const q = similarTagInput.trim();
-        if (q.length < 1) {
-            similarTagSuggestions = [];
-            return;
+    function onSelectSimilar(hit: ArtefactSimilarHit) {
+        if (hit.project_slug === $page.params.project) {
+            selectedHash = hit.hash;
+        } else {
+            goto(`/${hit.project_slug}/artefacts`);
         }
-        similarTagDebounce = setTimeout(async () => {
-            try {
-                const res = await fetch(
-                    `/api/v1/search/lexicon/tags?prefix=${encodeURIComponent(q)}&limit=8`,
-                    accessToken
-                        ? {
-                              headers: {
-                                  Authorization: `Bearer ${accessToken}`,
-                              },
-                          }
-                        : {},
-                );
-                if (!res.ok) return;
-                const body = await res.json();
-                similarTagSuggestions = Array.isArray(body?.tags)
-                    ? body.tags
-                    : [];
-            } catch {
-                /* ignore */
-            }
-        }, 200);
     }
 
     function openViewer() {
@@ -553,7 +401,10 @@
             if (e.key === "ArrowRight") nextImage();
             return;
         }
-        if (e.key === "Escape") selectedHash = null;
+        if (e.key === "Escape") {
+            selectedHash = null;
+            viewerOpen = false;
+        }
     }
 
     async function loadMore(gen = loadGen) {
@@ -589,7 +440,7 @@
                 }
             }
             const body = await res.json();
-            const batch: MediaItem[] = body.items ?? body;
+            const batch: ArtefactMediaItem[] = body.items ?? body;
             if (body.counts) {
                 typeCounts = body.counts;
                 const image = body.counts.image ?? 0;
@@ -625,23 +476,6 @@
         observer.observe(sentinel);
         return () => observer.disconnect();
     });
-
-    function formatBytes(bytes: number): string {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / 1048576).toFixed(1)} MB`;
-    }
-
-    function entityLink(entityType: string, entityId: string): string {
-        return entityLayersHref($page.params.project ?? "", {
-            layer: entityType,
-            highlight: entityId,
-        });
-    }
-
-    function entityLabel(entityType: string): string {
-        return entityType.replace(/_/g, " ");
-    }
 
     const filterTabs: { id: TypeFilter; label: string }[] = [
         { id: "all", label: "All" },
@@ -686,72 +520,9 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="flex h-full min-h-0 flex-col">
-    <WorkspaceToolbar>
-        {#snippet meta()}
-            {#if totalItems || items.length}
-                <span class="tabular-nums"
-                    >{totalItems || items.length} artefact{(totalItems ||
-                        items.length) === 1
-                        ? ""
-                        : "s"}</span
-                >
-            {:else}
-                <span>Artefacts</span>
-            {/if}
-        {/snippet}
-        {#snippet actions()}
-            {#if canUpload}
-                <MediaUpload
-                    projectSlug={$page.params.project ?? ""}
-                    {accessToken}
-                    onUploaded={(info) => {
-                        let prefer: TypeFilter | undefined;
-                        if (info?.mediaType === "application/pdf") prefer = "pdf";
-                        else if (info?.mediaType?.startsWith("image/"))
-                            prefer = "image";
-                        else if (info?.mediaType?.startsWith("video/"))
-                            prefer = "video";
-                        else if (info?.mediaType?.startsWith("audio/"))
-                            prefer = "audio";
-                        else if (
-                            info?.mediaType === "model/vnd.3dtiles" ||
-                            info?.mediaType === "application/vnd.3dtiles+zip"
-                        )
-                            prefer = "model";
-                        reloadShelf(
-                            prefer ? { preferType: prefer } : undefined,
-                        );
-                    }}
-                />
-            {/if}
-            <div
-                class="flex items-center overflow-hidden rounded-md border border-border"
-            >
-                {#each filterTabs as tab}
-                    {@const count = filterCount(tab.id)}
-                    <button
-                        type="button"
-                        onclick={() => setTypeFilter(tab.id)}
-                        class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs border-l border-border first:border-l-0 transition-colors {typeFilter ===
-                        tab.id
-                            ? 'bg-secondary text-foreground font-medium'
-                            : 'text-muted-foreground hover:text-foreground'}"
-                    >
-                        <span>{tab.label}</span>
-                        {#if count != null}
-                            <span class="tabular-nums text-muted-foreground/80"
-                                >{count}</span
-                            >
-                        {/if}
-                    </button>
-                {/each}
-            </div>
-        {/snippet}
-    </WorkspaceToolbar>
-
     {#if integrityChecked && (isMember || canUpload) && (integrityError || missingCount > 0 || orphanCount > 0)}
         <div
-            class="mb-0 flex items-start gap-2 border-b border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground"
+            class="mb-0 flex items-start gap-2 border-b border-border bg-secondary/40 px-5 py-2 text-xs text-muted-foreground"
         >
             <AlertTriangleIcon class="size-4 shrink-0 text-muted-foreground mt-0.5" />
             <p>
@@ -791,917 +562,209 @@
         </div>
     {/if}
 
-    <div
-        class="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:items-stretch"
-    >
-        <div class="min-h-0 overflow-y-auto p-3">
-            {#if loading && items.length === 0}
-                <div
-                    class="flex items-center justify-center h-64 text-sm text-muted-foreground"
-                >
-                    Loading…
-                </div>
-            {:else if items.length === 0}
-                <div class="flex items-center justify-center h-64">
-                    <div class="text-center max-w-sm">
-                        <ArchiveIcon
-                            class="mx-auto mb-3 size-8 text-muted-foreground/40"
-                        />
-                        <h2 class="text-base font-semibold text-foreground mb-1">
-                            {typeFilter === "all"
-                                ? "No artefacts yet"
-                                : typeFilter === "pdf"
-                                  ? "No reports yet"
-                                  : typeFilter === "image"
-                                    ? "No photos yet"
-                                    : typeFilter === "coverage"
-                                      ? "No coverage layers yet"
-                                      : `No ${typeFilter} yet`}
-                        </h2>
-                        <p class="text-sm text-muted-foreground">
-                            {typeFilter === "all"
-                                ? "Push data with photos or grey literature PDFs to see them here, linked to the entities they document."
-                                : typeFilter === "model"
-                                  ? "Upload a .3tz or .glb (collaborator+) — preview here, or open georeferenced models in Layers → 3D."
-                                  : typeFilter === "coverage"
-                                    ? "Register GeoTIFF or tileset media with profile=coverage (entity_type coverage or tileset)."
-                                    : "Try another filter, or upload files that match this type."}
-                        </p>
-                    </div>
-                </div>
-            {:else}
-                <div
-                    class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-1.5"
-                >
-                    {#each filtered as item}
-                        {@const isImage = item.media_type.startsWith("image/")}
-                        {@const isVideo = item.media_type.startsWith("video/")}
-                        {@const isAudio = item.media_type.startsWith("audio/")}
-                        {@const tileset = isTileset(item)}
-                        {@const pdf = isPdf(item)}
-                        {@const imgLoaded = loadedImages.has(item.hash)}
-                        {@const imgFailed = failedImages.has(item.hash)}
-                        {@const active = selectedHash === item.hash}
-                        <button
-                            type="button"
-                            onclick={() => selectItem(item)}
-                            ondblclick={() => {
-                                selectedHash = item.hash;
-                                if (
-                                    isImage ||
-                                    tileset ||
-                                    isGltf(item) ||
-                                    isPdf(item)
-                                ) {
-                                    viewerOpen = true;
-                                }
-                            }}
-                            class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 outline-none transition-[box-shadow] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {active
-                                ? ''
-                                : 'hover:shadow-[inset_0_0_0_1px_var(--color-border)]'}"
-                            title={tileset
-                                ? `3D model · ${shortHash(item.hash)}`
-                                : item.entities[0]
-                                  ? `${entityLabel(item.entities[0].entity_type)} · ${item.entities[0].entity_id}`
-                                  : item.media_type}
-                        >
-                            {#if isImage}
-                                {#if !imgLoaded && !imgFailed}
-                                    <div
-                                        class="absolute inset-0 animate-pulse bg-secondary"
-                                    ></div>
-                                {/if}
-                                {#if imgFailed}
-                                    <div
-                                        class="absolute inset-0 flex items-center justify-center"
-                                    >
-                                        <ImageOffIcon
-                                            class="size-6 text-muted-foreground/40"
-                                        />
-                                    </div>
-                                {/if}
-                                <img
-                                    src={thumbUrl(item)}
-                                    alt=""
-                                    class="h-full w-full object-cover {imgLoaded
-                                        ? 'opacity-100'
-                                        : 'opacity-0'} transition-opacity duration-200"
-                                    loading="lazy"
-                                    onload={() => onImageLoad(item.hash)}
-                                    onerror={() => onImageError(item.hash)}
-                                />
-                            {:else if tileset || isGltf(item)}
-                                <div
-                                    class="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-neutral-800 to-neutral-950 text-muted-foreground"
-                                >
-                                    <BoxIcon class="size-6 opacity-70" />
-                                    <span
-                                        class="text-[10px] uppercase tracking-wide opacity-70"
-                                        >3D</span
-                                    >
-                                </div>
-                            {:else}
-                                <div
-                                    class="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground"
-                                >
-                                    {#if isVideo}
-                                        <VideoIcon class="size-6 opacity-70" />
-                                    {:else if isAudio}
-                                        <MusicIcon class="size-6 opacity-70" />
-                                    {:else if pdf}
-                                        <FileTextIcon class="size-6 opacity-70" />
-                                        <span class="text-[10px] uppercase tracking-wide opacity-70">PDF</span>
-                                    {:else}
-                                        <FileWarningIcon
-                                            class="size-6 opacity-70"
-                                        />
-                                    {/if}
-                                </div>
-                            {/if}
-                            {#if active}
-                                <span
-                                    class="pointer-events-none absolute inset-0 z-10 rounded-md border-2 border-primary"
-                                    aria-hidden="true"
-                                ></span>
-                            {/if}
-                            {#if item.entities.length > 0}
-                                <span
-                                    class="pointer-events-none absolute bottom-1 left-1 z-20 rounded bg-background/80 px-1 py-0.5 text-[10px] text-foreground/80 opacity-0 transition-opacity group-hover:opacity-100 {active
-                                        ? 'opacity-100'
-                                        : ''}"
-                                >
-                                    {entityLabel(item.entities[0].entity_type)}
-                                </span>
-                            {/if}
-                            {#if isCoverage(item) && !tileset}
-                                <span
-                                    class="pointer-events-none absolute top-1 left-1 z-20 rounded bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground"
-                                >
-                                    coverage
-                                </span>
-                            {/if}
-                        </button>
-                    {/each}
-                </div>
-
-                {#if hasMore}
+    <div class="flex min-h-0 flex-1 bg-background">
+        <div class="min-h-0 flex-1 overflow-hidden p-5">
+            <div class="flex h-full min-h-0 flex-col">
+                <div class="flex items-center gap-1">
                     <div
-                        bind:this={sentinel}
-                        class="py-8 flex items-center justify-center"
+                        class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1.5"
+                        role="tablist"
+                        aria-label="Artefact type"
                     >
-                        {#if loading}
-                            <p class="text-sm text-muted-foreground animate-pulse">
-                                Loading…
-                            </p>
-                        {/if}
-                    </div>
-                {:else if items.length > 0}
-                    <p class="py-6 text-center text-xs text-muted-foreground">
-                        {filtered.length} shown
-                    </p>
-                {/if}
-            {/if}
-
-            {#if error}
-                <p class="py-4 text-center text-sm text-destructive">{error}</p>
-            {/if}
-        </div>
-
-        <!-- Detail panel -->
-        <aside
-            class="hidden min-h-0 flex-col overflow-hidden border-l border-border bg-secondary/15 lg:flex"
-        >
-            {#if selected}
-                {@const isImage = selected.media_type.startsWith("image/")}
-                {@const isVideo = selected.media_type.startsWith("video/")}
-                {@const isAudio = selected.media_type.startsWith("audio/")}
-                {@const pdf = isPdf(selected)}
-                {@const tileset = isTileset(selected)}
-                {@const model3d = isModel3D(selected)}
-                {@const modelSrc = model3d
-                    ? modelPreviewSource(selected)
-                    : null}
-                {@const links = linkedEntities(selected)}
-
-                <div
-                    class="shrink-0 flex items-center justify-between gap-2 border-b border-border px-3 py-2"
-                >
-                    <div class="min-w-0">
-                        <p class="text-xs font-medium text-foreground truncate">
-                            {pdf
-                                ? "Report"
-                                : model3d
-                                  ? "3D model"
-                                  : isImage
-                                    ? isTiff(selected)
-                                        ? "Raster"
-                                        : "Photo"
-                                    : isVideo
-                                      ? "Video"
-                                      : isAudio
-                                        ? "Audio"
-                                        : "File"}
-                        </p>
-                        <p class="text-[11px] text-muted-foreground truncate">
-                            {formatBytes(selected.file_size)}
-                        </p>
-                    </div>
-                    <div class="flex items-center gap-1.5 shrink-0">
-                        {#if model3d}
+                        {#each filterTabs as tab (tab.id)}
+                            {@const n = filterCount(tab.id)}
                             <button
                                 type="button"
-                                onclick={openViewer}
-                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                                title="Expand preview"
+                                role="tab"
+                                aria-selected={typeFilter === tab.id}
+                                onclick={() => setTypeFilter(tab.id)}
+                                class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ring-offset-background transition-all hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {typeFilter ===
+                                tab.id
+                                    ? 'bg-background text-foreground shadow-sm'
+                                    : 'text-muted-foreground'}"
                             >
-                                <Maximize2Icon class="size-3" />
-                                Expand
+                                {tab.label}
+                                {#if n != null}
+                                    <span class="ml-1.5 text-xs text-muted-foreground"
+                                        >({n})</span
+                                    >
+                                {/if}
                             </button>
-                            {#if tileset}
-                                <button
-                                    type="button"
-                                    onclick={() => openIn3D(selected.hash)}
-                                    class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                                    title="Open in Layers 3D"
-                                >
-                                    <BoxIcon class="size-3" />
-                                    Layers
-                                </button>
-                            {/if}
-                        {/if}
-                        {#if pdf}
-                            <a
-                                href={mediaUrl(selected)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors"
-                                title="Open in new tab"
-                            >
-                                <ExternalLinkIcon class="size-3" />
-                                Open
-                            </a>
-                        {/if}
+                        {/each}
                     </div>
-                </div>
-
-                <!-- Preview: click / hover expands images, PDFs, and 3D -->
-                {#if isImage || pdf}
                     <button
                         type="button"
-                        onclick={openViewer}
-                        class="group/preview relative min-h-0 {pdf
-                            ? 'flex-1'
-                            : 'aspect-[4/3] shrink-0'} bg-neutral-950 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                        title="Expand"
+                        onclick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleAside();
+                        }}
+                        class="inline-flex shrink-0 rounded-md p-1.5 transition-colors {asideOpen
+                            ? 'bg-secondary text-foreground'
+                            : 'text-muted-foreground hover:text-foreground'}"
+                        title={asideOpen ? "Hide detail pane" : "Show detail pane"}
+                        aria-label={asideOpen
+                            ? "Hide detail pane"
+                            : "Show detail pane"}
+                        aria-pressed={asideOpen}
                     >
-                        {#if isImage}
-                            <div
-                                class="pointer-events-none absolute inset-0 opacity-[0.07]"
-                                style="background-image: linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #fff 75%), linear-gradient(-45deg, transparent 75%, #fff 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0;"
-                            ></div>
-                            <img
-                                src={isTiff(selected)
-                                    ? mediaUrl(selected, { variant: "preview" })
-                                    : thumbUrl(selected)}
-                                alt=""
-                                class="relative h-full w-full object-contain"
-                            />
-                        {:else}
-                            <iframe
-                                title="PDF preview"
-                                src={mediaUrl(selected, { pdfFit: true })}
-                                class="pointer-events-none absolute inset-0 h-full w-full border-0"
-                            ></iframe>
-                        {/if}
-                        <span
-                            class="pointer-events-none absolute inset-0 bg-black/0 transition-colors group-hover/preview:bg-black/25"
-                        ></span>
-                        <span
-                            class="pointer-events-none absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-background/90 px-2 py-1 text-[11px] text-foreground opacity-0 shadow-sm transition-opacity group-hover/preview:opacity-100 group-focus-visible/preview:opacity-100"
-                        >
-                            <Maximize2Icon class="size-3" />
-                            Expand
-                        </span>
+                        <PanelRightIcon class="size-4" />
                     </button>
-                {:else if model3d && modelSrc}
-                    <div
-                        class="group/preview relative aspect-[4/3] shrink-0 bg-neutral-950"
-                    >
-                        {#if !viewerOpen}
-                            {#key `${selected.hash}:${modelSrc.kind}`}
-                                <ArtefactMicroViewer
-                                    url={modelSrc.url}
-                                    kind={modelSrc.kind}
-                                    accessToken={accessToken}
-                                    class="absolute inset-0"
-                                />
-                            {/key}
-                            <button
-                                type="button"
-                                onclick={openViewer}
-                                class="absolute bottom-2 right-2 z-20 inline-flex items-center gap-1 rounded-md bg-background/90 px-2 py-1 text-[11px] text-foreground shadow-sm opacity-0 transition-opacity group-hover/preview:opacity-100 hover:bg-background"
-                                title="Expand 3D preview"
-                            >
-                                <Maximize2Icon class="size-3" />
-                                Expand
-                            </button>
-                        {:else}
-                            <div
-                                class="flex h-full items-center justify-center text-xs text-muted-foreground"
-                            >
-                                Expanded preview
-                            </div>
-                        {/if}
-                    </div>
-                {:else}
-                    <div
-                        class="relative aspect-[4/3] shrink-0 bg-neutral-950"
-                    >
-                        {#if isVideo}
-                            <video
-                                src={mediaUrl(selected)}
-                                controls
-                                class="h-full w-full object-contain"
-                            ></video>
-                        {:else if isAudio}
-                            <div
-                                class="flex h-full flex-col items-center justify-center gap-3 px-4 bg-secondary/40"
-                            >
-                                <MusicIcon
-                                    class="size-8 text-muted-foreground/50"
-                                />
-                                <audio
-                                    src={mediaUrl(selected)}
-                                    controls
-                                    class="w-full"
-                                ></audio>
-                            </div>
-                        {:else}
-                            <div
-                                class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground bg-secondary/40"
-                            >
-                                <FileWarningIcon class="size-8 opacity-50" />
-                                <span class="text-xs">{selected.media_type}</span>
-                            </div>
-                        {/if}
-                    </div>
-                {/if}
+                </div>
 
-                <div
-                    class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto border-t border-border p-3"
-                >
-                    {#if canUpload}
-                        <section class="space-y-2 shrink-0">
-                            <p
-                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                            >
-                                CARE
-                            </p>
-                            <label
-                                class="flex items-center justify-between gap-3 text-sm text-foreground"
-                            >
-                                <span>Allow public view</span>
-                                <input
-                                    type="checkbox"
-                                    class="size-4 accent-primary"
-                                    checked={selected.care_allow_public_view !==
-                                        false}
-                                    disabled={careSaving}
-                                    onchange={(e) =>
-                                        patchCare(selected.hash, {
-                                            care_allow_public_view:
-                                                e.currentTarget.checked,
-                                        })}
-                                />
-                            </label>
-                            <label
-                                class="flex items-center justify-between gap-3 text-sm text-foreground"
-                            >
-                                <span>Allow embedding</span>
-                                <input
-                                    type="checkbox"
-                                    class="size-4 accent-primary"
-                                    checked={selected.care_allow_embed !== false}
-                                    disabled={careSaving}
-                                    onchange={(e) =>
-                                        patchCare(selected.hash, {
-                                            care_allow_embed:
-                                                e.currentTarget.checked,
-                                        })}
-                                />
-                            </label>
-                            {#if careError}
-                                <p class="text-[11px] text-destructive">
-                                    {careError}
-                                </p>
-                            {/if}
-                        </section>
-                    {/if}
-
-                    {#if isImage}
-                        <section class="flex min-h-0 flex-1 flex-col gap-2">
-                            <div
-                                class="flex items-center justify-between gap-2 shrink-0"
-                            >
-                                <p
-                                    class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                                >
-                                    Similar
-                                </p>
-                                <button
-                                    type="button"
-                                    onclick={findSimilar}
-                                    disabled={similarLoading}
-                                    class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                                >
-                                    <SparklesIcon class="size-3" />
-                                    {similarLoading
-                                        ? "Searching…"
-                                        : similarFetched
-                                          ? "Refresh"
-                                          : "Find similar"}
-                                </button>
-                                {#if selected}
-                                    <a
-                                        href={searchHref({
-                                            mediaHash: selected.hash,
-                                            dateFrom: similarSamePeriod
-                                                ? projectPeriod?.dateFrom
-                                                : null,
-                                            dateTo: similarSamePeriod
-                                                ? projectPeriod?.dateTo
-                                                : null,
-                                            bbox: similarSameRegion
-                                                ? projectRegion
-                                                : null,
-                                            tags: similarTag.trim()
-                                                ? [similarTag.trim()]
-                                                : [],
-                                        })}
-                                        class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground transition-colors"
-                                    >
-                                        Search with this
-                                    </a>
-                                {/if}
-                            </div>
-
-                            <div
-                                class="flex flex-wrap items-center gap-1.5 shrink-0"
-                            >
-                                <button
-                                    type="button"
-                                    disabled={!projectPeriod}
-                                    onclick={() =>
-                                        setSamePeriod(!similarSamePeriod)}
-                                    class="rounded-md border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-40 {similarSamePeriod
-                                        ? 'border-primary/50 bg-primary/10 text-foreground'
-                                        : 'border-border bg-background text-muted-foreground hover:text-foreground'}"
-                                    title={projectPeriod
-                                        ? (formatDateSpan(
-                                              projectPeriod.dateFrom,
-                                              projectPeriod.dateTo,
-                                          ) ?? "Same period")
-                                        : "No project period set"}
-                                >
-                                    Period
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!projectRegion}
-                                    onclick={() =>
-                                        setSameRegion(!similarSameRegion)}
-                                    class="rounded-md border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-40 {similarSameRegion
-                                        ? 'border-primary/50 bg-primary/10 text-foreground'
-                                        : 'border-border bg-background text-muted-foreground hover:text-foreground'}"
-                                    title={projectRegion
-                                        ? "Same region as this project"
-                                        : "No project region set"}
-                                >
-                                    Region
-                                </button>
-                                {#if similarTag}
-                                    <span
-                                        class="inline-flex items-center gap-1 rounded-md border border-primary/50 bg-primary/10 px-2 py-0.5 text-[11px] text-foreground"
-                                    >
-                                        {similarTag}
-                                        <button
-                                            type="button"
-                                            class="text-muted-foreground hover:text-foreground"
-                                            onclick={clearSimilarTag}
-                                            aria-label="Clear tag"
-                                        >
-                                            ×
-                                        </button>
-                                    </span>
-                                {:else}
-                                    <div class="relative min-w-[7rem] flex-1">
-                                        <input
-                                            type="text"
-                                            bind:value={similarTagInput}
-                                            oninput={onSimilarTagInput}
-                                            onkeydown={(e) => {
-                                                if (e.key === "Enter") {
-                                                    e.preventDefault();
-                                                    if (similarTagInput.trim()) {
-                                                        applySimilarTag(
-                                                            similarTagInput,
-                                                        );
-                                                    }
-                                                }
-                                            }}
-                                            placeholder="Tag…"
-                                            class="w-full rounded-md border border-border bg-background px-2 py-0.5 text-[11px] text-foreground placeholder:text-muted-foreground"
-                                        />
-                                        {#if similarTagSuggestions.length > 0}
-                                            <ul
-                                                class="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-28 overflow-auto rounded-md border border-border bg-background text-[11px] shadow-sm"
-                                            >
-                                                {#each similarTagSuggestions as sug}
-                                                    <li>
-                                                        <button
-                                                            type="button"
-                                                            class="w-full px-2 py-1 text-left hover:bg-secondary/60"
-                                                            onclick={() =>
-                                                                applySimilarTag(
-                                                                    sug,
-                                                                )}
-                                                        >
-                                                            {sug}
-                                                        </button>
-                                                    </li>
-                                                {/each}
-                                            </ul>
-                                        {/if}
-                                    </div>
-                                {/if}
-                            </div>
-
-                            {#if similarStatus && similarItems.length === 0}
-                                <p class="text-xs text-muted-foreground">
-                                    {similarStatus}
-                                </p>
-                            {:else if similarItems.length > 0}
-                                <div
-                                    class="grid min-h-0 flex-1 content-start grid-cols-3 gap-1.5"
-                                >
-                                    {#each similarItems as sim}
-                                        <button
-                                            type="button"
-                                            class="aspect-square overflow-hidden rounded-md bg-secondary/60"
-                                            title="{sim.project_title} · {sim.distance.toFixed(
-                                                3,
-                                            )}"
-                                            onclick={() => {
-                                                if (
-                                                    sim.project_slug ===
-                                                    $page.params.project
-                                                ) {
-                                                    selectedHash = sim.hash;
-                                                } else {
-                                                    goto(
-                                                        `/${sim.project_slug}/artefacts`,
-                                                    );
-                                                }
-                                            }}
-                                        >
-                                            {#if sim.media_type.startsWith("image/")}
-                                                <img
-                                                    src={sim.url +
-                                                        (accessToken
-                                                            ? `?token=${encodeURIComponent(accessToken)}`
-                                                            : "")}
-                                                    alt=""
-                                                    class="h-full w-full object-cover"
-                                                />
-                                            {:else}
-                                                <div
-                                                    class="flex h-full items-center justify-center text-[10px] text-muted-foreground"
-                                                >
-                                                    {sim.project_title}
-                                                </div>
-                                            {/if}
-                                        </button>
-                                    {/each}
-                                </div>
-                            {:else if !similarFetched}
-                                <p class="text-xs text-muted-foreground">
-                                    Find visually similar photos across projects.
-                                    Optionally narrow by period, region, or tag.
-                                </p>
-                            {/if}
-                        </section>
-                    {/if}
-
-                    <div class="shrink-0 space-y-3">
-                        <div>
-                            <p
-                                class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1.5"
-                            >
-                                Linked entities
-                            </p>
-                            {#if links.length === 0}
-                                <p class="text-xs text-muted-foreground">
-                                    Not linked to an entity
-                                </p>
-                            {:else}
-                                <ul class="space-y-0.5">
-                                    {#each links as entity}
-                                        <li>
-                                            <a
-                                                href={entityLink(
-                                                    entity.entity_type,
-                                                    entity.entity_id,
-                                                )}
-                                                class="group flex items-center gap-2 rounded-md px-2 py-1.5 -mx-1 text-xs no-underline hover:bg-accent/60 transition-colors"
-                                            >
-                                                <MapPinIcon
-                                                    class="size-3.5 shrink-0 text-muted-foreground"
-                                                />
-                                                <span
-                                                    class="min-w-0 flex-1 truncate text-foreground"
-                                                >
-                                                    {entityLabel(
-                                                        entity.entity_type,
-                                                    )}
-                                                </span>
-                                                <span
-                                                    class="font-mono text-[10px] text-muted-foreground truncate max-w-[40%]"
-                                                >
-                                                    {entity.entity_id}
-                                                </span>
-                                            </a>
-                                        </li>
-                                    {/each}
-                                </ul>
-                            {/if}
-                        </div>
-
+                <div class="mt-5 min-h-0 flex-1 overflow-y-auto">
+                    {#if loading && items.length === 0}
                         <div
-                            class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                            class="flex h-64 items-center justify-center text-sm text-muted-foreground"
                         >
-                            <button
-                                type="button"
-                                class="inline-flex items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 font-mono hover:border-border hover:bg-background hover:text-foreground transition-colors"
-                                title={selected.hash}
-                                onclick={() => copyHash(selected.hash)}
-                            >
-                                {#if hashCopied}
-                                    <CheckIcon class="size-3 text-foreground" />
-                                {:else}
-                                    <CopyIcon class="size-3" />
-                                {/if}
-                                {shortHash(selected.hash)}
-                            </button>
+                            Loading…
                         </div>
-                    </div>
+                    {:else if items.length === 0}
+                        <div class="flex h-64 items-center justify-center">
+                            <div class="max-w-sm text-center">
+                                <ArchiveIcon
+                                    class="mx-auto mb-3 size-8 text-muted-foreground/40"
+                                />
+                                <h2
+                                    class="mb-1 text-base font-semibold text-foreground"
+                                >
+                                    {typeFilter === "all"
+                                        ? "No artefacts yet"
+                                        : typeFilter === "pdf"
+                                          ? "No reports yet"
+                                          : typeFilter === "image"
+                                            ? "No photos yet"
+                                            : typeFilter === "coverage"
+                                              ? "No coverage layers yet"
+                                              : `No ${typeFilter} yet`}
+                                </h2>
+                                <p class="text-sm text-muted-foreground">
+                                    {typeFilter === "all"
+                                        ? "Push data with photos or grey literature PDFs to see them here, linked to the entities they document."
+                                        : typeFilter === "model"
+                                          ? "Upload a .3tz or .glb (collaborator+) — preview here, or open georeferenced models in Layers → 3D."
+                                          : typeFilter === "coverage"
+                                            ? "Register GeoTIFF or tileset media with profile=coverage (entity_type coverage or tileset)."
+                                            : "Try another filter, or upload files that match this type."}
+                                </p>
+                            </div>
+                        </div>
+                    {:else}
+                        <div
+                            class="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6"
+                        >
+                            {#each filtered as item (item.hash)}
+                                <ArtefactGridTile
+                                    {item}
+                                    active={selectedHash === item.hash}
+                                    imgLoaded={loadedImages.has(item.hash)}
+                                    imgFailed={failedImages.has(item.hash)}
+                                    thumbSrc={thumbUrl(item)}
+                                    onselect={() => selectItem(item)}
+                                    onopen={() => {
+                                        selectItem(item, { toggle: false });
+                                        if (
+                                            item.media_type.startsWith("image/") ||
+                                            isTileset(item) ||
+                                            isGltf(item) ||
+                                            isPdf(item)
+                                        ) {
+                                            viewerOpen = true;
+                                        }
+                                    }}
+                                    onimgload={() => onImageLoad(item.hash)}
+                                    onimgerror={() => onImageError(item.hash)}
+                                />
+                            {/each}
+                        </div>
+
+                        {#if hasMore}
+                            <div
+                                bind:this={sentinel}
+                                class="flex items-center justify-center py-8"
+                            >
+                                {#if loading}
+                                    <p
+                                        class="animate-pulse text-sm text-muted-foreground"
+                                    >
+                                        Loading…
+                                    </p>
+                                {/if}
+                            </div>
+                        {:else if items.length > 0}
+                            <p
+                                class="py-6 text-center text-xs text-muted-foreground"
+                            >
+                                {filtered.length} shown
+                            </p>
+                        {/if}
+                    {/if}
+
+                    {#if error}
+                        <p class="py-4 text-center text-sm text-destructive">
+                            {error}
+                        </p>
+                    {/if}
                 </div>
-            {:else}
-                <div
-                    class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center"
-                >
-                    <ArchiveIcon class="size-7 text-muted-foreground/35" />
-                    <p class="text-sm text-muted-foreground">
-                        Select an item to preview
-                    </p>
-                </div>
-            {/if}
-        </aside>
+            </div>
+        </div>
+
+        {#if asideOpen && selected}
+            <aside
+                class="hidden w-[22rem] shrink-0 flex-col overflow-hidden border-l border-border surface lg:flex"
+            >
+                {#key selected.hash}
+                    <ArtefactDetailAside
+                        item={selected}
+                        accessToken={accessToken}
+                        {projectSlug}
+                        canUpload={canUpload}
+                        viewerOpen={viewerOpen}
+                        careSaving={careSaving}
+                        careError={careError}
+                        hashCopied={hashCopied}
+                        similarItems={similarItems}
+                        similarStatus={similarStatus}
+                        similarLoading={similarLoading}
+                        similarSamePeriod={similarSamePeriod}
+                        similarSameRegion={similarSameRegion}
+                        projectPeriod={projectPeriod}
+                        projectRegion={projectRegion}
+                        thumbSrc={thumbUrl(selected)}
+                        {openViewer}
+                        {openIn3D}
+                        {patchCare}
+                        {findSimilar}
+                        {setSamePeriod}
+                        {setSameRegion}
+                        {copyHash}
+                        {onSelectSimilar}
+                    />
+                {/key}
+            </aside>
+        {/if}
     </div>
 
-    <!-- Mobile detail sheet -->
     {#if selected}
-        {@const links = linkedEntities(selected)}
-        {@const pdf = isPdf(selected)}
-        <div
-            class="lg:hidden fixed inset-x-0 bottom-0 z-50 border-t border-border glass-dock p-4 max-h-[50vh] overflow-y-auto"
-        >
-            <div class="flex items-start justify-between gap-3 mb-3">
-                <div class="min-w-0">
-                    <p class="text-sm font-medium text-foreground truncate">
-                        {pdf
-                            ? "Report"
-                            : links[0]
-                              ? entityLabel(links[0].entity_type)
-                              : selected.media_type}
-                    </p>
-                    <p class="text-[11px] text-muted-foreground">
-                        {formatBytes(selected.file_size)}
-                    </p>
-                </div>
-                <div class="flex items-center gap-1 shrink-0">
-                    {#if pdf}
-                        <a
-                            href={mediaUrl(selected)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground no-underline hover:text-foreground"
-                        >
-                            Open
-                        </a>
-                    {/if}
-                    <button
-                        type="button"
-                        onclick={() => (selectedHash = null)}
-                        class="rounded-md p-1 text-muted-foreground hover:text-foreground"
-                        aria-label="Close"
-                    >
-                        <XIcon class="size-4" />
-                    </button>
-                </div>
-            </div>
-            {#if links.length > 0}
-                <ul class="space-y-1">
-                    {#each links as entity}
-                        <li>
-                            <a
-                                href={entityLink(
-                                    entity.entity_type,
-                                    entity.entity_id,
-                                )}
-                                class="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs no-underline hover:bg-accent/60"
-                            >
-                                <MapPinIcon
-                                    class="size-3.5 text-muted-foreground"
-                                />
-                                <span class="truncate"
-                                    >{entityLabel(entity.entity_type)}</span
-                                >
-                                <span
-                                    class="ml-auto font-mono text-[10px] text-muted-foreground"
-                                    >{entity.entity_id}</span
-                                >
-                            </a>
-                        </li>
-                    {/each}
-                </ul>
-            {:else}
-                <p class="text-xs text-muted-foreground">
-                    Not linked to an entity
-                </p>
-            {/if}
-        </div>
+        <ArtefactMobileSheet
+            item={selected}
+            accessToken={accessToken}
+            {projectSlug}
+            onclose={() => (selectedHash = null)}
+        />
     {/if}
 
-    <!-- Quiet media viewer -->
-    {#if viewerOpen && selected && (selected.media_type.startsWith("image/") || isPdf(selected) || isModel3D(selected))}
-        {@const pdf = isPdf(selected)}
-        {@const modelSrc = isModel3D(selected)
-            ? modelPreviewSource(selected)
-            : null}
-        {@const links = linkedEntities(selected)}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div
-            class="fixed inset-0 z-1100 glass-overlay flex flex-col"
-            onclick={closeViewer}
-            role="dialog"
-            tabindex="-1"
-        >
-            <div
-                class="flex items-center justify-between gap-3 px-4 py-3 border-b border-border"
-                onclick={(e) => e.stopPropagation()}
-            >
-                <p class="text-sm text-muted-foreground tabular-nums">
-                    {#if pdf}
-                        Report · {formatBytes(selected.file_size)}
-                    {:else if modelSrc}
-                        3D preview · {formatBytes(selected.file_size)}
-                    {:else if viewerIdx >= 0}
-                        {viewerIdx + 1} / {imageItems.length}
-                    {/if}
-                </p>
-                <div class="flex items-center gap-1">
-                    {#if pdf}
-                        <a
-                            href={mediaUrl(selected)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs no-underline text-foreground hover:bg-secondary transition-colors"
-                            onclick={(e) => e.stopPropagation()}
-                        >
-                            <ExternalLinkIcon class="size-3.5" />
-                            Open
-                        </a>
-                    {/if}
-                    {#if isTileset(selected)}
-                        <button
-                            type="button"
-                            class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-foreground hover:bg-secondary transition-colors"
-                            onclick={(e) => {
-                                e.stopPropagation();
-                                openIn3D(selected.hash);
-                            }}
-                        >
-                            <BoxIcon class="size-3.5" />
-                            Open in Layers
-                        </button>
-                    {:else if links[0]}
-                        <a
-                            href={entityLink(
-                                links[0].entity_type,
-                                links[0].entity_id,
-                            )}
-                            class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs no-underline text-foreground hover:bg-secondary transition-colors"
-                            onclick={(e) => e.stopPropagation()}
-                        >
-                            <MapPinIcon class="size-3.5" />
-                            Open in Layers
-                        </a>
-                    {/if}
-                    <button
-                        type="button"
-                        class="rounded-md p-1.5 text-muted-foreground hover:text-foreground"
-                        onclick={(e) => {
-                            e.stopPropagation();
-                            closeViewer();
-                        }}
-                        aria-label="Close"
-                    >
-                        <XIcon class="size-4" />
-                    </button>
-                </div>
-            </div>
-
-            <div
-                class="relative flex-1 flex items-center justify-center min-h-0 overflow-hidden {pdf ||
-                modelSrc
-                    ? 'p-0'
-                    : ''}"
-                onclick={(e) => e.stopPropagation()}
-            >
-                {#if pdf}
-                    <iframe
-                        title="PDF viewer"
-                        src={mediaUrl(selected, { pdfFit: true })}
-                        class="h-full w-full border-0 bg-neutral-950"
-                    ></iframe>
-                {:else if modelSrc}
-                    {#key `full:${selected.hash}:${modelSrc.kind}`}
-                        <ArtefactMicroViewer
-                            url={modelSrc.url}
-                            kind={modelSrc.kind}
-                            accessToken={accessToken}
-                            class="h-full w-full"
-                        />
-                    {/key}
-                {:else}
-                    {#if viewerIdx > 0}
-                        <button
-                            type="button"
-                            class="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
-                            onclick={prevImage}
-                            aria-label="Previous"
-                        >
-                            <ChevronLeft class="size-5" />
-                        </button>
-                    {/if}
-                    <!-- Absolute fill so max-h/max-w % resolve against the viewport pane, not intrinsic image size. -->
-                    <div class="absolute inset-4 flex items-center justify-center overflow-hidden">
-                        <div
-                            class="pointer-events-none absolute inset-0 opacity-[0.06]"
-                            style="background-image: linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #fff 75%), linear-gradient(-45deg, transparent 75%, #fff 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0;"
-                        ></div>
-                        <img
-                            src={isTiff(selected)
-                                ? mediaUrl(selected, { variant: "preview" })
-                                : mediaUrl(selected)}
-                            alt=""
-                            class="relative z-[1] max-h-full max-w-full h-auto w-auto object-contain shadow-2xl"
-                        />
-                    </div>
-                    {#if viewerIdx >= 0 && viewerIdx < imageItems.length - 1}
-                        <button
-                            type="button"
-                            class="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-md border border-border glass-panel p-2 text-muted-foreground hover:text-foreground"
-                            onclick={nextImage}
-                            aria-label="Next"
-                        >
-                            <ChevronRight class="size-5" />
-                        </button>
-                    {/if}
-                {/if}
-            </div>
-
-            {#if links.length > 0 && !pdf && !modelSrc}
-                <div
-                    class="border-t border-border px-4 py-3 flex flex-wrap gap-2"
-                    onclick={(e) => e.stopPropagation()}
-                >
-                    {#each links as entity}
-                        <a
-                            href={entityLink(
-                                entity.entity_type,
-                                entity.entity_id,
-                            )}
-                            class="inline-flex items-center gap-1.5 rounded-md bg-secondary/80 px-2 py-1 text-[11px] no-underline text-foreground hover:bg-secondary"
-                        >
-                            {entityLabel(entity.entity_type)}
-                            <span class="font-mono text-muted-foreground"
-                                >{entity.entity_id}</span
-                            >
-                        </a>
-                    {/each}
-                </div>
-            {/if}
-        </div>
+    {#if viewerOpen && selected}
+        <ArtefactLightbox
+            item={selected}
+            accessToken={accessToken}
+            {projectSlug}
+            viewerIdx={viewerIdx}
+            imageCount={imageItems.length}
+            {closeViewer}
+            {prevImage}
+            {nextImage}
+            {openIn3D}
+        />
     {/if}
 </div>

@@ -29,9 +29,19 @@ export function entityLayersHref(
 export function projectLayersSearchHref(
   projectSlug: string,
   q: string,
+  opts?: {
+    layer?: string | null;
+    rows?: Array<{ column: string; op: string; value: string }> | null;
+  },
 ): string {
   const params = new URLSearchParams();
   params.set("view", "map");
+  const layer = opts?.layer?.trim() ?? "";
+  if (layer) params.set("layer", layer);
+  for (const row of opts?.rows ?? []) {
+    const token = `${row.column}${row.op}${row.value}`.trim();
+    if (token) params.append("row", token);
+  }
   const query = q.trim();
   if (query) params.set("q", query);
   return `/${projectSlug}/layers?${params}`;

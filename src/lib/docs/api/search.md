@@ -16,7 +16,7 @@ Returns projects the caller can access (public + membership), ranked by text sco
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `q` | string | One of q / lat+lng / bbox / date_* | Full-text query (title, description, README, tags, value mappings) |
+| `q` | string | One of q / lat+lng / bbox / date_* | Full-text query. Any term can match (prefix). Matching more terms ranks higher. Fields: title, description, README, tags, value mappings (unmapped locals rank lower). One project per hit. |
 | `lat` | number | with `lng` | Latitude (WGS84) for point+radius filter |
 | `lng` | number | with `lat` | Longitude (WGS84) |
 | `radius` | number | No | Search radius in metres (default: `100000`) |
@@ -57,7 +57,7 @@ At least one of `q`, (`lat`+`lng`), `bbox`, or (`date_from`/`date_to`) is requir
 | `entity_count` | number | Indexed entity count |
 | `table_count` | number | Indexed table count |
 | `bbox` | string\|null | GeoJSON envelope when available |
-| `match_detail` | string | Why it matched (title / description / vocab / readme) |
+| `match_detail` | string | Why it matched (title / description / vocab / values / readme) |
 | `distance_m` | number\|null | Present when spatial filter used |
 | `tags_manual` | string[] | Curator tags from `project.toml` |
 | `tags_auto` | string[] | Server-derived tags |

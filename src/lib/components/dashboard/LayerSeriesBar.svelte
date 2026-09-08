@@ -38,7 +38,7 @@
 </script>
 
 <div
-    class="pointer-events-auto flex w-[min(36rem,calc(100vw-12rem))] items-center gap-2 rounded-lg border border-border bg-background/95 px-2.5 py-1.5 text-xs shadow-lg backdrop-blur-sm"
+    class="surface pointer-events-auto flex w-[min(36rem,calc(100vw-12rem))] items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-xs shadow-lg"
     role="group"
     aria-label="Time series"
 >

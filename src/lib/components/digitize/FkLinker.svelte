@@ -37,10 +37,18 @@
         slug: string;
         tables: SchemaTable[];
         edges?: SchemaEdge[];
+        focusTable?: string;
         onSaved?: () => void;
     };
 
-    let { accessToken, slug, tables, edges = [], onSaved }: Props = $props();
+    let {
+        accessToken,
+        slug,
+        tables,
+        edges = [],
+        focusTable = "",
+        onSaved,
+    }: Props = $props();
 
     let sourceTable = $state("");
     let sourceColumn = $state("");
@@ -57,7 +65,14 @@
     let overrides = $state<Record<string, string>>({});
 
     $effect(() => {
-        if (!sourceTable && tables.length) sourceTable = tables[0].name;
+        const next =
+            (focusTable && tables.some((t) => t.name === focusTable)
+                ? focusTable
+                : tables[0]?.name) ?? "";
+        if (next && sourceTable !== next) sourceTable = next;
+    });
+
+    $effect(() => {
         if (!targetTable && tables.length > 1) targetTable = tables[1].name;
         else if (!targetTable && tables.length) targetTable = tables[0].name;
     });

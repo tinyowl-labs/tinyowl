@@ -77,6 +77,7 @@ export type LayerSceneDrawCtx = {
     editLayer: string;
     anyFormOpen: boolean;
     createFormOpen: boolean;
+    addingGeometry: boolean;
     drawNeed: number;
     drawCanFinish: boolean;
     bufferOverlayVisible: boolean;
@@ -94,8 +95,9 @@ export type LayerSceneDrawCtx = {
     setDrawMode: (mode: DrawGeomMode) => void;
     setDrawUseHeight: (on: boolean) => void;
     setCreateFormOpen: (open: boolean) => void;
-    setAttrEdit: (next: { table: string; entityId: string } | null) => void;
-    getAttrEdit: () => { table: string; entityId: string } | null;
+    setAddingGeometry: (on: boolean) => void;
+    onSelectForEdit?: (table: string, entityId: string) => void;
+    onCreatedFeature?: (table: string, entityId: string) => void;
     getPendingGeometry: () => GeoJsonGeometry | null;
     setPendingGeometry: (geom: GeoJsonGeometry | null) => void;
     setBoxOverlay: (
@@ -117,6 +119,7 @@ export type LayerSceneDrawCtx = {
     setCommitDoneStatus: (status: "committed" | "conflicted" | "parked" | "") => void;
     setDevelopCommit: (id: string) => void;
     onCommitted?: () => void;
+    restoreCamera?: () => void;
 };
 
 export function createDrawSession(): DrawSession {
@@ -420,22 +423,26 @@ export function confirmCreate(ctx: LayerSceneDrawCtx, attrs: Record<string, stri
         return;
     }
     const sourceId = attrs.source_id?.trim();
+    const entityId = sourceId || editBuffer.nextEntityId();
     editBuffer.push({
         op: "insert",
         table,
-        entityId: sourceId || editBuffer.nextEntityId(),
+        entityId,
         geometry: geom,
         attributes: attrs,
     });
     ctx.setPendingGeometry(null);
     ctx.setCreateFormOpen(false);
+    ctx.setAddingGeometry(false);
     clearDraftDraw(ctx);
+    ctx.onCreatedFeature?.(table, entityId);
     ctx.bumpRender();
 }
 
 export function cancelCreate(ctx: LayerSceneDrawCtx) {
     ctx.setPendingGeometry(null);
     ctx.setCreateFormOpen(false);
+    ctx.setAddingGeometry(false);
     clearDraftDraw(ctx);
     ctx.bumpRender();
 }
@@ -444,32 +451,6 @@ export function dismissCreateFormKeepDraft(ctx: LayerSceneDrawCtx) {
     ctx.setPendingGeometry(null);
     ctx.setCreateFormOpen(false);
     paintDraftDraw(ctx);
-}
-
-export function openAttrEdit(ctx: LayerSceneDrawCtx, table: string, entityId: string) {
-    if (!ctx.canWrite || !table || !entityId) return;
-    if (ctx.blockPeerEdit(table, entityId)) return;
-    ctx.setCreateFormOpen(false);
-    ctx.setPendingGeometry(null);
-    ctx.setAttrEdit({ table, entityId });
-    editBuffer.setTargetLayer(table);
-    ctx.closePickPager({ suppressClick: true });
-    ctx.closeContextMenu();
-    ctx.bumpRender();
-}
-
-export function confirmAttrEdit(ctx: LayerSceneDrawCtx, attrs: Record<string, string>) {
-    const attrEdit = ctx.getAttrEdit();
-    if (!attrEdit) return;
-    editBuffer.upsertAttributes(attrEdit.table, attrEdit.entityId, attrs);
-    ctx.setAttrEdit(null);
-    ctx.applyHiddenVisibility();
-    ctx.bumpRender();
-}
-
-export function cancelAttrEdit(ctx: LayerSceneDrawCtx) {
-    ctx.setAttrEdit(null);
-    ctx.bumpRender();
 }
 
 function geometryForDelete(
@@ -496,10 +477,6 @@ export function deleteBufferedFeature(ctx: LayerSceneDrawCtx, table: string, ent
         cancelVertexEdit(ctx);
     }
     editBuffer.markDelete(table, entityId, geom);
-    const attrEdit = ctx.getAttrEdit();
-    if (attrEdit?.table === table && attrEdit.entityId === entityId) {
-        ctx.setAttrEdit(null);
-    }
     layerSelection.removeSelection(table, entityId);
     ctx.closePickPager({ suppressClick: true });
     ctx.applyHiddenVisibility();
@@ -593,6 +570,8 @@ export async function commitEditBuffer(ctx: LayerSceneDrawCtx) {
             message,
             editBuffer.entries,
             ctx.getSessionBaseCommit(),
+            "develop",
+            editBuffer.schemaAdds,
         );
         if (res.status === "conflicted") {
             ctx.setCommitDoneId(res.commit_id);
@@ -935,6 +914,10 @@ function lockEditCamera(ctx: LayerSceneDrawCtx) {
 
 function unlockEditCamera(ctx: LayerSceneDrawCtx) {
     if (!ctx.viewer) return;
+    if (ctx.restoreCamera) {
+        ctx.restoreCamera();
+        return;
+    }
     const is3d = ctx.dim === "3d";
     const c = ctx.viewer.scene.screenSpaceCameraController;
     c.enableRotate = is3d;
@@ -1054,7 +1037,7 @@ function onDrawPick(ctx: LayerSceneDrawCtx, screenPos: any) {
     }
     if (pickedDraftHandle(ctx, screenPos)) return;
     const target = pickEditTarget(ctx, screenPos);
-    if (target) {
+    if (target && !ctx.addingGeometry) {
         if (
             session.vertexSession &&
             session.vertexSession.table === target.table &&
@@ -1069,12 +1052,14 @@ function onDrawPick(ctx: LayerSceneDrawCtx, screenPos: any) {
             editBuffer.setTargetLayer(target.table);
         }
         beginVertexEdit(ctx, target.table, target.entityId);
+        ctx.onSelectForEdit?.(target.table, target.entityId);
         return;
     }
-    if (session.vertexSession) {
+    if (session.vertexSession && !ctx.addingGeometry) {
         if (vertexEditHandlesActive(ctx)) clearVertexSelection(ctx);
         return;
     }
+    if (!ctx.addingGeometry) return;
     const cartesian = ctx.pickSnapCartesian(screenPos);
     if (!cartesian) return;
     if (!session.bindTable && ctx.editLayer) session.bindTable = ctx.editLayer;

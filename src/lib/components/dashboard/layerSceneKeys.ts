@@ -63,6 +63,9 @@ export type SceneKeyCtx = {
     applyHiddenVisibility: () => void;
     layerFromSelection: () => unknown;
     enterEditMode: () => void;
+    startAddGeometry: () => void;
+    addingGeometry: boolean;
+    setAddingGeometry: (on: boolean) => void;
     setDrawMode: (mode: DrawGeomMode) => void;
     setSelectionTool: (mode: SelectionToolMode) => void;
     setMeasureEnabled: (on: boolean) => void;
@@ -75,6 +78,8 @@ export type SceneKeyCtx = {
     graphFullscreen: boolean;
     setGraphOpen: (on: boolean) => void;
     setGraphFullscreen: (on: boolean) => void;
+    flyActive: boolean;
+    setFlyActive: (on: boolean) => void;
 };
 
 const DRAW_FROM_MEASURE: Record<string, DrawGeomMode> = {
@@ -87,6 +92,13 @@ const DRAW_FROM_MEASURE: Record<string, DrawGeomMode> = {
 export function handleSceneKey(ev: KeyboardEvent, ctx: SceneKeyCtx): void {
     const action = mapToolShortcut(ev);
     if (!action) return;
+
+    if (action.type === "fly-toggle") {
+        if (ctx.dim !== "3d") return;
+        ev.preventDefault();
+        ctx.setFlyActive(!ctx.flyActive);
+        return;
+    }
 
     if (action.type === "enter") {
         if (ctx.anyFormOpen) return;
@@ -131,6 +143,11 @@ export function handleSceneKey(ev: KeyboardEvent, ctx: SceneKeyCtx): void {
         return;
     }
     if (action.type === "escape") {
+        if (ctx.flyActive) {
+            ev.preventDefault();
+            ctx.setFlyActive(false);
+            return;
+        }
         if (ctx.attrEdit) {
             ev.preventDefault();
             ctx.cancelAttrEdit();
@@ -159,6 +176,11 @@ export function handleSceneKey(ev: KeyboardEvent, ctx: SceneKeyCtx): void {
             if (ctx.drawVertexCount > 0 || ctx.drawPartCount > 0) {
                 ctx.clearDraftDraw();
                 ctx.paintDraftDraw();
+                return;
+            }
+            if (ctx.addingGeometry) {
+                ev.preventDefault();
+                ctx.setAddingGeometry(false);
                 return;
             }
             ctx.exitEditMode();
@@ -268,6 +290,12 @@ export function handleSceneKey(ev: KeyboardEvent, ctx: SceneKeyCtx): void {
         if (!ctx.editLayer && !ctx.layerFromSelection()) return;
         ev.preventDefault();
         ctx.enterEditMode();
+        return;
+    }
+    if (action.type === "add-geometry") {
+        if (!ctx.canWrite || !ctx.active) return;
+        ev.preventDefault();
+        ctx.startAddGeometry();
         return;
     }
     if (action.type === "graph-toggle") {

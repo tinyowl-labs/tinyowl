@@ -27,6 +27,7 @@
         type ImageQueryProject,
         type ImageQuerySession,
     } from "$lib/search/imageQuery";
+    import { browserThumbUrl } from "$lib/project/mediaUrl";
 
     type EntityResult = {
         entity_type: string;
@@ -283,23 +284,24 @@
         );
     }
 
-    /** Same URL shape as artefacts shelf (`/media/{hash}?token=`). */
+    /** Same URL shape as artefacts shelf (`/media/{hash}?variant=preview&token=`). */
     function mediaUrl(item: SimilarMediaItem | ImageQueryHit): string {
         const base = item.url?.startsWith("/")
             ? item.url
             : `/media/${item.hash}`;
-        return data.accessToken
-            ? `${base}?token=${encodeURIComponent(data.accessToken)}`
-            : base;
+        return browserThumbUrl(base, {
+            hash: item.hash,
+            accessToken: data.accessToken ?? "",
+        });
     }
 
     const queryPreview = $derived.by((): string | null => {
         if (imageSession?.previewDataUrl) return imageSession.previewDataUrl;
         if (!data.mediaHash) return null;
-        const base = `/media/${data.mediaHash}`;
-        return data.accessToken
-            ? `${base}?token=${encodeURIComponent(data.accessToken)}`
-            : base;
+        return browserThumbUrl(`/media/${data.mediaHash}`, {
+            hash: data.mediaHash,
+            accessToken: data.accessToken ?? "",
+        });
     });
 
     /** OpenCLIP cosine distance → rough similarity % for display. */
@@ -419,7 +421,6 @@
 </script>
 
 <SpatialDiscovery
-    {hasSession}
     accessToken={data.accessToken}
     bind:query
     bind:centerLat
@@ -465,7 +466,7 @@
 >
     {#snippet media()}
         {#if showImageResults}
-            <section class="mb-3 shrink-0 px-3 pt-3">
+            <section class="mb-3 shrink-0 pt-1">
                 {#if isReverseImage}
                     <div class="mb-2 flex flex-wrap items-start gap-3">
                         {#if queryPreview}
@@ -598,7 +599,7 @@
             <div class="px-3 pb-3">
                 {#if showReason}
                     <div class="mt-2">
-                        {#if !expanded[proj.slug]}
+                        {#if !expanded[proj.slug] && (snippet || hits.length > 0)}
                             <div
                                 class="mb-1 space-y-1 rounded-md border border-border/50 bg-secondary/30 px-2 py-1.5"
                             >
@@ -606,8 +607,9 @@
                                     <p class="text-[11px] leading-snug text-foreground">
                                         {@html headlineHtml(snippet, data.query)}
                                     </p>
-                                {:else if hits.length > 0}
-                                    {#each hits.slice(0, 2) as hit}
+                                {/if}
+                                {#if hits.length > 0}
+                                    {#each hits.slice(0, 2) as hit (`${hit.entity_type}.${hit.column_name}:${hit.local_value}`)}
                                         <p class="truncate text-[11px]">
                                             <span class="font-mono text-muted-foreground"
                                                 >{hit.entity_type}.{hit.column_name}</span

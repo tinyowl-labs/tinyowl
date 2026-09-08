@@ -76,9 +76,13 @@
                 <BitsTabs.Trigger
                     value={tab.value}
                     class={cn(
-                        "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground ring-offset-background transition-all hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
-                        vertical &&
-                            "md:w-full md:justify-start md:px-2.5 md:shadow-none md:hover:bg-accent md:hover:text-foreground md:data-[state=active]:bg-accent md:data-[state=active]:shadow-none",
+                        "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground ring-offset-background transition-all hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+                        vertical
+                            ? [
+                                  "md:w-full md:justify-start md:px-3 md:hover:bg-accent",
+                                  tab.value === value && "selected",
+                              ]
+                            : "data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
                     )}
                 >
                     {tab.label}
@@ -90,7 +94,7 @@
                     {#if tab.pending}
                         <span
                             class="ml-1 rounded bg-primary/15 px-1 text-[10px] tabular-nums text-foreground"
-                            title="{tab.pending} in session buffer"
+                            title="{tab.pending} in session"
                             >{tab.pending}</span
                         >
                     {/if}

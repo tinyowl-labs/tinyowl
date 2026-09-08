@@ -12,14 +12,17 @@
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
     import { onMount } from "svelte";
+    import { slide } from "svelte/transition";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
+    import { currentChord, formatChordParts, keyboardPrefs } from "$lib/shortcuts";
     import { projectLayersSearchHref, projectLayerHref, projectArtefactHref, projectLayersPlaceHref, entityLayersHref } from "$lib/project/entityLink";
     import {
         searchHref,
         formatBBox,
         formatLatLng,
         formatRadius,
+        parseRadius,
         DEFAULT_SEARCH_RADIUS,
         type SearchBBox,
     } from "$lib/search/params";
@@ -32,12 +35,32 @@
     } from "$lib/search/projects";
     import {
         searchProjectScope,
+        searchProjectLayers,
+        searchProjectArtefacts,
         searchProjectEntities,
+        listProjectColumns,
         type ArtefactHit,
+        type ColumnHit,
         type EntityHit,
         type LayerHit,
         type ValueHit,
     } from "$lib/search/projectScope";
+    import {
+        SLASH_KINDS,
+        ROW_OP_HINTS,
+        displayLayerName,
+        formatRowToken,
+        harvestSlashLayers,
+        harvestSlashRows,
+        isNumericRowOp,
+        mergeRowPredicates,
+        parseRowDraft,
+        parseRowPredicate,
+        stripIncompleteSlashDraft,
+        stripTrailingFilterToken,
+        type RowPredicate,
+        type SlashKindId,
+    } from "$lib/search/queryTokens";
     import {
         clearImageQuery,
         loadImageQuery,
@@ -45,12 +68,30 @@
         previewDataUrlFromFile,
         saveImageQuery,
     } from "$lib/search/imageQuery";
+    import { browserThumbUrl } from "$lib/project/mediaUrl";
+    import FilterChip from "$lib/components/search/FilterChip.svelte";
 
-    type MentionMode = "kinds" | "tag" | "vocab" | "place" | "project" | "entity";
+    type MentionMode =
+        | "kinds"
+        | "slash"
+        | "tag"
+        | "vocab"
+        | "place"
+        | "project"
+        | "entity"
+        | "layer"
+        | "artefact"
+        | "row";
 
     type KindItem = {
         kind: "kind";
         id: "tag" | "vocab" | "place" | "project" | "entity";
+        label: string;
+        hint: string;
+    };
+    type SlashItem = {
+        kind: "slash";
+        id: SlashKindId;
         label: string;
         hint: string;
     };
@@ -66,15 +107,25 @@
     type ArtefactItem = { kind: "artefact"; artefact: ArtefactHit };
     type EntityItem = { kind: "entity"; entity: EntityHit };
     type CellItem = { kind: "cell"; cell: ValueHit };
+    type RowColItem = { kind: "rowcol"; column: ColumnHit };
+    type RowOpItem = {
+        kind: "rowop";
+        op: (typeof ROW_OP_HINTS)[number]["op"];
+        label: string;
+        hint: string;
+    };
     type MenuItem =
         | KindItem
+        | SlashItem
         | ValueItem
         | PlaceItem
         | ProjectItem
         | LayerItem
         | ArtefactItem
         | EntityItem
-        | CellItem;
+        | CellItem
+        | RowColItem
+        | RowOpItem;
 
     type Props = {
         value?: string;
@@ -84,6 +135,10 @@
         projects?: string[];
         /** Titles for project chips, keyed by slug (from search results). */
         projectLabels?: Record<string, string>;
+        /** Layer name chips (`?layer=`), project-scoped. */
+        layers?: string[];
+        /** `/row:` predicate tokens (`?row=`), project-scoped. */
+        rows?: string[];
         lat?: number | null;
         lng?: number | null;
         radius?: number | null;
@@ -111,8 +166,10 @@
          * only to unbound local state).
          */
         palette?: boolean;
-        /** Borderless input for embedding in a surrounding filter card. */
+        /** Page host: chips expand in-flow so the pill and panel slide down. */
         bare?: boolean;
+        /** True while typeahead is open — host should hide competing chrome. */
+        suggesting?: boolean;
         class?: string;
     };
 
@@ -122,6 +179,8 @@
         vocabularies = [],
         projects = [],
         projectLabels = {},
+        layers = [],
+        rows = [],
         lat = $bindable(null),
         lng = $bindable(null),
         radius = $bindable(DEFAULT_SEARCH_RADIUS),
@@ -133,13 +192,14 @@
         imageQuery = false,
         accessToken = null,
         autofocus = false,
-        placeholder = "Search projects or places…  @ filters · # tag",
+        placeholder = "Search projects or places…  @ filters · # tag · /layer · /row",
         examples = [],
         shortcutHint = false,
         placeLabel = null,
         listboxId = "search-mention-list",
         palette = false,
         bare = false,
+        suggesting = $bindable(false),
         class: klass = "",
     }: Props = $props();
 
@@ -198,6 +258,7 @@
     let imageError = $state("");
 
     let hashMention = $state(false);
+    let slashMention = $state(false);
     let mentionOpen = $state(false);
     let mentionMode = $state<MentionMode>("kinds");
     let mentionQuery = $state("");
@@ -210,6 +271,7 @@
     let artefactHits = $state<ArtefactHit[]>([]);
     let entityHits = $state<EntityHit[]>([]);
     let cellHits = $state<ValueHit[]>([]);
+    let columnHits = $state<ColumnHit[]>([]);
     let loading = $state(false);
     let loadingPlaces = $state(false);
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -226,8 +288,14 @@
     let extraProjects = $state<string[]>([]);
     /** Hash-tag chips harvested locally (`#pottery `) before Enter. */
     let extraTags = $state<string[]>([]);
+    /** `/layer:name` chips harvested locally before Enter. */
+    let extraLayers = $state<string[]>([]);
+    /** `/row:height>50` chips harvested locally before Enter. */
+    let extraRows = $state<RowPredicate[]>([]);
     /** Auto-scope chips the user dismissed in the overlay. */
     let omittedProjects = $state<string[]>([]);
+    let omittedLayers = $state<string[]>([]);
+    let omittedRows = $state<string[]>([]);
 
     function mergeSlugs(base: string[], more: string[]): string[] {
         const out = [...base];
@@ -244,6 +312,24 @@
 
     const activeTags = $derived(mergeSlugs(tags, extraTags));
     const activeVocabs = $derived(vocabularies);
+    const activeLayers = $derived.by(() => {
+        const omit = new Set(omittedLayers.map((s) => s.toLowerCase()));
+        if (extraLayers.length > 0) {
+            return extraLayers.filter((s) => !omit.has(s.toLowerCase())).slice(-1);
+        }
+        return layers.filter((s) => !omit.has(s.toLowerCase())).slice(-1);
+    });
+    const activeLayer = $derived(activeLayers[0] ?? null);
+    const propRows = $derived(
+        rows
+            .map((raw) => parseRowPredicate(raw))
+            .filter((p): p is RowPredicate => p != null),
+    );
+    const activeRows = $derived.by(() => {
+        const omit = new Set(omittedRows.map((s) => s.toLowerCase()));
+        const base = extraRows.length > 0 ? extraRows : propRows;
+        return base.filter((p) => !omit.has(formatRowToken(p).toLowerCase()));
+    });
     const activeProjects = $derived.by(() => {
         const omit = new Set(
             omittedProjects.map((s) => s.toLowerCase()),
@@ -272,8 +358,13 @@
             hasSpatialChip ||
             activeTags.length > 0 ||
             activeVocabs.length > 0 ||
+            activeLayers.length > 0 ||
+            activeRows.length > 0 ||
             activeProjects.length > 0,
     );
+    /** Chips use the same surface material as other chrome (glass / tinted / none). */
+    const chipBtn =
+        "surface inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-foreground shadow-sm hover:bg-accent";
     const scopedSlug = $derived(
         activeProjects.length === 1 ? activeProjects[0]! : null,
     );
@@ -295,6 +386,54 @@
                 loadingPlaces),
     );
     const dropdownOpen = $derived(mentionOpen || placesMenuOpen);
+    $effect(() => {
+        suggesting = dropdownOpen;
+    });
+    let chipRow = $state<HTMLDivElement | null>(null);
+    let chipFadeLeft = $state(false);
+    let chipFadeRight = $state(false);
+
+    function syncChipFade() {
+        const el = chipRow;
+        if (!el) {
+            chipFadeLeft = false;
+            chipFadeRight = false;
+            return;
+        }
+        chipFadeLeft = el.scrollLeft > 2;
+        chipFadeRight =
+            el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    }
+
+    function onChipWheel(e: WheelEvent) {
+        const el = chipRow;
+        if (!el || el.scrollWidth <= el.clientWidth) return;
+        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+        syncChipFade();
+    }
+
+    $effect(() => {
+        void activeTags.length;
+        void activeVocabs.length;
+        void activeLayers.length;
+        void activeRows.length;
+        void activeProjects.length;
+        void hasImageChip;
+        void hasSpatialChip;
+        const el = chipRow;
+        if (!el) {
+            chipFadeLeft = false;
+            chipFadeRight = false;
+            return;
+        }
+        syncChipFade();
+        const ro = new ResizeObserver(syncChipFade);
+        ro.observe(el);
+        return () => ro.disconnect();
+    });
+
     const paused = $derived(
         focused ||
             value.trim().length > 0 ||
@@ -303,6 +442,8 @@
             hasSpatialChip ||
             activeTags.length > 0 ||
             activeVocabs.length > 0 ||
+            activeLayers.length > 0 ||
+            activeRows.length > 0 ||
             activeProjects.length > 0,
     );
     const activePlaceholder = $derived(
@@ -311,10 +452,10 @@
     const seedThumbUrl = $derived.by(() => {
         if (imageSession?.previewDataUrl) return imageSession.previewDataUrl;
         if (!activeMediaHash) return null;
-                const q = accessToken
-                    ? `?token=${encodeURIComponent(accessToken)}`
-                    : "";
-                return `/media/${activeMediaHash}${q}`;
+        return browserThumbUrl(`/media/${activeMediaHash}`, {
+            hash: activeMediaHash,
+            accessToken,
+        });
     });
 
     function placeItems(): PlaceItem[] {
@@ -349,6 +490,27 @@
         return cellHits.map((c) => ({ kind: "cell" as const, cell: c }));
     }
 
+    function rowItems(): MenuItem[] {
+        const draft = parseRowDraft(mentionQuery);
+        if (draft?.op) return [];
+        const typed = mentionQuery.trim();
+        const exact = columnHits.find(
+            (c) => c.name.toLowerCase() === typed.toLowerCase(),
+        );
+        if (exact) {
+            return ROW_OP_HINTS.map((o) => ({
+                kind: "rowop" as const,
+                op: o.op,
+                label: o.label,
+                hint: o.hint,
+            }));
+        }
+        return columnHits.map((c) => ({
+            kind: "rowcol" as const,
+            column: c,
+        }));
+    }
+
     /** Name matches, then places, then geo-suggested projects. */
     function mixedOmniboxItems(): MenuItem[] {
         if (scopedSlug) {
@@ -370,6 +532,41 @@
 
     const menuItems = $derived.by((): MenuItem[] => {
         if (!mentionOpen) return mixedOmniboxItems();
+        if (mentionMode === "slash") {
+            const q = mentionQuery.trim().toLowerCase();
+            const kinds = q
+                ? SLASH_KINDS.filter(
+                      (k) =>
+                          k.id.startsWith(q) ||
+                          k.label.toLowerCase().startsWith(q),
+                  )
+                : [...SLASH_KINDS];
+            const kindItems: SlashItem[] = kinds.map((k) => ({
+                kind: "slash",
+                id: k.id,
+                label: k.label,
+                hint: k.hint,
+            }));
+            if (q.length >= 2 && kinds.length === 0) {
+                return [
+                    ...layerItems(),
+                    ...entityItems(),
+                    ...artefactItems(),
+                    ...placeItems(),
+                ];
+            }
+            return [
+                ...kindItems,
+                ...(q.length >= 2
+                    ? [
+                          ...layerItems(),
+                          ...entityItems(),
+                          ...artefactItems(),
+                          ...placeItems(),
+                      ]
+                    : []),
+            ];
+        }
         if (mentionMode === "kinds") {
             const q = mentionQuery.trim().toLowerCase();
             const kinds = q
@@ -404,7 +601,7 @@
                     : [];
             const projects = projectItems();
             const entities = scopedSlug ? entityItems() : [];
-            // Bare `@slug` (no kind prefix) — project hits first so Enter chips the project
+            // Bare `@slug` (no kind prefix) — project hits first so Tab chips the project
             if (q.length >= 2 && kinds.length === 0) {
                 return [
                     ...entities,
@@ -434,6 +631,9 @@
         if (mentionMode === "place") return placeItems();
         if (mentionMode === "project") return projectItems();
         if (mentionMode === "entity") return entityItems();
+        if (mentionMode === "layer") return layerItems();
+        if (mentionMode === "artefact") return artefactItems();
+        if (mentionMode === "row") return rowItems();
         return termSuggestions.map((t) => ({
             kind: "value" as const,
             id: `vocab:${t}`,
@@ -447,6 +647,30 @@
             const prefix = value.replace(/#[^\s]*$/, "");
             if (item.kind === "value" && item.mode === "tag") {
                 return `${prefix}#${item.label}`;
+            }
+            return null;
+        }
+        if (mentionOpen && slashMention) {
+            const prefix = value.replace(/\/[^\s]*$/, "");
+            if (item.kind === "slash") return `${prefix}/${item.id}:`;
+            if (item.kind === "layer") return `${prefix}/layer:${item.layer.name}`;
+            if (item.kind === "entity") {
+                return `${prefix}/entity:${item.entity.id}`;
+            }
+            if (item.kind === "artefact") {
+                return `${prefix}/artefact:${item.artefact.hash}`;
+            }
+            if (item.kind === "place") {
+                return `${prefix}/place:${item.place.label}`;
+            }
+            if (item.kind === "rowcol") {
+                return `${prefix}/row:${item.column.name}`;
+            }
+            if (item.kind === "rowop") {
+                const draft = parseRowDraft(mentionQuery);
+                const col = draft?.column || mentionQuery.trim();
+                if (!col) return null;
+                return `${prefix}/row:${col}${item.op}`;
             }
             return null;
         }
@@ -465,7 +689,7 @@
                 }
                 return `${prefix}@${item.project.slug}`;
             }
-            if (item.kind === "layer") return `${prefix}${item.layer.label}`;
+            if (item.kind === "layer") return `${prefix}/layer:${item.layer.name}`;
             if (item.kind === "artefact") return `${prefix}${item.artefact.label}`;
             if (item.kind === "entity") return `${prefix}@entity:${item.entity.id}`;
             if (item.kind === "cell") return `${prefix}${item.cell.match}`;
@@ -480,11 +704,17 @@
         return null;
     }
 
+    const ghostTarget = $derived.by((): MenuItem | null => {
+        if (menuItems.length === 0) return null;
+        if (highlight >= 0 && highlight < menuItems.length) {
+            return menuItems[highlight]!;
+        }
+        return menuItems[0]!;
+    });
+
     const ghostSuffix = $derived.by((): string | null => {
-        if (!focused || menuItems.length === 0) return null;
-        const item =
-            highlight >= 0 ? menuItems[highlight]! : menuItems[0]!;
-        const fill = ghostFill(item);
+        if (!focused || !ghostTarget) return null;
+        const fill = ghostFill(ghostTarget);
         if (!fill) return null;
         const typed = value;
         if (!typed) return null;
@@ -493,19 +723,92 @@
         return fill.slice(typed.length);
     });
 
-    function acceptGhost(): boolean {
-        if (!ghostSuffix) return false;
-        const item =
-            highlight >= 0 ? menuItems[highlight]! : menuItems[0]!;
+    function caretToEnd() {
+        queueMicrotask(() => {
+            const el = inputEl;
+            if (!el) return;
+            el.focus({ preventScroll: true });
+            const n = el.value.length;
+            el.setSelectionRange(n, n);
+        });
+    }
+
+    function onComposerTab(e: KeyboardEvent) {
+        if (e.key !== "Tab" || e.shiftKey) return;
+        if (e.isComposing) return;
+        if (e.target !== inputEl) return;
+        const listOpen = mentionOpen || placesMenuOpen;
+        if (acceptCompletion()) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        if (listOpen) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    }
+
+    /** Tab completes the ghost / highlighted token. Never navigates. */
+    function acceptCompletion(): boolean {
+        const item = ghostTarget;
+        if (!item) return false;
+        if (item.kind === "kind") {
+            enterKind(item.id);
+            return true;
+        }
+        if (item.kind === "slash") {
+            enterSlashKind(item.id);
+            return true;
+        }
+        if (item.kind === "layer") {
+            const fill = ghostFill(item);
+            const typed = value;
+            const prefixOk =
+                Boolean(fill) &&
+                fill!.toLowerCase().startsWith(typed.toLowerCase());
+            if (!mentionOpen && typed && !prefixOk) return false;
+            chipLayer(item.layer.name);
+            return true;
+        }
+        if (item.kind === "rowcol") {
+            fillRowDraft(item.column.name);
+            return true;
+        }
+        if (item.kind === "rowop") {
+            const draft = parseRowDraft(mentionQuery);
+            const col = draft?.column || mentionQuery.trim();
+            if (!col) return false;
+            fillRowDraft(`${col}${item.op}`);
+            return true;
+        }
         const fill = ghostFill(item);
         if (!fill) return false;
-        value = fill;
-        syncMentionFromValue(fill);
-        if (!mentionOpen) schedulePlacesFetch(fill);
+        if (
+            !mentionOpen &&
+            !fill.toLowerCase().startsWith(value.toLowerCase())
+        ) {
+            return false;
+        }
+        const chipable =
+            (item.kind === "project" && mentionOpen) ||
+            (item.kind === "value" && item.mode === "tag");
+        value = chipable && !fill.endsWith(" ") ? `${fill} ` : fill;
+        chipCompletedProjectMentions();
+        chipCompletedHashTags();
+        chipCompletedSlashLayers();
+        chipCompletedSlashRows();
+        syncMentionFromValue(value);
+        if (!mentionOpen) schedulePlacesFetch(value);
+        caretToEnd();
         return true;
     }
 
     let isMac = $state(false);
+    const searchChordParts = $derived.by(() => {
+        void keyboardPrefs.chords;
+        return formatChordParts(currentChord("search-toggle"), isMac);
+    });
 
     onMount(() => {
         const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -538,7 +841,6 @@
                 }
                 e.preventDefault();
                 e.stopPropagation();
-                if (trySelectFromMenu()) return;
                 commitSearch();
                 return;
             }
@@ -546,10 +848,12 @@
             // ⌘K / Ctrl+K is owned by SearchOverlay (root layout).
         };
         window.addEventListener("keydown", onGlobalKey, true);
+        window.addEventListener("keydown", onComposerTab, true);
 
         return () => {
             mq.removeEventListener("change", syncMotion);
             window.removeEventListener("keydown", onGlobalKey, true);
+            window.removeEventListener("keydown", onComposerTab, true);
         };
     });
 
@@ -613,21 +917,9 @@
         }
     });
 
-    $effect(() => {
-        // Keep highlight in range when the menu rebuilds.
-        // Free-text places use -1 so Enter still searches the typed query.
-        const n = menuItems.length;
-        if (!mentionOpen) {
-            if (n === 0) {
-                if (highlight !== -1) highlight = -1;
-            } else if (highlight >= n) {
-                highlight = n - 1;
-            }
-            return;
-        }
-        if (highlight < 0) highlight = 0;
-        else if (n > 0 && highlight >= n) highlight = n - 1;
-    });
+    const activeHighlight = $derived(
+        highlight >= 0 && highlight < menuItems.length ? highlight : -1,
+    );
 
     function navigate(next: {
         q?: string;
@@ -641,6 +933,8 @@
         radius?: number | null;
         bbox?: SearchBBox | null;
         placeName?: string | null;
+        keepFocus?: boolean;
+        rows?: RowPredicate[];
     }) {
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
@@ -686,7 +980,12 @@
                 );
                 return;
             }
-            void goto(projectLayersSearchHref(slug, nextQ));
+            void goto(
+                projectLayersSearchHref(slug, nextQ, {
+                    layer: activeLayer,
+                    rows: next.rows ?? activeRows,
+                }),
+            );
             return;
         }
         goto(
@@ -717,6 +1016,7 @@
                           ? false
                           : imageQuery,
             }),
+            { keepFocus: next.keepFocus !== false, noScroll: true },
         );
     }
 
@@ -819,14 +1119,15 @@
             imageError = "Drop an image file (JPEG, PNG, or WebP)";
     }
 
-    /** Strip the active @mention or #tag token from the free-text query. */
+    /** Strip the active @mention, #tag, or /filter token from the free-text query. */
     function stripMention(raw: string): string {
-        return raw.replace(/(^|\s)[@#][^\s]*$/, "$1").trimEnd();
+        return stripTrailingFilterToken(raw);
     }
 
     function closeMention() {
         mentionOpen = false;
         hashMention = false;
+        slashMention = false;
         mentionMode = "kinds";
         mentionQuery = "";
         highlight = -1;
@@ -837,22 +1138,23 @@
         artefactHits = [];
         cellHits = [];
         entityHits = [];
+        columnHits = [];
     }
 
-    function trySelectFromMenu(): boolean {
-        if (mentionOpen && menuItems.length > 0 && highlight >= 0) {
-            selectItem(menuItems[highlight]!);
-            return true;
-        }
-        if (
-            !mentionOpen &&
-            highlight >= 0 &&
-            menuItems[highlight]
-        ) {
-            selectItem(menuItems[highlight]!);
-            return true;
-        }
-        return false;
+    /** Drop typeahead I/O so Enter/Escape never leave the menu stuck on Loading… */
+    function abortSuggestions() {
+        clearTimeout(placesTimer);
+        clearTimeout(debounceTimer);
+        placesReq += 1;
+        loadingPlaces = false;
+        loading = false;
+        placeHits = [];
+        projectHits = [];
+        layerHits = [];
+        artefactHits = [];
+        cellHits = [];
+        entityHits = [];
+        highlight = -1;
     }
 
     function isKindToken(typed: string): boolean {
@@ -996,44 +1298,89 @@
         closeMention();
     }
 
+    function chipCompletedSlashLayers() {
+        const harvested = harvestSlashLayers(value, { completedOnly: true });
+        if (harvested.layers.length === 0) return;
+        extraLayers = harvested.layers.slice(-1);
+        omittedLayers = omittedLayers.filter(
+            (s) =>
+                !extraLayers.some(
+                    (l) => l.toLowerCase() === s.toLowerCase(),
+                ),
+        );
+        if (harvested.q === value) return;
+        value = harvested.q;
+        closeMention();
+    }
+
+    function chipCompletedSlashRows() {
+        const harvested = harvestSlashRows(value, { completedOnly: true });
+        if (harvested.rows.length === 0) return;
+        extraRows = mergeRowPredicates(activeRows, harvested.rows);
+        omittedRows = omittedRows.filter(
+            (s) =>
+                !harvested.rows.some(
+                    (p) => formatRowToken(p).toLowerCase() === s.toLowerCase(),
+                ),
+        );
+        if (harvested.q === value) return;
+        value = harvested.q;
+        closeMention();
+    }
+
+    function fillRowDraft(token: string) {
+        value = value.replace(/(^|\s)\/?row:[^\s]*$/i, `$1/row:${token}`);
+        if (!/\/row:/i.test(value)) {
+            value = value.replace(/(^|\s)\/[^\s]*$/, `$1/row:${token}`);
+        }
+        syncMentionFromValue(value);
+        caretToEnd();
+    }
+
+    function chipLayer(name: string) {
+        extraLayers = [name];
+        omittedLayers = omittedLayers.filter(
+            (s) => s.toLowerCase() !== name.toLowerCase(),
+        );
+        const cleaned = stripMention(value);
+        value = cleaned;
+        closeMention();
+        abortSuggestions();
+        if (cleaned.trim().length >= 2) schedulePlacesFetch(cleaned);
+        caretToEnd();
+    }
+
     function commitSearch() {
         const harvested = harvestProjectMentions(value);
         rememberProjectHits(harvested.hits);
         const hashed = harvestHashTags(harvested.q);
+        const slashed = harvestSlashLayers(hashed.q);
+        const rowed = harvestSlashRows(slashed.q);
         const nextProjects = mergeSlugs(activeProjects, harvested.slugs);
         const nextTags = mergeSlugs(activeTags, hashed.tags);
         extraProjects = [];
         extraTags = [];
+        if (slashed.layers.length > 0) extraLayers = slashed.layers.slice(-1);
+        extraRows = mergeRowPredicates(activeRows, rowed.rows);
         omittedProjects = [];
-        value = hashed.q;
+        let nextQ = stripIncompleteSlashDraft(rowed.q);
+        if (/^\/[a-z]*:?$/i.test(nextQ.trim())) nextQ = "";
+        value = nextQ;
         closeMention();
-        placesReq += 1;
-        placeHits = [];
-        projectHits = [];
-        layerHits = [];
-        artefactHits = [];
-        cellHits = [];
+        abortSuggestions();
+        focused = false;
+        inputEl?.blur();
         navigate({
-            q: hashed.q,
+            q: nextQ,
             projects: nextProjects,
             tags: nextTags,
+            rows: extraRows.length > 0 ? extraRows : activeRows,
+            keepFocus: false,
         });
     }
 
     function handleSubmit(e: SubmitEvent) {
         e.preventDefault();
-        if (mentionOpen) {
-            if (trySelectFromMenu()) return;
-            commitSearch();
-            return;
-        }
-        const inline = harvestProjectMentions(value);
-        const hashed = harvestHashTags(value);
-        if (inline.slugs.length > 0 || hashed.tags.length > 0) {
-            commitSearch();
-            return;
-        }
-        if (trySelectFromMenu()) return;
         commitSearch();
     }
 
@@ -1072,13 +1419,107 @@
         if (next.length !== 1) {
             layerHits = [];
             artefactHits = [];
-        cellHits = [];
+            cellHits = [];
+            extraLayers = [];
+            extraRows = [];
         } else if (value.trim().length >= 2 && !mentionOpen) {
             schedulePlacesFetch(value);
         }
         if (!palette) {
             navigate({ projects: next });
         }
+    }
+
+    function removeLayer(name: string) {
+        extraLayers = extraLayers.filter(
+            (s) => s.toLowerCase() !== name.toLowerCase(),
+        );
+        if (layers.some((s) => s.toLowerCase() === name.toLowerCase())) {
+            omittedLayers = mergeSlugs(omittedLayers, [name]);
+        }
+        if (value.trim().length >= 2 && !mentionOpen) {
+            schedulePlacesFetch(value);
+        }
+        if (!palette && scopedSlug) {
+            navigate({ q: value });
+        }
+    }
+
+    function removeRow(pred: RowPredicate) {
+        const key = formatRowToken(pred).toLowerCase();
+        const next = activeRows.filter(
+            (p) => formatRowToken(p).toLowerCase() !== key,
+        );
+        extraRows = next;
+        if (propRows.some((p) => formatRowToken(p).toLowerCase() === key)) {
+            omittedRows = mergeSlugs(omittedRows, [formatRowToken(pred)]);
+        }
+        if (scopedSlug) {
+            navigate({ q: value, rows: next });
+        }
+    }
+
+    function updateRow(pred: RowPredicate, nextValue: string): boolean {
+        const trimmed = nextValue.trim();
+        if (!trimmed) {
+            removeRow(pred);
+            return true;
+        }
+        if (isNumericRowOp(pred.op) && !Number.isFinite(Number(trimmed))) {
+            return false;
+        }
+        const nextPred: RowPredicate = { ...pred, value: trimmed };
+        const key = formatRowToken(pred).toLowerCase();
+        const next = activeRows.map((p) =>
+            formatRowToken(p).toLowerCase() === key ? nextPred : p,
+        );
+        extraRows = next;
+        omittedRows = omittedRows.filter(
+            (s) => s.toLowerCase() !== formatRowToken(nextPred).toLowerCase(),
+        );
+        if (scopedSlug) {
+            navigate({ q: value, rows: next });
+        }
+        return true;
+    }
+
+    function updateRadius(raw: string): boolean {
+        const next = parseRadius(raw, radius ?? DEFAULT_SEARCH_RADIUS);
+        if (next == null) return false;
+        radius = next;
+        if (lat != null && lng != null) {
+            navigate({ radius: next, lat, lng });
+        }
+        return true;
+    }
+
+    function updateTag(from: string, to: string): boolean {
+        const nextVal = to.trim();
+        if (!nextVal) {
+            removeTag(from);
+            return true;
+        }
+        extraTags = extraTags.map((t) =>
+            t.toLowerCase() === from.toLowerCase() ? nextVal : t,
+        );
+        const next = activeTags.map((t) =>
+            t.toLowerCase() === from.toLowerCase() ? nextVal : t,
+        );
+        navigate({ tags: next });
+        return true;
+    }
+
+    function updateVocab(from: string, to: string): boolean {
+        const nextVal = to.trim();
+        if (!nextVal) {
+            removeVocab(from);
+            return true;
+        }
+        const next = activeVocabs.map((v) =>
+            v.toLowerCase() === from.toLowerCase() ? nextVal : v,
+        );
+        navigate({ vocabularies: next });
+        return true;
     }
 
     function applyTag(tag: string) {
@@ -1089,6 +1530,7 @@
         const cleaned = stripMention(value);
         value = cleaned;
         closeMention();
+        abortSuggestions();
         navigate({ q: cleaned, tags: next });
     }
 
@@ -1100,6 +1542,7 @@
         const cleaned = stripMention(value);
         value = cleaned;
         closeMention();
+        abortSuggestions();
         navigate({ q: cleaned, vocabularies: next });
     }
 
@@ -1115,6 +1558,7 @@
         const cleaned = stripMention(value);
         value = cleaned;
         closeMention();
+        abortSuggestions();
         navigate({
             q: cleaned,
             projects: mergeSlugs(activeProjects, [project.slug]),
@@ -1123,12 +1567,7 @@
 
     function applyPlace(place: PlaceHit) {
         closeMention();
-        placesReq += 1;
-        placeHits = [];
-        projectHits = [];
-        layerHits = [];
-        artefactHits = [];
-        cellHits = [];
+        abortSuggestions();
         value = "";
         const geom = place.geom;
         if (geom.type === "bbox") {
@@ -1172,9 +1611,7 @@
 
     function applyProject(project: ProjectHit) {
         closeMention();
-        placesReq += 1;
-        placeHits = [];
-        projectHits = [];
+        abortSuggestions();
         value = "";
         void goto(`/${project.slug}`);
     }
@@ -1200,19 +1637,52 @@
     function enterKind(id: "tag" | "vocab" | "place" | "project" | "entity") {
         mentionMode = id;
         mentionQuery = "";
-        highlight = 0;
+        highlight = -1;
+        slashMention = false;
+        hashMention = false;
         // Rewrite the in-progress mention so further typing filters that kind
         value = value.replace(/(^|\s)@[^\s]*$/, `$1@${id}:`);
         tagSuggestions = [];
         termSuggestions = [];
         if (id !== "place") placeHits = [];
         projectHits = [];
-        queueMicrotask(() => inputEl?.focus());
+        caretToEnd();
+    }
+
+    function enterSlashKind(id: SlashKindId) {
+        slashMention = true;
+        hashMention = false;
+        highlight = -1;
+        mentionQuery = "";
+        mentionMode =
+            id === "place"
+                ? "place"
+                : id === "entity"
+                  ? "entity"
+                  : id;
+        mentionOpen = true;
+        value = value.replace(/(^|\s)\/[^\s]*$/, `$1/${id}:`);
+        tagSuggestions = [];
+        termSuggestions = [];
+        if (id !== "place") placeHits = [];
+        if (id !== "layer") layerHits = [];
+        if (id !== "artefact") artefactHits = [];
+        if (id !== "entity") entityHits = [];
+        if (id !== "row") columnHits = [];
+        projectHits = [];
+        if (scopedSlug && (id === "layer" || id === "artefact" || id === "row")) {
+            scheduleFetch();
+        }
+        caretToEnd();
     }
 
     function selectItem(item: MenuItem) {
         if (item.kind === "kind") {
             enterKind(item.id);
+            return;
+        }
+        if (item.kind === "slash") {
+            enterSlashKind(item.id);
             return;
         }
         if (item.kind === "place") {
@@ -1256,32 +1726,114 @@
             );
             return;
         }
+        if (item.kind === "rowcol") {
+            fillRowDraft(item.column.name);
+            return;
+        }
+        if (item.kind === "rowop") {
+            const draft = parseRowDraft(mentionQuery);
+            const col = draft?.column || mentionQuery.trim();
+            if (!col) return;
+            fillRowDraft(`${col}${item.op}`);
+            return;
+        }
         if (item.mode === "tag") applyTag(item.label);
         else applyVocab(item.label);
     }
 
     /**
-     * Parse the trailing @token or #tag from the main input.
-     * Forms: `@` | `@pot` | `@tag:pot` | `#` | `#pot`
+     * Parse the trailing @token, #tag, or /filter from the main input.
+     * Forms: `@` | `@pot` | `@tag:pot` | `#` | `#pot` | `/` | `/layer:trenches`
      */
     function syncMentionFromValue(raw: string) {
         const at = /(^|\s)@([^\s]*)$/.exec(raw);
         const hash = /(^|\s)#([^\s]*)$/.exec(raw);
+        const slash = scopedSlug ? /(^|\s)\/([^\s]*)$/.exec(raw) : null;
+        const bareRow = scopedSlug
+            ? /(^|\s)row:([^\s]*)$/i.exec(raw)
+            : null;
         const atIdx = at?.index ?? -1;
         const hashIdx = hash?.index ?? -1;
-        if (atIdx < 0 && hashIdx < 0) {
+        const slashIdx = slash?.index ?? -1;
+        const bareRowIdx =
+            slashIdx >= 0 && slash![2]?.toLowerCase().startsWith("row")
+                ? -1
+                : (bareRow?.index ?? -1);
+        const last = Math.max(atIdx, hashIdx, slashIdx, bareRowIdx);
+        if (last < 0) {
             if (mentionOpen) closeMention();
             return;
         }
 
         if (!mentionOpen) {
-            highlight = 0;
+            highlight = -1;
             placesReq += 1;
             clearTimeout(placesTimer);
         }
         mentionOpen = true;
 
-        if (hashIdx > atIdx) {
+        if (bareRowIdx === last) {
+            hashMention = false;
+            slashMention = true;
+            mentionMode = "row";
+            mentionQuery = bareRow![2] ?? "";
+            scheduleFetch();
+            return;
+        }
+
+        if (slashIdx === last) {
+            hashMention = false;
+            slashMention = true;
+            const token = slash![2] ?? "";
+            const lower = token.toLowerCase();
+            if (lower.startsWith("layer:")) {
+                mentionMode = "layer";
+                mentionQuery = token.slice(6);
+                scheduleFetch();
+                return;
+            }
+            if (lower.startsWith("entity:")) {
+                mentionMode = "entity";
+                mentionQuery = token.slice(7);
+                scheduleFetch();
+                return;
+            }
+            if (
+                lower.startsWith("artefact:") ||
+                lower.startsWith("artifact:")
+            ) {
+                mentionMode = "artefact";
+                mentionQuery = token.slice(token.indexOf(":") + 1);
+                scheduleFetch();
+                return;
+            }
+            if (lower.startsWith("place:")) {
+                mentionMode = "place";
+                mentionQuery = token.slice(6);
+                scheduleFetch();
+                return;
+            }
+            if (lower.startsWith("row:")) {
+                mentionMode = "row";
+                mentionQuery = token.slice(4);
+                scheduleFetch();
+                return;
+            }
+            mentionMode = "slash";
+            mentionQuery = token;
+            if (token.length >= 2) scheduleFetch();
+            else {
+                layerHits = [];
+                artefactHits = [];
+                entityHits = [];
+                placeHits = [];
+            }
+            return;
+        }
+
+        slashMention = false;
+
+        if (hashIdx === last) {
             hashMention = true;
             mentionMode = "tag";
             mentionQuery = hash![2] ?? "";
@@ -1340,13 +1892,16 @@
         value = el.value;
         chipCompletedProjectMentions();
         chipCompletedHashTags();
+        chipCompletedSlashLayers();
+        chipCompletedSlashRows();
         syncMentionFromValue(value);
         if (!mentionOpen) schedulePlacesFetch(value);
         else {
             clearTimeout(placesTimer);
             if (
                 mentionMode !== "place" &&
-                mentionMode !== "kinds"
+                mentionMode !== "kinds" &&
+                mentionMode !== "slash"
             ) {
                 placeHits = [];
             }
@@ -1358,9 +1913,25 @@
             }
             if (
                 mentionMode !== "entity" &&
-                mentionMode !== "kinds"
+                mentionMode !== "kinds" &&
+                mentionMode !== "slash"
             ) {
                 entityHits = [];
+            }
+            if (
+                mentionMode !== "layer" &&
+                mentionMode !== "slash"
+            ) {
+                layerHits = [];
+            }
+            if (
+                mentionMode !== "artefact" &&
+                mentionMode !== "slash"
+            ) {
+                artefactHits = [];
+            }
+            if (mentionMode !== "row") {
+                columnHits = [];
             }
         }
     }
@@ -1378,6 +1949,14 @@
             removeTag(activeTags[activeTags.length - 1]!);
             return;
         }
+        if (activeRows.length > 0) {
+            removeRow(activeRows[activeRows.length - 1]!);
+            return;
+        }
+        if (activeLayers.length > 0) {
+            removeLayer(activeLayers[activeLayers.length - 1]!);
+            return;
+        }
         if (activeProjects.length > 0) {
             removeProject(activeProjects[activeProjects.length - 1]!);
             return;
@@ -1393,6 +1972,8 @@
             (hasSpatialChip ||
                 activeTags.length > 0 ||
                 activeVocabs.length > 0 ||
+                activeLayers.length > 0 ||
+                activeRows.length > 0 ||
                 activeProjects.length > 0 ||
                 hasImageChip)
         ) {
@@ -1404,7 +1985,21 @@
         const listOpen = mentionOpen || placesMenuOpen;
 
         if (e.key === "Tab" && !e.shiftKey) {
-            if (acceptGhost()) e.preventDefault();
+            // Capture handler `onComposerTab` owns Tab (beats dialog focus trap).
+            return;
+        }
+
+        if (e.key === "Enter" && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            if (e.isComposing) return;
+            e.preventDefault();
+            if (activeHighlight >= 0) {
+                const item = menuItems[activeHighlight];
+                if (item) {
+                    selectItem(item);
+                    return;
+                }
+            }
+            commitSearch();
             return;
         }
 
@@ -1416,17 +2011,11 @@
             if (mentionOpen) {
                 value = stripMention(value);
                 closeMention();
+                abortSuggestions();
                 return;
             }
             if (listOpen) {
-                placeHits = [];
-                projectHits = [];
-                layerHits = [];
-                artefactHits = [];
-        cellHits = [];
-                entityHits = [];
-                highlight = -1;
-                placesReq += 1;
+                abortSuggestions();
             }
             return;
         }
@@ -1436,42 +2025,20 @@
         if (e.key === "ArrowDown") {
             e.preventDefault();
             if (menuItems.length === 0) return;
-            if (!mentionOpen) {
-                highlight =
-                    highlight + 1 >= menuItems.length ? -1 : highlight + 1;
-            } else {
-                highlight = (highlight + 1) % menuItems.length;
-            }
+            highlight =
+                activeHighlight + 1 >= menuItems.length
+                    ? -1
+                    : activeHighlight + 1;
             return;
         }
 
         if (e.key === "ArrowUp") {
             e.preventDefault();
             if (menuItems.length === 0) return;
-            if (!mentionOpen) {
-                highlight =
-                    highlight <= -1 ? menuItems.length - 1 : highlight - 1;
-            } else {
-                highlight =
-                    (highlight - 1 + menuItems.length) % menuItems.length;
-            }
-            return;
-        }
-
-        if (e.key === "Enter") {
-            if (mentionOpen && menuItems.length > 0) {
-                e.preventDefault();
-                selectItem(menuItems[highlight]!);
-                return;
-            }
-            if (
-                !mentionOpen &&
-                highlight >= 0 &&
-                menuItems[highlight]
-            ) {
-                e.preventDefault();
-                selectItem(menuItems[highlight]!);
-            }
+            highlight =
+                activeHighlight <= -1
+                    ? menuItems.length - 1
+                    : activeHighlight - 1;
             return;
         }
     }
@@ -1485,7 +2052,7 @@
             projectHits = [];
             layerHits = [];
             artefactHits = [];
-        cellHits = [];
+            cellHits = [];
             loadingPlaces = false;
             return;
         }
@@ -1500,7 +2067,10 @@
             const [omnibox, scoped] = await Promise.all([
                 searchOmnibox(prefix, { accessToken }),
                 slug
-                    ? searchProjectScope(slug, prefix, { accessToken })
+                    ? searchProjectScope(slug, prefix, {
+                          accessToken,
+                          layer: activeLayer,
+                      })
                     : Promise.resolve({ layers: [], artefacts: [], values: [] }),
             ]);
             if (req !== placesReq) return;
@@ -1532,17 +2102,35 @@
 
     async function runFetch() {
         const prefix = mentionQuery.trim();
+        const wantSlashHits = mentionMode === "slash";
         const wantTags = mentionMode === "tag" || mentionMode === "kinds";
         const wantTerms = mentionMode === "vocab" || mentionMode === "kinds";
         const wantPlaces =
-            mentionMode === "place" || mentionMode === "kinds";
+            mentionMode === "place" ||
+            mentionMode === "kinds" ||
+            wantSlashHits;
         const wantProjects =
             mentionMode === "project" || mentionMode === "kinds";
         const wantEntities =
             Boolean(scopedSlug) &&
-            (mentionMode === "entity" || mentionMode === "kinds");
+            (mentionMode === "entity" ||
+                mentionMode === "kinds" ||
+                wantSlashHits);
+        const wantLayers =
+            Boolean(scopedSlug) &&
+            (mentionMode === "layer" || wantSlashHits);
+        const wantArtefacts =
+            Boolean(scopedSlug) &&
+            (mentionMode === "artefact" || wantSlashHits);
+        const wantColumns =
+            Boolean(scopedSlug) && mentionMode === "row";
 
-        if (!prefix) {
+        if (
+            !prefix &&
+            mentionMode !== "layer" &&
+            mentionMode !== "artefact" &&
+            mentionMode !== "row"
+        ) {
             tagSuggestions = [];
             termSuggestions = [];
             if (mentionMode === "place") placeHits = [];
@@ -1554,7 +2142,7 @@
         loading = true;
         try {
             const jobs: Promise<void>[] = [];
-            if (wantTags) {
+            if (wantTags && prefix) {
                 jobs.push(
                     (async () => {
                         const res = await fetch(
@@ -1568,7 +2156,7 @@
             } else {
                 tagSuggestions = [];
             }
-            if (wantTerms) {
+            if (wantTerms && prefix) {
                 jobs.push(
                     (async () => {
                         const res = await fetch(
@@ -1589,7 +2177,7 @@
                         placeHits = hits;
                     })(),
                 );
-            } else if (mentionMode === "place") {
+            } else if (mentionMode === "place" || wantSlashHits) {
                 placeHits = [];
             }
             if (wantProjects && prefix.length >= 2) {
@@ -1604,19 +2192,83 @@
             } else if (mentionMode === "project") {
                 projectHits = [];
             }
-            if (wantEntities && (mentionMode === "entity" || prefix.length >= 2)) {
+            if (
+                wantEntities &&
+                (mentionMode === "entity" || prefix.length >= 2)
+            ) {
                 jobs.push(
                     (async () => {
                         const hits = await searchProjectEntities(
                             scopedSlug!,
                             prefix,
-                            { accessToken },
+                            { accessToken, layer: activeLayer },
                         );
                         entityHits = hits;
                     })(),
                 );
             } else if (mentionMode === "entity") {
                 entityHits = [];
+            }
+            if (wantLayers) {
+                jobs.push(
+                    (async () => {
+                        const hits = await searchProjectLayers(
+                            scopedSlug!,
+                            prefix,
+                            {
+                                accessToken,
+                                minLength: 0,
+                                limit: 8,
+                                layer:
+                                    mentionMode === "layer"
+                                        ? null
+                                        : activeLayer,
+                            },
+                        );
+                        layerHits = hits;
+                    })(),
+                );
+            } else if (mentionMode !== "kinds") {
+                layerHits = [];
+            }
+            if (wantArtefacts) {
+                jobs.push(
+                    (async () => {
+                        const hits = await searchProjectArtefacts(
+                            scopedSlug!,
+                            prefix,
+                            {
+                                accessToken,
+                                minLength: 0,
+                                limit: 8,
+                                layer: activeLayer,
+                            },
+                        );
+                        artefactHits = hits;
+                    })(),
+                );
+            } else if (mentionMode !== "kinds") {
+                artefactHits = [];
+            }
+            if (wantColumns) {
+                jobs.push(
+                    (async () => {
+                        const draft = parseRowDraft(prefix);
+                        const colQ = draft?.op ? draft.column : prefix;
+                        const hits = await listProjectColumns(
+                            scopedSlug!,
+                            colQ,
+                            {
+                                accessToken,
+                                limit: 12,
+                                layer: activeLayer,
+                            },
+                        );
+                        columnHits = hits;
+                    })(),
+                );
+            } else if (mentionMode !== "kinds") {
+                columnHits = [];
             }
             await Promise.all(jobs);
         } catch {
@@ -1625,6 +2277,9 @@
             if (wantPlaces) placeHits = [];
             if (wantProjects) projectHits = [];
             if (wantEntities) entityHits = [];
+            if (wantLayers) layerHits = [];
+            if (wantArtefacts) artefactHits = [];
+            if (wantColumns) columnHits = [];
         } finally {
             loading = false;
         }
@@ -1636,9 +2291,7 @@
         setTimeout(() => {
             if (!focused) {
                 closeMention();
-                placesReq += 1;
-                placeHits = [];
-                projectHits = [];
+                abortSuggestions();
             }
         }, 150);
     }
@@ -1651,16 +2304,148 @@
 
     <form
         onsubmit={handleSubmit}
-        class="relative w-full shrink-0"
+        class="relative flex w-full shrink-0 flex-col overflow-visible"
         ondragover={onDragOver}
         ondragleave={onDragLeave}
         ondrop={onDrop}
         onpaste={onPaste}
     >
+        {#if hasChips}
+            <div
+                class="search-chip-tray mb-1.5"
+                transition:slide={{
+                    duration: reduceMotion ? 0 : 200,
+                    axis: "y",
+                }}
+            >
+                <div
+                    bind:this={chipRow}
+                    onscroll={syncChipFade}
+                    onwheel={onChipWheel}
+                    class="chip-scroller flex min-h-7 w-full flex-nowrap items-center gap-1"
+                    style:--chip-fade-left={chipFadeLeft ? "1.25rem" : "0px"}
+                    style:--chip-fade-right={chipFadeRight ? "1.25rem" : "0px"}
+                >
+                    {#if hasImageChip}
+                        <button
+                            type="button"
+                            tabindex="-1"
+                            class={chipBtn}
+                            onclick={removeMedia}
+                            title="Remove image search"
+                        >
+                            {#if seedThumbUrl}
+                                <img
+                                    src={seedThumbUrl}
+                                    alt=""
+                                    class="size-4 rounded object-cover"
+                                />
+                            {:else}
+                                <ImageIcon class="size-3 text-muted-foreground" />
+                            {/if}
+                            <XIcon class="size-3 text-muted-foreground" />
+                        </button>
+                    {/if}
+                    {#if bbox}
+                        <button
+                            type="button"
+                            tabindex="-1"
+                            class="{chipBtn} max-w-[16rem]"
+                            onclick={removeSpatial}
+                            title="Remove map area filter"
+                        >
+                            {#if placeChip}
+                                <GlobeIcon class="size-3 text-muted-foreground" />
+                                <span class="truncate">{placeChip.title}</span>
+                            {:else}
+                                <MapIcon class="size-3 text-muted-foreground" />
+                                <span class="truncate tabular-nums"
+                                    >{formatLatLng(bbox.south, bbox.west)}
+                                    → {formatLatLng(bbox.north, bbox.east)}</span
+                                >
+                            {/if}
+                            <XIcon class="size-3 text-muted-foreground" />
+                        </button>
+                    {:else if lat != null && lng != null}
+                        <FilterChip
+                            class="{chipBtn} max-w-[16rem]"
+                            label={placeChip?.title ?? ""}
+                            value={formatRadius(radius ?? DEFAULT_SEARCH_RADIUS)}
+                            title="Distance from point"
+                            onCommit={updateRadius}
+                            onRemove={removeSpatial}
+                        >
+                            {#if placeChip}
+                                <GlobeIcon class="size-3 shrink-0 text-muted-foreground" />
+                            {:else}
+                                <CrosshairIcon class="size-3 shrink-0 text-muted-foreground" />
+                            {/if}
+                        </FilterChip>
+                    {/if}
+                    {#each activeTags as tag (tag.toLowerCase())}
+                        <FilterChip
+                            class={chipBtn}
+                            label="#"
+                            value={tag}
+                            title="Tag filter"
+                            onCommit={(next) => updateTag(tag, next)}
+                            onRemove={() => removeTag(tag)}
+                        />
+                    {/each}
+                    {#each activeVocabs as v (v.toLowerCase())}
+                        <FilterChip
+                            class="{chipBtn} max-w-[16rem]"
+                            value={v}
+                            title="Mapped-term filter"
+                            onCommit={(next) => updateVocab(v, next)}
+                            onRemove={() => removeVocab(v)}
+                        >
+                            <BookMarkedIcon class="size-3 shrink-0 text-muted-foreground" />
+                        </FilterChip>
+                    {/each}
+                    {#each activeLayers as name (name.toLowerCase())}
+                        <button
+                            type="button"
+                            tabindex="-1"
+                            class="{chipBtn} max-w-[16rem]"
+                            onclick={() => removeLayer(name)}
+                            title="Remove layer filter"
+                        >
+                            <LayersIcon class="size-3 shrink-0 text-muted-foreground" />
+                            <span class="truncate">{displayLayerName(name)}</span>
+                            <XIcon class="size-3 text-muted-foreground" />
+                        </button>
+                    {/each}
+                    {#each activeRows as pred (formatRowToken(pred).toLowerCase())}
+                        <FilterChip
+                            class="{chipBtn} max-w-[18rem]"
+                            label="{displayLayerName(pred.column)} {pred.op === "~" ? "?" : pred.op}"
+                            value={pred.value}
+                            title="Column filter"
+                            onCommit={(next) => updateRow(pred, next)}
+                            onRemove={() => removeRow(pred)}
+                        >
+                            <Table2Icon class="size-3 shrink-0 text-muted-foreground" />
+                        </FilterChip>
+                    {/each}
+                    {#each activeProjects as slug (slug.toLowerCase())}
+                        <button
+                            type="button"
+                            tabindex="-1"
+                            class="{chipBtn} max-w-[16rem]"
+                            onclick={() => removeProject(slug)}
+                            title="Remove project filter"
+                        >
+                            <FolderKanbanIcon class="size-3 shrink-0 text-muted-foreground" />
+                            <span class="truncate">{projectChipLabel(slug)}</span>
+                            <XIcon class="size-3 text-muted-foreground" />
+                        </button>
+                    {/each}
+                </div>
+            </div>
+        {/if}
         <div
-            class="search-vt-bar relative flex w-full min-h-11 items-center rounded-xl border py-1.5 pl-10 pr-12 {bare
-                ? 'border-transparent bg-transparent'
-                : 'border-border bg-background shadow-sm focus-within:border-primary dark:bg-muted dark:shadow-none'} {dragOver
+            class="search-vt-bar relative z-10 flex w-full min-h-11 items-center rounded-xl border border-border py-1.5 pl-10 pr-12 surface shadow-lg focus-within:border-primary {dragOver
                 ? 'ring-2 ring-primary/40'
                 : ''} {klass}"
             onclick={() => inputEl?.focus()}
@@ -1695,6 +2480,8 @@
                 : hasSpatialChip ||
                     activeTags.length > 0 ||
                     activeVocabs.length > 0 ||
+                    activeLayers.length > 0 ||
+                    activeRows.length > 0 ||
                     activeProjects.length > 0 ||
                     hasImageChip
                   ? "Add words…"
@@ -1724,19 +2511,17 @@
             aria-hidden="true"
             onchange={onFilePicked}
         />
-        {#if shortcutHint && !focused && !hasSpatialChip && activeTags.length === 0 && activeVocabs.length === 0 && activeProjects.length === 0}
+        {#if shortcutHint && !focused && !hasSpatialChip && activeTags.length === 0 && activeVocabs.length === 0 && activeLayers.length === 0 && activeRows.length === 0 && activeProjects.length === 0}
             <span
                 class="pointer-events-none absolute right-11 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 text-[10px] text-muted-foreground/80"
                 aria-hidden="true"
             >
+                {#each searchChordParts as part, i (i)}
                 <kbd
                     class="rounded border border-border bg-background/80 px-1.5 py-0.5 font-sans dark:bg-background/40"
-                    >{isMac ? "⌘" : "Ctrl"}</kbd
+                    >{part}</kbd
                 >
-                <kbd
-                    class="rounded border border-border bg-background/80 px-1.5 py-0.5 font-sans dark:bg-background/40"
-                    >K</kbd
-                >
+                {/each}
             </span>
         {/if}
         <button
@@ -1757,164 +2542,48 @@
             {/if}
         </button>
         </div>
-        {#if hasChips || palette}
-            <div
-                class="search-chip-tray mt-1.5 flex min-h-8 shrink-0 items-center gap-1.5 {palette
-                    ? 'border-t border-border px-1 pt-1.5 h-auto min-h-8'
-                    : ''}"
-                onclick={(e) => e.stopPropagation()}
-            >
-                {#if hasChips}
-                <div
-                    class="flex min-w-0 flex-1 flex-wrap items-center gap-1"
-                >
-                {#if hasImageChip}
-                    <button
-                        type="button"
-                        tabindex="-1"
-                        class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                        onclick={removeMedia}
-                        title="Remove image search"
-                    >
-                        {#if seedThumbUrl}
-                            <img
-                                src={seedThumbUrl}
-                                alt=""
-                                class="size-4 rounded object-cover"
-                            />
-                        {:else}
-                            <ImageIcon class="size-3" />
-                        {/if}
-                        <span class="text-primary/60">image</span>
-                        <XIcon class="size-3 opacity-70" />
-                    </button>
-                {/if}
-                {#if bbox}
-                    <button
-                        type="button"
-                        tabindex="-1"
-                        class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                        onclick={removeSpatial}
-                        title="Remove map area filter"
-                    >
-                        {#if placeChip}
-                            <GlobeIcon class="size-3 opacity-70" />
-                            <span class="truncate">{placeChip.title}</span>
-                        {:else}
-                            <MapIcon class="size-3 opacity-70" />
-                            <span class="text-primary/60">area</span>
-                            <span class="truncate tabular-nums"
-                                >{formatLatLng(bbox.south, bbox.west)}
-                                → {formatLatLng(bbox.north, bbox.east)}</span
-                            >
-                        {/if}
-                        <XIcon class="size-3 opacity-70" />
-                    </button>
-                {:else if lat != null && lng != null}
-                    <button
-                        type="button"
-                        tabindex="-1"
-                        class="inline-flex max-w-[14rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                        onclick={removeSpatial}
-                        title="Remove radius filter"
-                    >
-                        {#if placeChip}
-                            <GlobeIcon class="size-3 opacity-70" />
-                            <span class="truncate">{placeChip.title}</span>
-                        {:else}
-                            <CrosshairIcon class="size-3 opacity-70" />
-                            <span class="text-primary/60">radius</span>
-                        {/if}
-                        <span class="tabular-nums"
-                            >{formatRadius(radius ?? DEFAULT_SEARCH_RADIUS)}</span
-                        >
-                        <XIcon class="size-3 opacity-70" />
-                    </button>
-                {/if}
-                {#each activeTags as tag (tag.toLowerCase())}
-                    <button
-                        type="button"
-                        tabindex="-1"
-                        class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                        onclick={() => removeTag(tag)}
-                        title="Remove tag filter"
-                    >
-                        <span class="text-primary/60">tag:</span>{tag}
-                        <XIcon class="size-3 opacity-70" />
-                    </button>
-                {/each}
-                {#each activeVocabs as v (v.toLowerCase())}
-                    <button
-                        type="button"
-                        tabindex="-1"
-                        class="inline-flex items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-foreground hover:bg-secondary/80"
-                        onclick={() => removeVocab(v)}
-                        title="Remove mapped-term filter"
-                    >
-                        <span class="text-muted-foreground">vocab:</span>{v}
-                        <XIcon class="size-3 opacity-70" />
-                    </button>
-                {/each}
-                {#each activeProjects as slug (slug.toLowerCase())}
-                    <button
-                        type="button"
-                        tabindex="-1"
-                        class="inline-flex max-w-[16rem] items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
-                        onclick={() => removeProject(slug)}
-                        title="Remove project filter"
-                    >
-                        <span class="text-primary/60">project:</span>
-                        <span class="truncate">{projectChipLabel(slug)}</span>
-                        <XIcon class="size-3 opacity-70" />
-                    </button>
-                {/each}
-                </div>
-                {/if}
-                {#if palette}
-                    <span
-                        class="ml-auto shrink-0 px-1 text-[10px] text-muted-foreground"
-                    >
-                        <kbd
-                            class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans"
-                            >{isMac ? "⌘" : "Ctrl"}</kbd
-                        >
-                        <kbd
-                            class="rounded border border-border bg-background/80 px-1 py-0.5 font-sans"
-                            >K</kbd
-                        >
-                        toggles · Esc closes
-                    </span>
-                {/if}
-            </div>
-        {/if}
 
         {#if dropdownOpen}
             <div
                 id={listboxId}
                 role="listbox"
-                class="absolute left-0 right-0 top-[calc(100%+6px)] z-[1100] overflow-hidden rounded-xl border border-border bg-background shadow-md"
+                class="surface absolute left-0 right-0 top-full z-[1100] mt-1 overflow-hidden rounded-xl border border-border shadow-lg"
+                transition:slide={{
+                    duration: reduceMotion ? 0 : 220,
+                    axis: "y",
+                }}
             >
-                <div
-                    class="border-b border-border px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                >
-                    {#if mentionMode === "kinds" && mentionOpen}
-                        Add filter
-                    {:else if mentionMode === "tag" && mentionOpen}
-                        Tag
-                    {:else if mentionMode === "vocab" && mentionOpen}
-                        Vocab
-                    {:else if mentionMode === "place" && mentionOpen}
-                        Place
-                    {:else if mentionMode === "project" && mentionOpen}
-                        Project
-                    {:else if mentionMode === "entity" && mentionOpen}
-                        Entity
-                    {:else if scopedSlug}
-                        Layers, values & places
-                    {:else}
-                        Projects & places
-                    {/if}
-                </div>
+                {#if mentionOpen}
+                    <div
+                        class="border-b border-border px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                    >
+                        {#if mentionMode === "kinds" && mentionOpen}
+                            Add filter
+                        {:else if mentionMode === "slash" && mentionOpen}
+                            In this project
+                        {:else if mentionMode === "tag" && mentionOpen}
+                            Tag
+                        {:else if mentionMode === "vocab" && mentionOpen}
+                            Vocab
+                        {:else if mentionMode === "place" && mentionOpen}
+                            Place
+                        {:else if mentionMode === "project" && mentionOpen}
+                            Project
+                        {:else if mentionMode === "entity" && mentionOpen}
+                            Entity
+                        {:else if mentionMode === "layer" && mentionOpen}
+                            Layer
+                        {:else if mentionMode === "artefact" && mentionOpen}
+                            Artefact
+                        {:else if mentionMode === "row" && mentionOpen}
+                            Column
+                        {:else if scopedSlug}
+                            Layers, values & places
+                        {:else}
+                            Projects & places
+                        {/if}
+                    </div>
+                {/if}
                 <div class="max-h-64 overflow-y-auto p-1">
                     {#if (loading || loadingPlaces) && menuItems.length === 0}
                         <p class="px-2.5 py-3 text-xs text-muted-foreground">
@@ -1942,6 +2611,25 @@
                                 {mentionQuery
                                     ? "No matching ids"
                                     : "Keep typing an entity id…"}
+                            {:else if mentionMode === "layer"}
+                                {mentionQuery
+                                    ? "No matching layers"
+                                    : "Keep typing a layer…"}
+                            {:else if mentionMode === "artefact"}
+                                {mentionQuery
+                                    ? "No matching artefacts"
+                                    : "Keep typing an artefact…"}
+                            {:else if mentionMode === "row"}
+                                {parseRowDraft(mentionQuery)?.op &&
+                                !parseRowDraft(mentionQuery)?.value
+                                    ? "Type a value, then space or Enter"
+                                    : parseRowDraft(mentionQuery)?.op
+                                      ? "Enter to apply this filter"
+                                      : mentionQuery
+                                        ? "No matching columns"
+                                        : "Choose a column"}
+                            {:else if mentionMode === "slash"}
+                                Type to filter, or choose Layer / Row / Entity / Artefact / Place
                             {:else}
                                 Type to filter, or choose Place / Project / Tag / Vocab
                             {/if}
@@ -1959,20 +2647,33 @@
                                     ? `entity:${item.entity.layer}:${item.entity.id}`
                                     : item.kind === "cell"
                                       ? `cell:${item.cell.layer}:${item.cell.id}:${item.cell.column}`
-                                      : `${item.kind}:${item.id}`)}
+                                      : item.kind === "slash"
+                                        ? `slash:${item.id}`
+                                        : item.kind === "rowcol"
+                                          ? `rowcol:${item.column.name}`
+                                          : item.kind === "rowop"
+                                            ? `rowop:${item.op}`
+                                            : `${item.kind}:${item.id}`)}
                             <button
                                 type="button"
                                 role="option"
-                                aria-selected={i === highlight}
-                                class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors {i ===
-                                highlight
-                                    ? 'bg-muted'
+                                aria-selected={i === activeHighlight}
+                                class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm {i ===
+                                activeHighlight
+                                    ? 'selected'
                                     : 'hover:bg-muted/70'}"
+                                in:slide={{
+                                    duration: reduceMotion ? 0 : 160,
+                                    delay: reduceMotion
+                                        ? 0
+                                        : Math.min(i, 8) * 24,
+                                    axis: "y",
+                                }}
                                 onmousedown={(e) => e.preventDefault()}
                                 onmouseenter={() => (highlight = i)}
                                 onclick={() => selectItem(item)}
                             >
-                                {#if item.kind === "kind"}
+                                {#if item.kind === "kind" || item.kind === "slash"}
                                     {#if item.id === "tag"}
                                         <TagIcon
                                             class="size-3.5 shrink-0 text-muted-foreground"
@@ -1989,6 +2690,18 @@
                                         <CrosshairIcon
                                             class="size-3.5 shrink-0 text-muted-foreground"
                                         />
+                                    {:else if item.id === "layer"}
+                                        <LayersIcon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
+                                    {:else if item.id === "artefact"}
+                                        <ImageIcon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
+                                    {:else if item.id === "row"}
+                                        <Table2Icon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
                                     {:else}
                                         <GlobeIcon
                                             class="size-3.5 shrink-0 text-muted-foreground"
@@ -2000,7 +2713,9 @@
                                         >
                                         <span
                                             class="mt-0.5 block text-[11px] text-muted-foreground"
-                                            >{item.hint}</span
+                                            >{item.kind === "slash"
+                                                ? `/${item.id} · ${item.hint}`
+                                                : item.hint}</span
                                         >
                                     </span>
                                 {:else if item.kind === "place"}
@@ -2087,11 +2802,44 @@
                                             >{item.entity.detail}</span
                                         >
                                     </span>
-                                {:else}
+                                {:else if item.kind === "rowcol"}
+                                    <Table2Icon
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.column.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{item.column.detail}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "rowop"}
                                     <span
-                                        class="w-10 shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                                        >{item.mode}</span
+                                        class="w-4 shrink-0 text-center font-mono text-sm font-medium text-muted-foreground"
+                                        aria-hidden="true">{item.label}</span
                                     >
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block text-[11px] text-muted-foreground"
+                                            >{item.hint}</span
+                                        >
+                                    </span>
+                                {:else}
+                                    {#if item.mode === "tag"}
+                                        <span
+                                            class="w-4 shrink-0 text-sm font-medium text-muted-foreground"
+                                            aria-hidden="true">#</span
+                                        >
+                                    {:else}
+                                        <BookMarkedIcon
+                                            class="size-3.5 shrink-0 text-muted-foreground"
+                                        />
+                                    {/if}
                                     <span class="truncate font-medium"
                                         >{item.label}</span
                                     >
@@ -2100,45 +2848,26 @@
                         {/each}
                     {/if}
                 </div>
-                <div
-                    class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground"
-                >
-                    {#if !mentionOpen}
-                        Tab complete · ↑↓ places · Enter searches ·
-                        <a
-                            href="https://pleiades.stoa.org/"
-                            class="underline-offset-2 hover:underline"
-                            target="_blank"
-                            rel="noreferrer">Pleiades</a
-                        >
-                        ·
-                        <a
-                            href="https://www.openstreetmap.org/copyright"
-                            class="underline-offset-2 hover:underline"
-                            target="_blank"
-                            rel="noreferrer">© OSM</a
-                        >
-                    {:else}
-                        Tab complete · ↑↓ navigate · Enter select · Esc cancel
-                        {#if mentionMode === "place" || mentionMode === "kinds"}
-                            ·
-                            <a
-                                href="https://pleiades.stoa.org/"
-                                class="underline-offset-2 hover:underline"
-                                target="_blank"
-                                rel="noreferrer">Pleiades</a
-                            >
-                            ·
-                            <a
-                                href="https://www.openstreetmap.org/copyright"
-                                class="underline-offset-2 hover:underline"
-                                target="_blank"
-                                rel="noreferrer">© OSM</a
-                            >
-                        {/if}
-                    {/if}
-                </div>
             </div>
         {/if}
     </form>
 </div>
+
+<style>
+    .chip-scroller {
+        overflow-x: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        overscroll-behavior-x: contain;
+        mask-image: linear-gradient(
+            to right,
+            transparent 0,
+            #000 var(--chip-fade-left, 0px),
+            #000 calc(100% - var(--chip-fade-right, 0px)),
+            transparent 100%
+        );
+    }
+    .chip-scroller::-webkit-scrollbar {
+        display: none;
+    }
+</style>

@@ -73,7 +73,7 @@ Authentication: Supabase Auth for web UI users, device-code OAuth for CLI users.
 - **CRM annotations** — Per-column `property` and `range` bindings with TOML ownership (auto-applied on push, manual overrides preserved).
 
 ### Customisation
-- **Theme engine** — Choose accent hue, background base (pitch/dark/dim/stone/paper), border radius, and glass blur from the Appearance settings. Persisted to Supabase user metadata.
+- **Theme engine** — Choose highlight hue, background base (pitch/dark/dim/stone/paper), border radius, and surface (none/tinted/glass) from Appearance. Persisted to Supabase user metadata.
 
 ## Quick links
 

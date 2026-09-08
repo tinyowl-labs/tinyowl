@@ -1,4 +1,5 @@
 import type { EditBufferEntry } from "./types";
+import type { SchemaAddColumn } from "$lib/stores/editBuffer.svelte";
 
 export type EditBufferSubmitResult = {
 	status: string;
@@ -49,10 +50,13 @@ export async function submitEditBuffer(
 	entries: EditBufferEntry[],
 	baseCommit = "",
 	targetRef = "develop",
+	schemaAdds: SchemaAddColumn[] = [],
 ): Promise<EditBufferSubmitResult> {
 	const trimmed = message.trim();
 	if (!trimmed) throw new Error("Commit message required");
-	if (entries.length === 0) throw new Error("Empty edit buffer");
+	if (entries.length === 0 && schemaAdds.length === 0) {
+		throw new Error("Empty edit buffer");
+	}
 	const target = targetRef.trim() || "develop";
 	let base = baseCommit.trim();
 	if (!base) {
@@ -72,6 +76,7 @@ export async function submitEditBuffer(
 				base_commit: base,
 				target_ref: target,
 				entries,
+				schemaAdds,
 			}),
 		},
 	);

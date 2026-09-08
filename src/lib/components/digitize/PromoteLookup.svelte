@@ -17,12 +17,24 @@
         slug: string;
         tables: SchemaTable[];
         edges?: SchemaEdge[];
+        focusTable?: string;
         onSaved?: () => void;
     };
 
-    let { accessToken, slug, tables, edges = [], onSaved }: Props = $props();
+    let {
+        accessToken,
+        slug,
+        tables,
+        edges = [],
+        focusTable = "",
+        onSaved,
+    }: Props = $props();
 
-    let sourceTable = $state("");
+    let sourceTable = $derived(
+        (focusTable && tables.some((t) => t.name === focusTable)
+            ? focusTable
+            : tables[0]?.name) ?? "",
+    );
     let sourceColumn = $state("");
     let lookupTable = $state("");
     let message = $state("");
@@ -33,10 +45,6 @@
     let addTable = $state("");
     let addLabel = $state("");
     let addMessage = $state("");
-
-    $effect(() => {
-        if (!sourceTable && tables.length) sourceTable = tables[0].name;
-    });
 
     const sourceCols = $derived(
         tables.find((t) => t.name === sourceTable)?.columns ?? [],

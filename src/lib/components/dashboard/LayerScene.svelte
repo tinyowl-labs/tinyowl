@@ -20,13 +20,18 @@
         type SelectionToolMode,
     } from "$lib/stores/layerSelection.svelte";
     import MapToolsRail from "./MapToolsRail.svelte";
-    import MapViewChrome from "./MapViewChrome.svelte";
+    import SceneMenuBar, {
+        type SceneToolMode,
+        type ViewingRef,
+    } from "./SceneMenuBar.svelte";
+    import { viewportMenu } from "./viewportMenu.svelte";
     import InstanceGraph from "$lib/instance-graph/InstanceGraph.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
     import LayerStylePanel from "./LayerStylePanel.svelte";
     import LayerSeriesBar from "./LayerSeriesBar.svelte";
     import PickPager from "./PickPager.svelte";
+    import { readInfoboxDocked } from "./infoboxDock";
     import EditModeBar from "./EditModeBar.svelte";
     import FeatureCreateForm from "./FeatureCreateForm.svelte";
     import {
@@ -59,9 +64,6 @@
         confirmCreate as confirmCreateImpl,
         cancelCreate as cancelCreateImpl,
         dismissCreateFormKeepDraft as dismissCreateFormKeepDraftImpl,
-        openAttrEdit as openAttrEditImpl,
-        confirmAttrEdit as confirmAttrEditImpl,
-        cancelAttrEdit as cancelAttrEditImpl,
         deleteBufferedFeature as deleteBufferedFeatureImpl,
         deleteSelectedFeatures as deleteSelectedFeaturesImpl,
         addDrawPart as addDrawPartImpl,
@@ -105,11 +107,19 @@
     } from "./mapSelection";
     import { syncSelectionOverlay } from "./selectionOverlay";
     import { handleSceneKey } from "./layerSceneKeys";
+    import { attachCameraSchemes, type CameraSchemeHandle } from "./cameraSchemes";
+    import { attachFlyController } from "./flyController";
+    import {
+        keyboardPrefs,
+        isFlyActive,
+        setFlyActive,
+    } from "$lib/shortcuts";
     import {
         dedupePickCandidates,
         pickCandidateLabel,
         attrsFromEntity,
         attrsFromRecord,
+        overlayBufferAttrs,
         type PickCandidate,
     } from "./pickCandidates";
     import type { LayerData } from "./layerTypes";
@@ -312,6 +322,10 @@
         >;
         onOpenTable?: (name: string) => void;
         onAddTableRow?: (name: string) => void;
+        /** Member viewing tip. `main` is read-only. */
+        viewingRef?: ViewingRef;
+        onSetViewingRef?: (ref: ViewingRef) => void;
+        showRefToggle?: boolean;
     };
 
     let {
@@ -349,6 +363,9 @@
         mediaByEntity = {},
         onOpenTable,
         onAddTableRow,
+        viewingRef = "develop",
+        onSetViewingRef,
+        showRefToggle = false,
     }: Props = $props();
 
     let el = $state<HTMLDivElement>();
@@ -414,9 +431,10 @@
     let snapMode = $state<SnapMode>("mesh");
     const drawSession = $state(createDrawSession());
     let createFormOpen = $state(false);
-    let attrEdit = $state<{ table: string; entityId: string } | null>(null);
+    let addingGeometry = $state(false);
+    let createFormDocked = $state(true);
     let pendingGeometry = $state<GeoJsonGeometry | null>(null);
-    const anyFormOpen = $derived(createFormOpen || attrEdit != null);
+    const anyFormOpen = $derived(createFormOpen);
     const canFinish = $derived(
         measureEnabled &&
             measureMode !== "point" &&
@@ -427,28 +445,19 @@
     const canEdit = $derived(
         Boolean(
             canWrite &&
+                viewingRef !== "main" &&
                 active &&
                 (editLayer || layerSelection.primaryKey),
         ),
     );
-    const createFields = $derived(
-        attrFieldsForTable(tables[drawSession.bindTable ?? editLayer ?? ""] ?? []),
-    );
-    const attrEditFields = $derived(
-        attrFieldsForTable(tables[attrEdit?.table ?? ""] ?? []).filter(
-            (c) => c !== "source_id" && c !== "entity_type",
-        ),
-    );
-    const attrEditInitial = $derived.by(() => {
-        if (!attrEdit) return {} as Record<string, string>;
-        const row = rowByEntityId(rows[attrEdit.table], attrEdit.entityId);
-        const buf = editBuffer.entries.find(
-            (e) => e.table === attrEdit!.table && e.entityId === attrEdit!.entityId,
-        );
-        return {
-            ...attrsFromRecord(row),
-            ...attrsFromRecord(buf?.attributes),
-        };
+    const createFields = $derived.by(() => {
+        const table = drawSession.bindTable ?? editLayer ?? "";
+        void editBuffer.schemaAdds;
+        const cols = [
+            ...(tables[table] ?? []),
+            ...editBuffer.addedColumnsFor(table),
+        ];
+        return attrFieldsForTable(cols);
     });
     const drawNeed = $derived(minVerticesForMode(drawMode));
     const drawCanAddPart = $derived(
@@ -482,11 +491,15 @@
             rows: map.get(table)!,
         }));
     });
-    const bufferSummary = $derived(
-        Object.entries(editBuffer.pendingByTable)
-            .map(([t, n]) => `${t} ${n}`)
-            .join(" · "),
-    );
+    const bufferSummary = $derived.by(() => {
+        const parts = Object.entries(editBuffer.pendingByTable).map(
+            ([t, n]) => `${t} ${n}`,
+        );
+        if (editBuffer.schemaAdds.length > 0) {
+            parts.push(`+${editBuffer.schemaAdds.length} col`);
+        }
+        return parts.join(" · ");
+    });
     const barLayer = $derived(
         drawSession.vertexSession?.table ?? drawSession.bindTable ?? editLayer ?? "",
     );
@@ -533,8 +546,6 @@
             .join("\n") + `|${developCommit}`,
     );
     const presenceCursorNodes = new Map<string, HTMLElement>();
-    /** Envelope parent captured when the session buffer first becomes non-empty. */
-    let sessionBaseCommit = $state("");
     let awarenessDataSource: any = null;
     let editLockHint = $state("");
     let editLockTimer: ReturnType<typeof setTimeout> | null = null;
@@ -542,6 +553,7 @@
     const presenceMember = $derived(
         Boolean(($page.data as { isMember?: boolean } | undefined)?.isMember),
     );
+    const commentsOk = $derived(presenceMember && viewingRef !== "main");
     const presenceUserId = $derived(
         ($page.data?.user as { id?: string } | undefined)?.id ?? "",
     );
@@ -592,6 +604,16 @@
         } catch {
             /* ignore */
         }
+    }
+    let schemeHandle: CameraSchemeHandle | null = null;
+
+    function applyCurrentScheme() {
+        if (!schemeHandle || !viewer) return;
+        if (isFlyActive()) {
+            schemeHandle.apply(keyboardPrefs.cameraScheme, dim, { suspend: true });
+            return;
+        }
+        schemeHandle.apply(keyboardPrefs.cameraScheme, dim);
     }
     const tilesetPrims = new Map<string, any>();
     const coverageLayers = new Map<string, any[]>();
@@ -916,6 +938,7 @@
         pickAnchorCartesian = null;
         ctxOpen = false;
         ctxEntity = null;
+        viewportMenu.release("ctx");
     }
 
     function clearSelection() {
@@ -952,11 +975,18 @@
         ctxEntity = null;
         ctxKind = "entity";
         ctxTilesetHash = "";
+        viewportMenu.release("ctx");
         if (wasOpen && wasEntity && previewed) {
             applyEntitySelectionStyle(previewed, null);
         }
         if (wasOpen && wasEntity && started) syncAllSelectionStyles();
     }
+
+    $effect(() => {
+        if (viewportMenu.id !== "ctx" && ctxOpen) {
+            closeContextMenu();
+        }
+    });
 
     function hideEntity(entity: any, layerName: string, entityId: string) {
         layerSelection.hideEntity(layerName, entityId);
@@ -1081,6 +1111,7 @@
         ctxEntity = entity;
         ctxX = pos.x;
         ctxY = pos.y;
+        viewportMenu.claim("ctx");
         ctxOpen = true;
         previewContextEntity(entity);
         const cart = pickMeasureCartesian(screenPos);
@@ -1133,6 +1164,7 @@
         ctxEntity = null;
         ctxX = pos.x;
         ctxY = pos.y;
+        viewportMenu.claim("ctx");
         ctxOpen = true;
     }
 
@@ -1186,6 +1218,7 @@
             editLayer: editLayer ?? "",
             anyFormOpen,
             createFormOpen,
+            addingGeometry,
             drawNeed,
             drawCanFinish,
             bufferOverlayVisible,
@@ -1208,11 +1241,21 @@
             },
             setCreateFormOpen: (open) => {
                 createFormOpen = open;
+                if (open) {
+                    createFormDocked = readInfoboxDocked();
+                    if (!createFormDocked) positionCreateFormFromDraft();
+                }
             },
-            setAttrEdit: (next) => {
-                attrEdit = next;
+            setAddingGeometry: (on) => {
+                addingGeometry = on;
             },
-            getAttrEdit: () => attrEdit,
+            onSelectForEdit: (table, entityId) => {
+                openInfobox(table, entityId);
+            },
+            onCreatedFeature: (table, entityId) => {
+                addingGeometry = false;
+                openInfobox(table, entityId);
+            },
             getPendingGeometry: () => pendingGeometry,
             setPendingGeometry: (geom) => {
                 pendingGeometry = geom;
@@ -1237,9 +1280,9 @@
             },
             projectSlug,
             accessToken,
-            getSessionBaseCommit: () => sessionBaseCommit,
+            getSessionBaseCommit: () => editBuffer.baseCommit,
             setSessionBaseCommit: (id) => {
-                sessionBaseCommit = id;
+                editBuffer.setBaseCommit(id);
             },
             getCommitMessage: () => commitMessage,
             setCommitMessage: (msg) => {
@@ -1262,6 +1305,7 @@
                 developCommit = id;
             },
             onCommitted,
+            restoreCamera: applyCurrentScheme,
         };
     }
 
@@ -1436,16 +1480,43 @@
         cancelCreateImpl(drawCtx());
     }
 
-    function openAttrEdit(table: string, entityId: string) {
-        openAttrEditImpl(drawCtx(), table, entityId);
-    }
-
-    function confirmAttrEdit(attrs: Record<string, string>) {
-        confirmAttrEditImpl(drawCtx(), attrs);
-    }
-
-    function cancelAttrEdit() {
-        cancelAttrEditImpl(drawCtx());
+    function openInfobox(table: string, entityId: string) {
+        if (!canWrite || viewingRef === "main" || !table || !entityId) return;
+        if (blockPeerEdit(table, entityId)) return;
+        createFormOpen = false;
+        pendingGeometry = null;
+        editBuffer.setTargetLayer(table);
+        closeContextMenu();
+        layerSelection.selectSingle(table, entityId);
+        const entity = findEntityByKey(toSelectionKey(table, entityId));
+        if (entity) {
+            selectEntity(entity, table, entityId);
+            return;
+        }
+        const row = rowByEntityId(rows[table], entityId);
+        const buf = editBuffer.entryFor(table, entityId);
+        const attributes = overlayBufferAttrs(
+            attrsFromRecord(row),
+            buf?.attributes,
+        );
+        pickCandidates = [
+            {
+                key: toSelectionKey(table, entityId),
+                layerName: table,
+                entityId,
+                label: pickCandidateLabel(entityId, attributes),
+                attributes,
+                bufferOp:
+                    buf?.op === "insert" ||
+                    buf?.op === "update" ||
+                    buf?.op === "delete"
+                        ? buf.op
+                        : undefined,
+            },
+        ];
+        pickIndex = 0;
+        pickOpen = true;
+        pickAnchorCartesian = null;
     }
 
     function deleteBufferedFeature(table: string, entityId: string) {
@@ -1520,10 +1591,6 @@
     }
 
     function undoDrawOrMeasure() {
-        if (attrEdit) {
-            cancelAttrEdit();
-            return;
-        }
         if (createFormOpen) {
             dismissCreateFormKeepDraftImpl(drawCtx());
             return;
@@ -1707,8 +1774,74 @@
         return { table, entityId: id };
     }
 
+    const toolMode = $derived<SceneToolMode>(
+        editEnabled
+            ? "draw"
+            : measureEnabled
+              ? "measure"
+              : commentsEnabled
+                ? "comments"
+                : "select",
+    );
+
+    function setToolMode(next: SceneToolMode) {
+        if (next === "draw") {
+            if (editEnabled) return;
+            if (!canEdit) return;
+            measureEnabled = false;
+            commentsEnabled = false;
+            enterEditMode();
+            return;
+        }
+        if (editEnabled) exitEditMode();
+        if (next === "measure") {
+            commentsEnabled = false;
+            measureEnabled = true;
+            return;
+        }
+        if (next === "comments") {
+            if (!commentsOk) return;
+            measureEnabled = false;
+            commentsEnabled = true;
+            return;
+        }
+        measureEnabled = false;
+        commentsEnabled = false;
+    }
+
+    function positionCreateFormFromDraft() {
+        if (!viewer || !Cesium) return;
+        const last = drawSession.cartesians.at(-1);
+        if (!last) return;
+        pickAnchorCartesian = Cesium.Cartesian3.clone(last);
+        updatePickPanelFromAnchor();
+    }
+
+    function startAddGeometry(geom?: DrawGeomMode) {
+        if (!canWrite || viewingRef === "main" || !active) return;
+        if (geom) drawMode = geom;
+        if (createFormOpen) cancelCreate();
+        if (!editEnabled) enterEditMode({ skipSelectionLock: true });
+        if (!editEnabled) return;
+        if (drawSession.vertexSession) cancelVertexEdit();
+        clearDraftDraw();
+        closePickPager({ suppressClick: true });
+        addingGeometry = true;
+    }
+
+    function startDrawAs(geom: DrawGeomMode) {
+        if (!canEdit && !editEnabled) return;
+        startAddGeometry(geom);
+    }
+
+    $effect(() => {
+        if (viewingRef !== "main") return;
+        if (editEnabled) exitEditMode();
+        commentsEnabled = false;
+    });
+
     function enterEditMode(opts?: { skipSelectionLock?: boolean }) {
-        if (!canWrite || !active) return;
+        if (!canWrite || viewingRef === "main" || !active) return;
         const target = opts?.skipSelectionLock ? null : selectionEditTarget();
         if (target && blockPeerEdit(target.table, target.entityId)) return;
         const layer = target?.table ?? editLayer ?? layerFromSelection();
@@ -1716,8 +1849,8 @@
         if (editBuffer.targetLayer !== layer) {
             editBuffer.setTargetLayer(layer);
         }
-        dismissEntityPopup();
         closeContextMenu();
+        addingGeometry = false;
         editEnabled = true;
         measureEnabled = false;
         commentsEnabled = false;
@@ -1726,21 +1859,21 @@
         clearCommentSketch();
         queueMicrotask(() => {
             if (opts?.skipSelectionLock) return;
-            if (!editEnabled || drawSession.vertexSession) return;
+            if (!editEnabled || addingGeometry || drawSession.vertexSession) return;
             const next = selectionEditTarget();
             if (!next) return;
             if (editBuffer.targetLayer !== next.table) {
                 editBuffer.setTargetLayer(next.table);
             }
             beginVertexEdit(next.table, next.entityId);
+            openInfobox(next.table, next.entityId);
         });
     }
 
     function exitEditMode() {
-        dismissEntityPopup();
         editEnabled = false;
+        addingGeometry = false;
         createFormOpen = false;
-        attrEdit = null;
         pendingGeometry = null;
         settleVertexSessionOnExit();
         clearDraftDraw();
@@ -1853,14 +1986,11 @@
         const row = rowByEntityId(rows[layerName], entityId);
         const buf = editBuffer.entryFor(layerName, entityId);
         const fromRow = attrsFromRecord(row);
-        const fromBuf = attrsFromRecord(buf?.attributes);
         const fromEntity = attrsFromEntity(entity?.properties, time);
-        const attributes =
-            Object.keys(fromRow).length > 0
-                ? fromRow
-                : Object.keys(fromBuf).length > 0
-                  ? fromBuf
-                  : fromEntity;
+        const attributes = overlayBufferAttrs(
+            Object.keys(fromRow).length > 0 ? fromRow : fromEntity,
+            buf?.attributes,
+        );
         return {
             key: toSelectionKey(layerName, entityId),
             layerName,
@@ -2096,11 +2226,6 @@
             });
         } else {
             bumpRender();
-        }
-
-        if (editEnabled) {
-            hideEntityPopup();
-            return;
         }
 
         if (layerSelection.size === 0) {
@@ -2425,6 +2550,7 @@
         ctrl.enableZoom = true;
         ctrl.minimumZoomDistance = is3d ? 0.5 : 50;
         ctrl.maximumZoomDistance = 40_000_000;
+        applyCurrentScheme();
 
         if (viewer.scene.skyAtmosphere) {
             viewer.scene.skyAtmosphere.show = is3d && !isDark();
@@ -2539,6 +2665,12 @@
         ionAvailable = created.ionAvailable;
         basemapLayer = created.basemapLayer;
         renderRequestRemovers.push(...created.renderRequestRemovers);
+        schemeHandle?.dispose();
+        schemeHandle = attachCameraSchemes({
+            Cesium,
+            viewer,
+            pickWorld: (p) => pickSnapCartesian(p),
+        });
         const { nextImagery, nextTerrain } = created;
 
         applyBasemapTheme();
@@ -2571,8 +2703,12 @@
                 suppressNextClick = false;
                 return;
             }
-            if (measureEnabled || editEnabled) return;
+            if (measureEnabled || addingGeometry) return;
             closeContextMenu();
+            if (editEnabled && drawSession.vertexSession) {
+                const vertexHits = collectDrillCandidates(click.position);
+                if (vertexHits.length === 0) return;
+            }
             const commentHit = pickCommentId(viewer, click.position);
             if (commentHit) {
                 try {
@@ -2640,10 +2776,13 @@
             const pos = click.position as { x: number; y: number };
             setPickAnchorFromScreen(pos);
             updatePickPanelFromAnchor();
+            if (editEnabled && !addingGeometry) {
+                beginVertexEdit(top.layerName, top.entityId);
+            }
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         clickHandler.setInputAction((click: { position: { x: number; y: number } }) => {
-            if (measureEnabled || editEnabled) return;
+            if (measureEnabled || addingGeometry) return;
             const picked = viewer.scene.pick(click.position);
             const entity = resolvePickedEntity(picked);
             const meta = entity ? entityMeta.get(entity) : undefined;
@@ -3279,6 +3418,7 @@
     $effect(() => {
         themePrefs.accentHue;
         themePrefs.bgBase;
+        themePrefs.colorScheme;
         if (!ready || !viewer) return;
         applyBasemapTheme();
     });
@@ -3407,11 +3547,11 @@
         const size = editBuffer.size;
         const tip = developCommit;
         if (size === 0) {
-            sessionBaseCommit = "";
+            editBuffer.setBaseCommit("");
             return;
         }
-        if (!sessionBaseCommit && tip) {
-            sessionBaseCommit = tip;
+        if (!editBuffer.baseCommit && tip) {
+            editBuffer.setBaseCommit(tip);
         }
     });
 
@@ -3856,6 +3996,7 @@
         presenceUserId;
         themePrefs.accentHue;
         themePrefs.bgBase;
+        themePrefs.colorScheme;
         if (!ready || !viewer || !Cesium) return;
         if (!presenceMember) {
             if (commentDataSource) {
@@ -3948,6 +4089,9 @@
     onDestroy(() => {
         teardownDrawHandler();
         teardownMeasureHandler();
+        schemeHandle?.dispose();
+        schemeHandle = null;
+        setFlyActive(false);
         window.removeEventListener("keydown", onSceneKey);
         if (inViewThrottle != null) {
             clearTimeout(inViewThrottle);
@@ -4019,7 +4163,7 @@
             anyFormOpen,
             canWrite,
             active,
-            presenceMember,
+            presenceMember: commentsOk,
             dim,
             editEnabled,
             measureEnabled,
@@ -4029,7 +4173,7 @@
             drawVertexCount: drawSession.vertexCount,
             drawPartCount: drawSession.partCount,
             selectedVertexCount: drawSession.selectedVertexIndices.size,
-            attrEdit: Boolean(attrEdit),
+            attrEdit: false,
             createFormOpen,
             ctxOpen,
             pickOpen,
@@ -4051,7 +4195,7 @@
             },
             deleteSelectedVertices,
             deleteSelectedFeatures,
-            cancelAttrEdit,
+            cancelAttrEdit: () => {},
             cancelCreate,
             cancelVertexMarquee,
             clearVertexSelection,
@@ -4079,6 +4223,11 @@
             applyHiddenVisibility,
             layerFromSelection,
             enterEditMode,
+            startAddGeometry,
+            addingGeometry,
+            setAddingGeometry: (on) => {
+                addingGeometry = on;
+            },
             setDrawMode,
             setSelectionTool: (mode) => {
                 selectionToolLocal = mode;
@@ -4110,6 +4259,11 @@
             setGraphFullscreen: (on) => {
                 graphFullscreen = on;
             },
+            flyActive: isFlyActive(),
+            setFlyActive: (on) => {
+                if (on && dim !== "3d") return;
+                setFlyActive(on);
+            },
         });
     }
 
@@ -4118,7 +4272,8 @@
     });
 
     $effect(() => {
-        if (!ready || !viewer || !Cesium || measureEnabled || editEnabled || commentsEnabled) return;
+        if (!ready || !viewer || !Cesium || measureEnabled || commentsEnabled) return;
+        if (addingGeometry || (editEnabled && drawSession.vertexSession)) return;
         if (selectionToolLocal !== "box" && selectionToolLocal !== "lasso") {
             return;
         }
@@ -4250,6 +4405,10 @@
             layerSelection.applyOp(ids, dragOp);
             suppressNextClick = true;
             lastFlownKey = selectionFlyKey();
+            if (editEnabled && layerSelection.size === 1) {
+                const next = selectionEditTarget();
+                if (next) beginVertexEdit(next.table, next.entityId);
+            }
         };
 
         // Shift+drag = add; Ctrl/Meta+drag = remove. Plain left-drag keeps camera.
@@ -4342,6 +4501,43 @@
     });
 
     $effect(() => {
+        if (!ready) return;
+        const scheme = keyboardPrefs.cameraScheme;
+        const fly = isFlyActive();
+        if (!schemeHandle || !viewer) return;
+        if (fly) {
+            schemeHandle.apply(scheme, dim, { suspend: true });
+            return;
+        }
+        schemeHandle.apply(scheme, dim);
+    });
+
+    $effect(() => {
+        if (dim !== "3d" && isFlyActive()) setFlyActive(false);
+    });
+
+    $effect(() => {
+        if (
+            (editEnabled || measureEnabled || commentsEnabled) &&
+            isFlyActive()
+        ) {
+            setFlyActive(false);
+        }
+    });
+
+    $effect(() => {
+        if (!ready || !viewer || !Cesium) return;
+        if (!isFlyActive() || dim !== "3d") return;
+        const dispose = attachFlyController({
+            Cesium,
+            viewer,
+            bumpRender,
+            getSensitivity: () => keyboardPrefs.flySensitivity,
+        });
+        return () => dispose();
+    });
+
+    $effect(() => {
         if (!ready || !viewer) return;
         if (measureEnabled) {
             const mode = measureMode;
@@ -4370,16 +4566,16 @@
 
     $effect(() => {
         if (!ready || !viewer) return;
-        if (editEnabled) {
-            untrack(() => {
-                setupDrawHandler();
-                viewer.canvas.style.cursor = "crosshair";
-            });
+        const vertexing = Boolean(drawSession.vertexSession);
+        const drawLive = editEnabled && (addingGeometry || vertexing);
+        if (drawLive) {
+            untrack(() => setupDrawHandler());
+            viewer.canvas.style.cursor = "crosshair";
             return;
         }
         untrack(() => {
             teardownDrawHandler();
-            clearDraftDraw();
+            if (!editEnabled) clearDraftDraw();
             if (!measureEnabled && !commentAdding && viewer?.canvas) {
                 viewer.canvas.style.cursor = "";
             }
@@ -4429,10 +4625,78 @@
 
 <div
     bind:this={sceneRoot}
-    class="relative h-full w-full min-h-0 overflow-hidden"
+    class="relative flex h-full w-full min-h-0 flex-col overflow-hidden"
 >
+    {#if !graphFullscreen}
+        <SceneMenuBar
+            {toolMode}
+            onSetToolMode={setToolMode}
+            showDraw={canWrite && viewingRef !== "main"}
+            showComments={commentsOk}
+            canEnterDraw={canEdit}
+            selectionTool={selectionToolLocal}
+            onSetSelectionTool={(tool) => {
+                selectionToolLocal = tool;
+            }}
+            {selectionCount}
+            {isolating}
+            onFlyHome={() => {
+                void flyHome();
+            }}
+            onFlyToSelection={() => flyToSelection(true)}
+            onFlyTopDown={flyTopDown}
+            onLockNorth={lockNorthUp}
+            onZoomIn={zoomIn3d}
+            onZoomOut={zoomOut3d}
+            onClearSelection={() => clearSelection()}
+            onHideSelected={() => {
+                layerSelection.hideSelected();
+                applyHiddenVisibility();
+            }}
+            onShowSelected={() => {
+                layerSelection.showSelected();
+                applyHiddenVisibility();
+            }}
+            onIsolateSelected={() => {
+                layerSelection.isolateSelected();
+                applyHiddenVisibility();
+            }}
+            onExitIsolate={() => {
+                exitIsolateUi();
+            }}
+            {showGraph}
+            onToggleGraph={() => {
+                showGraph = !showGraph;
+            }}
+            flyEnabled={isFlyActive()}
+            onToggleFly={() => {
+                if (dim !== "3d") return;
+                setFlyActive(!isFlyActive());
+            }}
+            {dim}
+            onSetDim={onDimChange}
+            {fullscreen}
+            {onToggleFullscreen}
+            {imageryId}
+            {terrainId}
+            {ionAvailable}
+            {imageryBusy}
+            {terrainBusy}
+            {providerError}
+            onSetImagery={(id) => void applyImagery(id)}
+            onSetTerrain={(id) => void applyTerrain(id)}
+            {showRefToggle}
+            {viewingRef}
+            {onSetViewingRef}
+            canAdd={canWrite && viewingRef !== "main"}
+            addTable={editLayer || focusLayer || ""}
+            onAddGeom={startDrawAs}
+            onAddAttrRow={onAddTableRow}
+        />
+    {/if}
+    <div class="relative min-h-0 flex-1 overflow-hidden">
     <div
-        class="absolute top-2 left-2 z-20 flex items-start gap-2 {graphFullscreen
+        class="absolute top-[5.25rem] left-2 z-20 flex items-start gap-2 {graphFullscreen
             ? 'hidden'
             : ''}"
     >
@@ -4442,9 +4706,8 @@
             bind:selectionTool={selectionToolLocal}
             bind:commentsEnabled
             bind:editEnabled
-            bind:showGraph
-            showComments={presenceMember}
-            showEdit={canWrite}
+            showComments={commentsOk}
+            showEdit={canWrite && viewingRef !== "main"}
             canEnterEdit={canEdit}
             onEnterEdit={enterEditMode}
             onExitEdit={exitEditMode}
@@ -4454,14 +4717,7 @@
             {dim}
             {selectionCount}
             {isolating}
-            onZoomIn={zoomIn3d}
-            onZoomOut={zoomOut3d}
             onFlyToSelection={() => flyToSelection(true)}
-            onFlyHome={() => {
-                void flyHome();
-            }}
-            onFlyTopDown={flyTopDown}
-            onLockNorth={lockNorthUp}
             onClearSelection={() => clearSelection()}
             onHideSelected={() => {
                 layerSelection.hideSelected();
@@ -4482,25 +4738,8 @@
             onFinish={finishDraft3d}
             onRemove={(id) => void removeMeasurement(id)}
             onVolumeKind={setVolumeKind}
-        >
-            {#snippet extraRail()}
-                <MapViewChrome
-                    {dim}
-                    {fullscreen}
-                    onSetDim={onDimChange}
-                    {onToggleFullscreen}
-                    {imageryId}
-                    {terrainId}
-                    {ionAvailable}
-                    {imageryBusy}
-                    {terrainBusy}
-                    {providerError}
-                    onSetImagery={(id) => void applyImagery(id)}
-                    onSetTerrain={(id) => void applyTerrain(id)}
-                />
-            {/snippet}
-        </MapToolsRail>
-        {#if commentsEnabled && presenceMember}
+        />
+        {#if commentsEnabled && commentsOk}
             <CommentPanel
                 {comments}
                 filter={commentFilter}
@@ -4555,18 +4794,27 @@
                     onStep={(key) => setSeriesStep(series.name, key)}
                 />
             {/each}
-            {#if canWrite && editEnabled && barLayer}
+            {#if canWrite &&
+                editEnabled &&
+                barLayer &&
+                (addingGeometry || Boolean(drawSession.vertexSession))}
                 <EditModeBar
                     layer={barLayer}
                     mode={drawMode}
-                    canFinish={drawCanFinish && !anyFormOpen}
+                    canFinish={drawCanFinish &&
+                        !anyFormOpen &&
+                        (addingGeometry || Boolean(drawSession.vertexSession))}
                     canAddPart={drawCanAddPart && !anyFormOpen && !drawSession.vertexSession}
                     canDelete={!anyFormOpen}
                     useHeight={drawUseHeight}
                     snap={snapMode}
                     vertexEditing={Boolean(drawSession.vertexSession)}
+                    adding={addingGeometry}
                     sessionSummary={sessionSummary}
-                    onMode={setDrawMode}
+                    onMode={(m) => {
+                        if (addingGeometry) setDrawMode(m);
+                        else startAddGeometry(m);
+                    }}
                     onUseHeight={setDrawUseHeight}
                     onSnap={(m) => (snapMode = m)}
                     onFinish={finishDrawDraft}
@@ -4643,13 +4891,18 @@
             exitIsolateUi();
         }}
         onClear={() => clearSelection()}
-        onComment={presenceMember && canWrite && ctxKind === "entity"
+        onComment={commentsOk && canWrite && ctxKind === "entity"
             ? () => startFeatureComment(ctxLayerName, ctxEntityId)
             : undefined}
-        onEditAttributes={canWrite && ctxKind === "entity"
-            ? () => openAttrEdit(ctxLayerName, ctxEntityId)
+        onEditAttributes={canWrite &&
+        viewingRef !== "main" &&
+        ctxKind === "entity"
+            ? () => {
+                if (!editEnabled) enterEditMode();
+                openInfobox(ctxLayerName, ctxEntityId);
+            }
             : undefined}
-        onDelete={canWrite && ctxKind === "entity"
+        onDelete={canWrite && viewingRef !== "main" && ctxKind === "entity"
             ? () => deleteBufferedFeature(ctxLayerName, ctxEntityId)
             : undefined}
         onClose={closeContextMenu}
@@ -4661,7 +4914,7 @@
         {#if hiddenCount > 0 && !isolating}
             <button
                 type="button"
-                class="pointer-events-auto rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+                class="surface pointer-events-auto rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm hover:text-foreground"
                 onclick={showAllHiddenEntities}
             >
                 {hiddenCount} hidden · Show all
@@ -4682,7 +4935,7 @@
 
     {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
         <div
-            class="pointer-events-none absolute top-2 bottom-2 z-10 flex items-start gap-2 {graphFullscreen
+            class="pointer-events-none absolute top-[5.25rem] bottom-2 z-10 flex items-start gap-2 {graphFullscreen
                 ? 'hidden'
                 : ''}"
             style:right={showGraph
@@ -4707,7 +4960,7 @@
                 {/key}
             {/if}
             <div
-                class="pointer-events-auto flex max-h-full min-h-0 flex-col gap-2 overflow-hidden {styleLayerIdx !==
+                class="pointer-events-auto flex max-h-full min-h-0 flex-col gap-2 {styleLayerIdx !==
                 null
                     ? 'w-52'
                     : 'w-60'}"
@@ -4750,46 +5003,11 @@
                     {canWrite}
                     {schemaTables}
                     {onOpenTable}
-                    {onAddTableRow}
                     class="min-h-0 flex-1"
                 />
-                {#if canWrite && createFormOpen}
-                    <FeatureCreateForm
-                        layer={drawSession.bindTable ?? editLayer ?? ""}
-                        geomType={drawMode}
-                        fields={createFields}
-                        slug={projectSlug}
-                        {accessToken}
-                        {schemaTables}
-                        {rows}
-                        onConfirm={confirmCreate}
-                        onCancel={cancelCreate}
-                    />
-                {:else if canWrite && attrEdit}
-                    {#key `${attrEdit.table}:${attrEdit.entityId}`}
-                        <FeatureCreateForm
-                            mode="edit"
-                            layer={attrEdit.table}
-                            entityId={attrEdit.entityId}
-                            geomType="none"
-                            fields={attrEditFields}
-                            initial={attrEditInitial}
-                            slug={projectSlug}
-                            {accessToken}
-                            {schemaTables}
-                            {rows}
-                            onConfirm={confirmAttrEdit}
-                            onCancel={cancelAttrEdit}
-                            onOpenRelated={(t, id) => {
-                                layerSelection.selectSingle(t, id);
-                                onOpenTable?.(t);
-                            }}
-                        />
-                    {/key}
-                {/if}
-                {#if canWrite && (bufferEntries.length > 0 || commitDoneId)}
+                {#if canWrite && (bufferEntries.length > 0 || editBuffer.schemaAdds.length > 0 || commitDoneId)}
                     <div
-                        class="flex min-h-0 max-h-52 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
+                        class="surface flex min-h-0 max-h-52 shrink-0 flex-col overflow-hidden rounded-lg border border-border text-xs shadow-lg"
                     >
                         <div
                             class="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1.5"
@@ -4797,7 +5015,7 @@
                             <span
                                 class="min-w-0 truncate text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
                                 title={bufferSummary}
-                                >Buffer{#if bufferSummary}
+                                >Session{#if bufferSummary}
                                     · {bufferSummary}
                                 {:else}
                                     · {bufferEntries.length}
@@ -4808,8 +5026,8 @@
                                     type="button"
                                     class="inline-flex items-center rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
                                     title={bufferOverlayVisible
-                                        ? "Hide buffer on map"
-                                        : "Show buffer on map"}
+                                        ? "Hide session on map"
+                                        : "Show session on map"}
                                     onclick={() =>
                                         (bufferOverlayVisible =
                                             !bufferOverlayVisible)}
@@ -4823,7 +5041,7 @@
                                 <button
                                     type="button"
                                     class="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-                                    title="Clear session buffer"
+                                    title="Clear session"
                                     onclick={() => editBuffer.clear()}
                                 >
                                     <XIcon class="size-3" />
@@ -4972,7 +5190,7 @@
         <div
             class="absolute {editEnabled
                 ? 'bottom-24'
-                : 'bottom-10'} left-2 right-2 z-10 rounded-md border border-border bg-background/95 px-2 py-1.5 text-[11px] text-muted-foreground"
+                : 'bottom-10'} left-2 right-2 z-10 rounded-md border border-border surface px-2 py-1.5 text-[11px] text-muted-foreground"
         >
             Coverage: {coverageError}
         </div>
@@ -5002,7 +5220,7 @@
         <div
             class="absolute {editEnabled
                 ? 'bottom-28'
-                : 'bottom-14'} left-3 right-3 z-10 rounded-md border border-destructive/40 bg-background/95 px-3 py-2 text-xs text-destructive"
+                : 'bottom-14'} left-3 right-3 z-10 rounded-md border border-destructive/40 surface px-3 py-2 text-xs text-destructive"
         >
             {error}
         </div>
@@ -5078,7 +5296,8 @@
             ></div>
         {/if}
         <div
-            class="absolute top-0 right-0 bottom-0 z-20 min-w-0"
+            class="absolute right-0 bottom-0 z-20 min-w-0"
+            style:top={graphFullscreen ? "2.75rem" : "5.25rem"}
             style:left={graphFullscreen ? "0" : `${splitAt}%`}
         >
             <InstanceGraph
@@ -5125,7 +5344,36 @@
     {/if}
     <div bind:this={creditSink} class="sr-only" aria-hidden="true"></div>
 
-    {#if pickOpen && !editEnabled}
+    {#if canWrite && createFormOpen}
+        <div
+            class="pointer-events-auto z-[1100] {createFormDocked
+                ? 'absolute bottom-12 right-3'
+                : 'absolute'}"
+            style={!createFormDocked
+                ? `left: ${pickPanelX}px; top: ${pickPanelY}px; transform: translate(-50%, ${pickFlipBelow ? "12px" : "calc(-100% - 12px)"});`
+                : undefined}
+            role="dialog"
+            aria-label="New feature"
+            tabindex="-1"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => e.stopPropagation()}
+        >
+            <FeatureCreateForm
+                layer={drawSession.bindTable ?? editLayer ?? ""}
+                geomType={drawMode}
+                fields={createFields}
+                slug={projectSlug}
+                {accessToken}
+                {schemaTables}
+                {rows}
+                onConfirm={confirmCreate}
+                onCancel={cancelCreate}
+            />
+        </div>
+    {/if}
+
+    {#if pickOpen && !createFormOpen}
         <PickPager
             open={pickOpen}
             candidates={pickCandidates}
@@ -5135,11 +5383,14 @@
             y={pickPanelY}
             flipBelow={pickFlipBelow}
             onIndexChange={applyPickIndex}
-            canEdit={canWrite}
-            onEdit={(c) => openAttrEdit(c.layerName, c.entityId)}
+            canEdit={canWrite && viewingRef !== "main" && editEnabled}
+            canDelete={canWrite && viewingRef !== "main"}
+            onDelete={(c) => deleteBufferedFeature(c.layerName, c.entityId)}
             schemaEdges={schemaEdges}
             schemaTables={schemaTables}
             {rows}
+            {tables}
+            slug={projectSlug}
             {mediaByEntity}
             {accessToken}
             onSelectRelated={(table, id) => {
@@ -5155,18 +5406,19 @@
                 }
             }}
             onClose={() => {
-                closePickPager({ suppressClick: true });
+                clearSelection();
             }}
         />
     {/if}
 
     {#if presenceMember && ready && presenceConnected && editLockHint}
         <div
-            class="absolute bottom-2 right-2 z-20 max-w-[16rem] rounded bg-background/90 px-2 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/60"
+            class="surface absolute bottom-2 right-2 z-20 max-w-[16rem] rounded px-2 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/60"
         >
             {editLockHint}
         </div>
     {/if}
+    </div>
 </div>
 
 <style>

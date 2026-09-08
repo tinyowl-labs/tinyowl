@@ -13,7 +13,6 @@
     import ListIcon from "@lucide/svelte/icons/list";
     import MousePointerSquareDashedIcon from "@lucide/svelte/icons/mouse-pointer-square-dashed";
     import PaletteIcon from "@lucide/svelte/icons/palette";
-    import PlusIcon from "@lucide/svelte/icons/plus";
     import TableIcon from "@lucide/svelte/icons/table";
     import {
         layerSelection,
@@ -79,7 +78,6 @@
         /** Non-geometry schema tables (lookup / junction / attribute). */
         schemaTables?: SchemaTableKind[];
         onOpenTable?: (name: string) => void;
-        onAddTableRow?: (name: string) => void;
         class?: string;
     };
 
@@ -114,13 +112,12 @@
         canWrite = false,
         schemaTables = [],
         onOpenTable,
-        onAddTableRow,
         class: klass = "",
     }: Props = $props();
 
     let modelsOpen = $state(false);
     let coveragesOpen = $state(true);
-    let attrTablesOpen = $state(true);
+    let attrTablesOpen = $state(false);
     let layerOpen = $state<Record<string, boolean>>({});
     let entityOpen = $state<Record<string, boolean>>({});
     let rangeAnchorKey = $state<string | null>(null);
@@ -469,9 +466,10 @@
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-secondary";
 </script>
 
-<div
-    class="flex min-h-0 w-full flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm {klass}"
->
+<div class="flex min-h-0 w-full flex-col rounded-lg shadow-lg {klass}">
+    <div
+        class="surface flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg border border-border text-xs"
+    >
     <div class="border-b border-border px-2 py-1.5">
         <div class="flex items-center justify-between gap-2 px-0.5">
             <span
@@ -795,7 +793,7 @@
                         {#if pendingByLayer[layer.name]}
                             <span
                                 class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-medium normal-case tracking-normal tabular-nums text-foreground"
-                                title="{pendingByLayer[layer.name]} in session buffer"
+                                title="{pendingByLayer[layer.name]} in session"
                                 >{pendingByLayer[layer.name]}</span
                             >
                         {/if}
@@ -913,8 +911,8 @@
                                     <div
                                         class="flex items-center gap-0.5 rounded-md {selected
                                             ? primary
-                                                ? 'bg-primary/20 ring-1 ring-inset ring-primary/30'
-                                                : 'bg-accent/50'
+                                                ? 'selected'
+                                                : 'bg-selected/40'
                                             : 'hover:bg-secondary'}"
                                     >
                                         <button
@@ -947,7 +945,7 @@
                                             {#if pendingKeys.has(ent.key)}
                                                 <span
                                                     class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-normal normal-case tracking-normal text-foreground"
-                                                    title="In session buffer"
+                                                    title="In session"
                                                     >buf</span
                                                 >
                                             {/if}
@@ -1046,16 +1044,6 @@
                                     >{tbl.count ?? 0}</span
                                 >
                             </button>
-                            {#if canWrite && onAddTableRow}
-                                <button
-                                    type="button"
-                                    class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                                    title="Add row"
-                                    onclick={() => onAddTableRow(tbl.name)}
-                                >
-                                    <PlusIcon class="size-3" />
-                                </button>
-                            {/if}
                         </div>
                     {/each}
                 {/each}
@@ -1068,12 +1056,13 @@
             </p>
         {/if}
     </div>
+    </div>
 </div>
 
 {#if layerMenu}
     <div
         bind:this={layerMenuEl}
-        class="fixed z-[10000] w-48 overflow-hidden rounded-lg border border-border bg-background/98 p-1 shadow-lg backdrop-blur-sm"
+        class="surface fixed z-[10000] w-48 overflow-hidden rounded-lg border border-border p-1 shadow-lg"
         style="left: {layerMenu.x}px; top: {layerMenu.y}px"
         role="menu"
     >
@@ -1143,7 +1132,7 @@
 {#if tilesetMenu}
     <div
         bind:this={tilesetMenuEl}
-        class="fixed z-[10000] w-48 overflow-hidden rounded-lg border border-border bg-background/98 p-1 shadow-lg backdrop-blur-sm"
+        class="surface fixed z-[10000] w-48 overflow-hidden rounded-lg border border-border p-1 shadow-lg"
         style="left: {tilesetMenu.x}px; top: {tilesetMenu.y}px"
         role="menu"
     >

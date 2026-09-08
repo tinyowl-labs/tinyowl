@@ -1,13 +1,10 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
-    import { page } from "$app/stores";
     import InboxIcon from "@lucide/svelte/icons/inbox";
-    import Header from "$lib/components/ui/header.svelte";
     import { Button } from "$lib/components/ui/button/index.js";
     import type { InboxNotification } from "./+page.server";
 
     let { data } = $props();
-    const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const items = $derived(data.items ?? []);
     const unread = $derived(data.unread ?? 0);
 
@@ -44,9 +41,7 @@
 
 <svelte:head><title>Inbox — echidna</title></svelte:head>
 
-<div class="flex h-screen flex-col overflow-hidden">
-    <Header subtitle="Inbox" {hasSession} />
-    <main class="min-h-0 flex-1 overflow-y-auto bg-background">
+<div class="flex h-full flex-col overflow-hidden">    <main class="min-h-0 flex-1 overflow-y-auto bg-background">
         <div class="mx-auto max-w-5xl px-6 py-6">
             <div class="mb-6 flex items-center justify-between gap-4">
                 <h1 class="text-lg font-semibold text-foreground">Inbox</h1>

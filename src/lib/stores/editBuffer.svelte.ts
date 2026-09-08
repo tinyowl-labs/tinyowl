@@ -1,6 +1,6 @@
 /** Session CRUD edit buffer. Commit goes pending+message — no canonical write. */
 
-import type { EditBufferEntry, GeoJsonGeometry } from "$lib/geoDiff";
+import type { DiffOp, EditBufferEntry, GeoJsonGeometry } from "$lib/geoDiff";
 
 export type DrawGeomMode =
 	| "Point"
@@ -21,10 +21,156 @@ export const DRAW_GEOM_MODES: { id: DrawGeomMode; label: string }[] = [
 
 let seq = 0;
 let entries = $state<EditBufferEntry[]>([]);
+let schemaAdds = $state<SchemaAddColumn[]>([]);
 let targetLayer = $state<string | null>(null);
+let baseCommit = $state("");
+let boundSlug = "";
+let hydrating = false;
 
 /** Fallback layer name while drawing with no table selected. */
 const PLACEHOLDER_TABLE = "_draw";
+
+const SESSION_PREFIX = "echidna:edit-session:";
+const SESSION_VERSION = 1;
+const OPS = new Set<DiffOp>(["insert", "update", "delete", "head"]);
+
+export type SchemaAddColumn = { table: string; name: string };
+
+function isIdent(name: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+function sessionKey(slug: string): string {
+	return `${SESSION_PREFIX}${slug}`;
+}
+
+function parsePersisted(raw: string): {
+	seq: number;
+	targetLayer: string | null;
+	baseCommit: string;
+	entries: EditBufferEntry[];
+	schemaAdds: SchemaAddColumn[];
+} | null {
+	try {
+		const data = JSON.parse(raw) as Record<string, unknown>;
+		if (data.v !== SESSION_VERSION || !Array.isArray(data.entries)) return null;
+		const next: EditBufferEntry[] = [];
+		for (const row of data.entries) {
+			if (!row || typeof row !== "object") continue;
+			const e = row as Record<string, unknown>;
+			const op = e.op;
+			const table = typeof e.table === "string" ? e.table : "";
+			const entityId = typeof e.entityId === "string" ? e.entityId : "";
+			if (!table || !entityId || typeof op !== "string" || !OPS.has(op as DiffOp)) {
+				continue;
+			}
+			const entry: EditBufferEntry = {
+				op: op as DiffOp,
+				table,
+				entityId,
+			};
+			if ("geometry" in e) entry.geometry = e.geometry;
+			if ("oldGeometry" in e) entry.oldGeometry = e.oldGeometry;
+			if (e.attributes && typeof e.attributes === "object" && !Array.isArray(e.attributes)) {
+				entry.attributes = e.attributes as Record<string, unknown>;
+			}
+			next.push(entry);
+		}
+		let nextSeq =
+			typeof data.seq === "number" && Number.isFinite(data.seq)
+				? Math.max(0, Math.floor(data.seq))
+				: 0;
+		for (const e of next) {
+			const m = /^draft-(\d+)$/.exec(e.entityId);
+			if (m) nextSeq = Math.max(nextSeq, Number(m[1]));
+		}
+		const adds: SchemaAddColumn[] = [];
+		if (Array.isArray(data.schemaAdds)) {
+			for (const row of data.schemaAdds) {
+				if (!row || typeof row !== "object") continue;
+				const a = row as Record<string, unknown>;
+				const table = typeof a.table === "string" ? a.table.trim() : "";
+				const name = typeof a.name === "string" ? a.name.trim() : "";
+				if (!table || !isIdent(name)) continue;
+				adds.push({ table, name });
+			}
+		}
+		const layer =
+			typeof data.targetLayer === "string" && data.targetLayer.trim()
+				? data.targetLayer
+				: null;
+		const base = typeof data.baseCommit === "string" ? data.baseCommit : "";
+		return {
+			seq: nextSeq,
+			targetLayer: layer,
+			baseCommit: base,
+			entries: next,
+			schemaAdds: adds,
+		};
+	} catch {
+		return null;
+	}
+}
+
+function persist() {
+	if (hydrating || !boundSlug) return;
+	if (typeof localStorage === "undefined") return;
+	try {
+		if (entries.length === 0 && schemaAdds.length === 0 && !targetLayer && !baseCommit) {
+			localStorage.removeItem(sessionKey(boundSlug));
+			return;
+		}
+		localStorage.setItem(
+			sessionKey(boundSlug),
+			JSON.stringify({
+				v: SESSION_VERSION,
+				seq,
+				targetLayer,
+				baseCommit,
+				entries,
+				schemaAdds,
+			}),
+		);
+	} catch {
+		/* quota / private mode */
+	}
+}
+
+function loadSlug(slug: string) {
+	hydrating = true;
+	boundSlug = slug;
+	if (!slug || typeof localStorage === "undefined") {
+		seq = 0;
+		entries = [];
+		schemaAdds = [];
+		targetLayer = null;
+		baseCommit = "";
+		hydrating = false;
+		return;
+	}
+	let raw = "";
+	try {
+		raw = localStorage.getItem(sessionKey(slug)) ?? "";
+	} catch {
+		raw = "";
+	}
+	const parsed = raw ? parsePersisted(raw) : null;
+	if (!parsed) {
+		seq = 0;
+		entries = [];
+		schemaAdds = [];
+		targetLayer = null;
+		baseCommit = "";
+		hydrating = false;
+		return;
+	}
+	seq = parsed.seq;
+	entries = parsed.entries;
+	schemaAdds = parsed.schemaAdds;
+	targetLayer = parsed.targetLayer;
+	baseCommit = parsed.baseCommit;
+	hydrating = false;
+}
 
 export const editBuffer = {
 	get entries(): EditBufferEntry[] {
@@ -32,7 +178,55 @@ export const editBuffer = {
 	},
 
 	get size(): number {
-		return entries.length;
+		return entries.length + schemaAdds.length;
+	},
+
+	get schemaAdds(): SchemaAddColumn[] {
+		return schemaAdds;
+	},
+
+	addedColumnsFor(table: string): string[] {
+		return schemaAdds.filter((c) => c.table === table).map((c) => c.name);
+	},
+
+	addColumn(table: string, name: string): string | null {
+		const tbl = table.trim();
+		const col = name.trim();
+		if (!tbl || !isIdent(col)) return "Use a letter-or-underscore name (A–Z, 0–9, _).";
+		const lower = col.toLowerCase();
+		if (
+			lower === "source_id" ||
+			lower === "entity_type" ||
+			lower === "geom" ||
+			lower === "geometry" ||
+			col.startsWith("_")
+		) {
+			return "That name is reserved.";
+		}
+		if (schemaAdds.some((c) => c.table === tbl && c.name.toLowerCase() === lower)) {
+			return "That column is already in this session.";
+		}
+		schemaAdds = [...schemaAdds, { table: tbl, name: col }];
+		persist();
+		return null;
+	},
+
+	get baseCommit(): string {
+		return baseCommit;
+	},
+
+	setBaseCommit(id: string): void {
+		if (baseCommit === id) return;
+		baseCommit = id;
+		persist();
+	},
+
+	/** Load (or switch) the persisted session for a project slug. */
+	bindProject(slug: string): void {
+		const next = slug.trim();
+		if (next === boundSlug) return;
+		if (boundSlug) persist();
+		loadSlug(next);
 	},
 
 	/** Pending row counts per table (skips `_draw` placeholder). */
@@ -50,7 +244,9 @@ export const editBuffer = {
 	},
 
 	setTargetLayer(name: string | null): void {
+		if (targetLayer === name) return;
 		targetLayer = name;
+		persist();
 	},
 
 	entryFor(table: string, entityId: string): EditBufferEntry | undefined {
@@ -59,17 +255,20 @@ export const editBuffer = {
 
 	nextEntityId(): string {
 		seq += 1;
+		persist();
 		return `draft-${seq}`;
 	},
 
 	push(entry: EditBufferEntry): void {
 		entries = [...entries, entry];
+		persist();
 	},
 
 	pop(): EditBufferEntry | undefined {
 		if (entries.length === 0) return undefined;
 		const last = entries[entries.length - 1];
 		entries = entries.slice(0, -1);
+		persist();
 		return last;
 	},
 
@@ -77,10 +276,14 @@ export const editBuffer = {
 		entries = entries.filter(
 			(e) => !(e.table === table && e.entityId === entityId),
 		);
+		persist();
 	},
 
 	clear(): void {
 		entries = [];
+		schemaAdds = [];
+		baseCommit = "";
+		persist();
 	},
 
 	upsert(entry: EditBufferEntry): void {
@@ -89,6 +292,7 @@ export const editBuffer = {
 		);
 		if (i < 0) {
 			entries = [...entries, entry];
+			persist();
 			return;
 		}
 		const prev = entries[i]!;
@@ -108,6 +312,7 @@ export const editBuffer = {
 			attributes: entry.attributes ?? prev.attributes,
 		};
 		entries = next;
+		persist();
 	},
 
 	/** Attribute-only upsert (keeps existing geometry / insert vs update). */
@@ -144,6 +349,7 @@ export const editBuffer = {
 			entries = entries.filter(
 				(e) => !(e.table === table && e.entityId === entityId),
 			);
+			persist();
 			return;
 		}
 		const geom =

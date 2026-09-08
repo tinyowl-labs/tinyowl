@@ -63,26 +63,37 @@ export function formatMatchDetail(detail: string): string {
 			? ''
 			: raw.replace(/\s*·\s*semantic$/i, '').trim();
 
-	let labeled = '';
-	if (d === 'title') labeled = 'Title';
-	else if (d === 'description') labeled = 'Description';
-	else if (d === 'slug') labeled = 'Slug';
-	else if (d === 'readme') labeled = 'README';
-	else if (d === 'tags') labeled = 'Tags';
-	else if (d) {
-		const vocab = d.match(/^(\d+)\s+vocabulary terms?$/i);
-		if (vocab) {
-			const n = Number(vocab[1]);
-			labeled = n === 1 ? 'Vocabulary' : `${n} vocabulary terms`;
-		} else if (/vocabulary/i.test(d) || /tag/i.test(d)) {
-			labeled = d;
-		} else {
-			labeled = d.charAt(0).toUpperCase() + d.slice(1);
-		}
-	}
+	const labeled = d
+		.split(/\s*·\s*/)
+		.filter(Boolean)
+		.map(formatMatchDetailPart)
+		.filter(Boolean)
+		.join(' · ');
 
 	if (hasSemantic) return labeled ? `${labeled} · semantic` : 'Semantic';
 	return labeled;
+}
+
+function formatMatchDetailPart(part: string): string {
+	const d = part.trim();
+	if (d === 'title') return 'Title';
+	if (d === 'description') return 'Description';
+	if (d === 'slug') return 'Slug';
+	if (d === 'readme') return 'README';
+	if (d === 'tags') return 'Tags';
+	const vocab = d.match(/^(\d+)\s+vocabulary terms?$/i);
+	if (vocab) {
+		const n = Number(vocab[1]);
+		return n === 1 ? 'Vocabulary' : `${n} vocabulary terms`;
+	}
+	const values = d.match(/^(\d+)\s+values?$/i);
+	if (values) {
+		const n = Number(values[1]);
+		return n === 1 ? 'Value' : `${n} values`;
+	}
+	if (/vocabulary/i.test(d) || /tag/i.test(d)) return d;
+	if (!d) return '';
+	return d.charAt(0).toUpperCase() + d.slice(1);
 }
 
 /** True when match_detail is a vocabulary hit. */

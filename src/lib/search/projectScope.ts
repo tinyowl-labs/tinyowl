@@ -1,5 +1,7 @@
 /** Layer / artefact typeahead when the omnibox is scoped to one project. */
 
+import { displayLayerName } from "./queryTokens";
+
 export type LayerHit = {
 	name: string;
 	label: string;
@@ -30,6 +32,12 @@ export type ValueHit = {
 	detail: string;
 };
 
+export type ColumnHit = {
+	name: string;
+	label: string;
+	detail: string;
+};
+
 type MediaEntity = { entity_type?: string; entity_id?: string };
 type MediaRow = {
 	hash?: string;
@@ -42,6 +50,10 @@ const LAYER_LIMIT = 4;
 const ARTEFACT_LIMIT = 4;
 const ENTITY_LIMIT = 8;
 const VALUE_LIMIT = 6;
+const COLUMN_LIMIT = 12;
+
+const SKIP_COL = /^(geom|geometry|shape|icon|url|href)$/i;
+const SKIP_COL_SUFFIX = /_(url|uri|geom|geometry)$/i;
 
 type CachedEntityIndex = { layer: string; id: string }[];
 const entityIndexCache = new Map<
@@ -61,10 +73,6 @@ function matches(hay: string, q: string): boolean {
 	return h.replace(/[_-]+/g, " ").includes(q);
 }
 
-function displayLayerName(name: string): string {
-	return name.replace(/_/g, " ");
-}
-
 function artefactKind(mediaType: string): string {
 	const t = mediaType.toLowerCase();
 	if (t.startsWith("image/")) return "image";
@@ -77,20 +85,29 @@ function artefactKind(mediaType: string): string {
 export async function searchProjectLayers(
 	slug: string,
 	q: string,
-	opts?: { accessToken?: string | null; limit?: number },
+	opts?: {
+		accessToken?: string | null;
+		limit?: number;
+		/** Default 2. Use 0 to list layers for `/layer:`. */
+		minLength?: number;
+		layer?: string | null;
+	},
 ): Promise<LayerHit[]> {
 	const prefix = q.trim().toLowerCase();
-	if (!slug || prefix.length < 2) return [];
+	const min = opts?.minLength ?? 2;
+	if (!slug || prefix.length < min) return [];
 	const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/tables`, {
 		headers: authHeaders(opts?.accessToken),
 	});
 	if (!res.ok) return [];
 	const data = (await res.json()) as { tables?: Record<string, unknown> };
 	const names = Object.keys(data.tables ?? {});
+	const only = opts?.layer?.trim().toLowerCase() ?? "";
 	const out: LayerHit[] = [];
 	for (const name of names) {
+		if (only && name.toLowerCase() !== only) continue;
 		const label = displayLayerName(name);
-		if (!matches(name, prefix) && !matches(label, prefix)) continue;
+		if (prefix && !matches(name, prefix) && !matches(label, prefix)) continue;
 		out.push({
 			name,
 			label,
@@ -104,10 +121,16 @@ export async function searchProjectLayers(
 export async function searchProjectArtefacts(
 	slug: string,
 	q: string,
-	opts?: { accessToken?: string | null; limit?: number },
+	opts?: {
+		accessToken?: string | null;
+		limit?: number;
+		minLength?: number;
+		layer?: string | null;
+	},
 ): Promise<ArtefactHit[]> {
 	const prefix = q.trim().toLowerCase();
-	if (!slug || prefix.length < 2) return [];
+	const min = opts?.minLength ?? 2;
+	if (!slug || prefix.length < min) return [];
 	const res = await fetch(
 		`/api/v1/projects/${encodeURIComponent(slug)}/media?limit=80`,
 		{ headers: authHeaders(opts?.accessToken) },
@@ -133,7 +156,19 @@ export async function searchProjectArtefacts(
 			continue;
 		}
 		seen.add(hash);
-		const first = entities[0];
+		const only = opts?.layer?.trim().toLowerCase() ?? "";
+		if (
+			only &&
+			!entities.some((e) => (e.entity_type ?? "").toLowerCase() === only)
+		) {
+			continue;
+		}
+		const first =
+			(only
+				? entities.find(
+						(e) => (e.entity_type ?? "").toLowerCase() === only,
+					)
+				: entities[0]) ?? entities[0];
 		const kind = artefactKind(mediaType);
 		const detail = first?.entity_id
 			? `${kind} · ${first.entity_type ?? "entity"} ${first.entity_id}`
@@ -154,7 +189,7 @@ export async function searchProjectArtefacts(
 export async function searchProjectScope(
 	slug: string,
 	q: string,
-	opts?: { accessToken?: string | null },
+	opts?: { accessToken?: string | null; layer?: string | null },
 ): Promise<{
 	layers: LayerHit[];
 	artefacts: ArtefactHit[];
@@ -189,7 +224,7 @@ function displayColumnName(name: string): string {
 export async function searchProjectValues(
 	slug: string,
 	q: string,
-	opts?: { accessToken?: string | null; limit?: number },
+	opts?: { accessToken?: string | null; limit?: number; layer?: string | null },
 ): Promise<ValueHit[]> {
 	const prefix = q.trim();
 	if (!slug || prefix.length < 2) return [];
@@ -215,6 +250,8 @@ export async function searchProjectValues(
 		const column = (row.column_name ?? "").trim();
 		const match = (row.match_value ?? "").trim();
 		if (!layer || !id || !match) continue;
+		const only = opts?.layer?.trim().toLowerCase() ?? "";
+		if (only && layer.toLowerCase() !== only) continue;
 		const key = `${layer}:${id}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
@@ -231,6 +268,58 @@ export async function searchProjectValues(
 		if (prefixed.length >= limit) break;
 	}
 	return [...prefixed, ...rest].slice(0, limit);
+}
+
+/** Column names for `/row:` typeahead. Prefer `layer` when set. */
+export async function listProjectColumns(
+	slug: string,
+	q: string,
+	opts?: {
+		accessToken?: string | null;
+		limit?: number;
+		layer?: string | null;
+	},
+): Promise<ColumnHit[]> {
+	if (!slug) return [];
+	const res = await fetch(
+		`/api/v1/projects/${encodeURIComponent(slug)}/tables`,
+		{ headers: authHeaders(opts?.accessToken) },
+	);
+	if (!res.ok) return [];
+	const data = (await res.json()) as { tables?: Record<string, string[]> };
+	const tables = data.tables ?? {};
+	const only = opts?.layer?.trim().toLowerCase() ?? "";
+	const names = Object.keys(tables);
+	const order = only
+		? names.filter((n) => n.toLowerCase() === only)
+		: names;
+	const prefix = q.trim().toLowerCase();
+	const seen = new Set<string>();
+	const out: ColumnHit[] = [];
+	const limit = opts?.limit ?? COLUMN_LIMIT;
+	for (const table of order) {
+		for (const col of tables[table] ?? []) {
+			if (SKIP_COL.test(col) || SKIP_COL_SUFFIX.test(col)) continue;
+			const key = col.toLowerCase();
+			if (seen.has(key)) continue;
+			const label = displayLayerName(col);
+			if (
+				prefix &&
+				!matches(col, prefix) &&
+				!matches(label, prefix)
+			) {
+				continue;
+			}
+			seen.add(key);
+			out.push({
+				name: col,
+				label,
+				detail: only ? "column" : displayLayerName(table),
+			});
+			if (out.length >= limit) return out;
+		}
+	}
+	return out;
 }
 
 async function loadEntityIndex(
@@ -279,7 +368,7 @@ async function loadEntityIndex(
 export async function searchProjectEntities(
 	slug: string,
 	q: string,
-	opts?: { accessToken?: string | null; limit?: number },
+	opts?: { accessToken?: string | null; limit?: number; layer?: string | null },
 ): Promise<EntityHit[]> {
 	const prefix = q.trim().toLowerCase();
 	if (!slug || prefix.length < 1) return [];
@@ -287,7 +376,9 @@ export async function searchProjectEntities(
 	const limit = opts?.limit ?? ENTITY_LIMIT;
 	const prefixed: EntityHit[] = [];
 	const rest: EntityHit[] = [];
+	const only = opts?.layer?.trim().toLowerCase() ?? "";
 	for (const row of index) {
+		if (only && row.layer.toLowerCase() !== only) continue;
 		const id = row.id.toLowerCase();
 		const hit: EntityHit = {
 			layer: row.layer,

@@ -22,6 +22,7 @@
         useHeight?: boolean;
         snap?: SnapMode;
         vertexEditing?: boolean;
+        adding?: boolean;
         /** Other tables with pending buffer rows, e.g. "Finds 2 · Context 1". */
         sessionSummary?: string;
         showHeight?: boolean;
@@ -43,6 +44,7 @@
         useHeight = true,
         snap = "mesh",
         vertexEditing = false,
+        adding = false,
         sessionSummary = "",
         showHeight = true,
         showSnap = true,
@@ -105,7 +107,7 @@
 </script>
 
 <div
-    class="pointer-events-auto relative flex max-w-[min(36rem,calc(100vw-10rem))] flex-col gap-1 rounded-lg border border-border bg-background/95 px-2 py-1.5 text-xs shadow-lg backdrop-blur-sm"
+    class="surface pointer-events-auto relative flex max-w-[min(36rem,calc(100vw-10rem))] flex-col gap-1 rounded-lg border border-border px-2 py-1.5 text-xs shadow-lg"
 >
     <div class="flex items-center gap-2">
         <PencilIcon class="size-3.5 shrink-0 text-foreground" />
@@ -120,6 +122,7 @@
             >
         {/if}
 
+        {#if adding}
         <div class="relative shrink-0" bind:this={geomWrap}>
             <button
                 type="button"
@@ -137,7 +140,7 @@
             </button>
             {#if geomOpen}
                 <div
-                    class="absolute bottom-[calc(100%+0.35rem)] left-0 z-30 flex w-44 flex-col gap-0.5 rounded-lg border border-border bg-background/95 p-1 shadow-lg backdrop-blur-sm"
+                    class="surface absolute bottom-[calc(100%+0.35rem)] left-0 z-30 flex w-44 flex-col gap-0.5 rounded-lg border border-border p-1 shadow-lg"
                     role="listbox"
                 >
                     <div
@@ -150,7 +153,7 @@
                         <button
                             type="button"
                             class="{menuItem} {mode === m.id
-                                ? 'bg-secondary font-medium'
+                                ? 'selected'
                                 : ''}"
                             role="option"
                             aria-selected={mode === m.id}
@@ -170,6 +173,7 @@
                 </div>
             {/if}
         </div>
+        {/if}
 
         {#if showHeight}
         <button
@@ -203,7 +207,7 @@
             </button>
             {#if snapOpen}
                 <div
-                    class="absolute bottom-[calc(100%+0.35rem)] left-0 z-30 flex w-40 flex-col gap-0.5 rounded-lg border border-border bg-background/95 p-1 shadow-lg backdrop-blur-sm"
+                    class="surface absolute bottom-[calc(100%+0.35rem)] left-0 z-30 flex w-40 flex-col gap-0.5 rounded-lg border border-border p-1 shadow-lg"
                     role="listbox"
                 >
                     <div
@@ -215,7 +219,7 @@
                         <button
                             type="button"
                             class="{menuItem} {snap === m.id
-                                ? 'bg-secondary font-medium'
+                                ? 'selected'
                                 : ''}"
                             role="option"
                             aria-selected={snap === m.id}
@@ -258,7 +262,7 @@
                 type="button"
                 class="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-foreground hover:bg-primary/20"
                 title={vertexEditing
-                    ? "Save geometry to session buffer"
+                    ? "Save geometry to session"
                     : "Finish geometry (double-click)"}
                 onclick={() => onFinish?.()}
             >

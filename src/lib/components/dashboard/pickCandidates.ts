@@ -118,3 +118,47 @@ export function popupAttrFields(
 	}
 	return out;
 }
+
+/** Overlay session attributes onto a base map, keeping empty strings (clears). */
+export function overlayBufferAttrs(
+	base: Record<string, string> | undefined,
+	buf: Record<string, unknown> | undefined,
+): Record<string, string> {
+	const out: Record<string, string> = { ...(base ?? {}) };
+	if (!buf) return out;
+	for (const [k, v] of Object.entries(buf)) {
+		out[k] = v == null ? "" : String(v);
+	}
+	return out;
+}
+
+/** All editable columns for the infobox form, including empty values. */
+export function editAttrFields(
+	columns: string[],
+	attrs: Record<string, string>,
+): Array<{ key: string; column: string; value: string }> {
+	const seen = new Set<string>();
+	const out: Array<{ key: string; column: string; value: string }> = [];
+	for (const raw of columns) {
+		const nk = normAttrKey(raw);
+		if (!nk || POPUP_CHROME_KEYS.has(nk) || nk.startsWith("tinyowl")) continue;
+		seen.add(nk);
+		out.push({
+			key: raw.replace(/_/g, " "),
+			column: raw,
+			value: attrs[raw] ?? "",
+		});
+	}
+	for (const [rawKey, value] of Object.entries(attrs)) {
+		const nk = normAttrKey(rawKey);
+		if (!nk || seen.has(nk) || POPUP_CHROME_KEYS.has(nk) || nk.startsWith("tinyowl")) {
+			continue;
+		}
+		out.push({
+			key: rawKey.replace(/_/g, " "),
+			column: rawKey,
+			value: value ?? "",
+		});
+	}
+	return out;
+}

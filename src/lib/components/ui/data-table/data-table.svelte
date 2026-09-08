@@ -102,7 +102,7 @@
         class="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-card"
     >
         <Table.Root>
-            <Table.Header class="sticky top-0 z-10 bg-card/95 backdrop-blur-sm">
+            <Table.Header class="sticky top-0 z-10 bg-card">
                 {#each table.getHeaderGroups() as headerGroup}
                     <Table.Row class="hover:bg-transparent border-border">
                         {#each headerGroup.headers as header}

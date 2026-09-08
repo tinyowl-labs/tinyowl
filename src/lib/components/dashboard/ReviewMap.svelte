@@ -333,6 +333,7 @@
     $effect(() => {
         themePrefs.accentHue;
         themePrefs.bgBase;
+        themePrefs.colorScheme;
         if (map) tuneLeafletBasemap(map, isDark());
     });
 </script>

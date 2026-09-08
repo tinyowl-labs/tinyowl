@@ -6,6 +6,7 @@
 	import ArrowRightIcon from "@lucide/svelte/icons/arrow-right";
 	import UserAvatar from "$lib/components/ui/user-avatar.svelte";
 	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+	import { viewportMenu } from "./viewportMenu.svelte";
 	import {
 		commentPlaceLabel,
 		commentReplies,
@@ -99,7 +100,7 @@
 		onpointerdown={(e) => e.stopPropagation()}
 	>
 		<div
-			class="pointer-events-auto absolute bottom-[48px] left-[-8px] w-[min(280px,calc(100vw-2rem))] rounded-lg border border-border bg-background/95 p-2.5 text-xs shadow-lg backdrop-blur-sm {selected.status ===
+			class="surface pointer-events-auto absolute bottom-[48px] left-[-8px] w-[min(280px,calc(100vw-2rem))] rounded-lg border border-border p-2.5 text-xs shadow-lg {selected.status ===
 			'resolved'
 				? 'opacity-80'
 				: ''}"
@@ -122,9 +123,15 @@
 							</div>
 						</div>
 						{#if canMutate(selected)}
-							<DropdownMenu.Root>
+							<DropdownMenu.Root
+								open={viewportMenu.is("comment")}
+								onOpenChange={(next) => {
+									if (next) viewportMenu.claim("comment");
+									else viewportMenu.release("comment");
+								}}
+							>
 								<DropdownMenu.Trigger
-									class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+									class="shrink-0 select-none rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
 									title="More"
 									onclick={(e) => e.stopPropagation()}
 								>

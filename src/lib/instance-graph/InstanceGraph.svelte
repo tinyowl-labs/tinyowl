@@ -282,7 +282,7 @@
 </script>
 
 <div
-	class="flex h-full min-h-0 w-full flex-col overflow-hidden border-l border-border bg-background/95 shadow-lg backdrop-blur-sm"
+	class="surface flex h-full min-h-0 w-full flex-col overflow-hidden border-l border-border shadow-lg"
 >
 	<div
 		class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5"
@@ -478,7 +478,7 @@
 								height={n.h}
 								rx="6"
 								class={primary
-									? "fill-primary/25 stroke-primary"
+									? "fill-selected/25 stroke-selected"
 									: sel
 										? "fill-secondary stroke-foreground/50"
 										: "fill-background stroke-border"}

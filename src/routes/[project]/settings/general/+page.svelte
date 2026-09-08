@@ -251,7 +251,7 @@
                 </div>
                 {#if suggestions.length > 0}
                     <ul
-                        class="rounded-md border border-border bg-popover p-1 text-sm shadow-md"
+                        class="surface rounded-md border border-border p-1 text-sm shadow-md"
                     >
                         {#each suggestions as s}
                             <li>

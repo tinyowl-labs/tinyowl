@@ -40,12 +40,16 @@
 		if (local === value) return;
 		onCommit?.(local);
 	}
+
+	/** Dense chrome: cap radius so pill theme does not stadium-shape 28px fields. */
+	const compactCtrl =
+		"h-7 rounded-[min(var(--radius-md),6px)] border-input bg-background px-2 text-xs shadow-none";
 </script>
 
 {#if options}
 	<select
 		class={compact
-			? "h-7 w-full min-w-[5rem] rounded-md border border-input bg-background px-1.5 text-xs"
+			? `${compactCtrl} w-full min-w-[5rem] border px-1.5`
 			: "h-8 w-full rounded-md border border-input bg-background px-2 text-sm"}
 		value={local}
 		onclick={(e) => e.stopPropagation()}
@@ -72,7 +76,7 @@
 	</select>
 {:else}
 	<Input
-		class={compact ? "h-7 text-xs" : "h-8 text-sm"}
+		class={compact ? compactCtrl : "h-8 text-sm"}
 		value={local}
 		autocomplete="off"
 		onclick={(e) => e.stopPropagation()}

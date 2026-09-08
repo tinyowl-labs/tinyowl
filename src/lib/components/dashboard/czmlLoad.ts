@@ -103,6 +103,26 @@ export function entityIdFromPacket(
     return propSourceId(packet.properties) ?? entityIdFromPacketId(id, layerName);
 }
 
+/** Attribute rows from CZML properties (map SoT; no geom). One row per entity. */
+export function rowsFromPackets(
+    packets: Record<string, unknown>[] | undefined,
+    layerName: string,
+): Record<string, unknown>[] {
+    const seen = new Set<string>();
+    const out: Record<string, unknown>[] = [];
+    for (const pkt of packets ?? []) {
+        const eid = entityIdFromPacket(pkt, layerName);
+        if (!eid || seen.has(eid)) continue;
+        seen.add(eid);
+        const props =
+            pkt.properties && typeof pkt.properties === "object"
+                ? { ...(pkt.properties as Record<string, unknown>) }
+                : {};
+        out.push({ ...props, source_id: eid });
+    }
+    return out;
+}
+
 /** Unique entity ids in packet order (for SceneGraphPanel). */
 export function entityIdsFromPackets(
     packets: Record<string, unknown>[],

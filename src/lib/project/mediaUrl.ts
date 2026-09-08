@@ -15,6 +15,16 @@ export function sameOriginMediaPath(raw: string, hash = ""): string {
 	return hash ? `/media/${hash}` : s;
 }
 
+export function withMediaVariant(
+	path: string,
+	variant?: "preview" | "full",
+): string {
+	if (!path || !variant || variant === "full") return path;
+	if (/[?&]variant=/.test(path)) return path;
+	const sep = path.includes("?") ? "&" : "?";
+	return `${path}${sep}variant=${encodeURIComponent(variant)}`;
+}
+
 export function withMediaToken(path: string, accessToken = ""): string {
 	if (!path) return path;
 	if (!accessToken || /[?&]token=/.test(path)) return path;
@@ -24,10 +34,25 @@ export function withMediaToken(path: string, accessToken = ""): string {
 
 export function browserMediaUrl(
 	raw: string,
-	opts?: { hash?: string; accessToken?: string },
+	opts?: {
+		hash?: string;
+		accessToken?: string;
+		variant?: "preview" | "full";
+	},
 ): string {
 	return withMediaToken(
-		sameOriginMediaPath(raw, opts?.hash ?? ""),
+		withMediaVariant(
+			sameOriginMediaPath(raw, opts?.hash ?? ""),
+			opts?.variant,
+		),
 		opts?.accessToken ?? "",
 	);
+}
+
+/** Thumb / chip / similar-hit URL (`?variant=preview`). Missing preview is 404, not the original. */
+export function browserThumbUrl(
+	raw: string,
+	opts?: { hash?: string; accessToken?: string },
+): string {
+	return browserMediaUrl(raw, { ...opts, variant: "preview" });
 }

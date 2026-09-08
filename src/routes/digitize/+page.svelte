@@ -1,5 +1,4 @@
 <script lang="ts">
-    import Header from "$lib/components/ui/header.svelte";
     import DigitizeWizard from "$lib/components/digitize/DigitizeWizard.svelte";
 
     let { data } = $props();
@@ -8,9 +7,8 @@
 
 <svelte:head><title>Digitize — echidna</title></svelte:head>
 
-<div class="min-h-screen bg-background text-foreground">
-    <Header hasSession={true} fixed />
-    <main class="pt-11">
+<div class="h-full overflow-y-auto bg-background text-foreground">
+    <main>
         <DigitizeWizard {accessToken} />
     </main>
 </div>

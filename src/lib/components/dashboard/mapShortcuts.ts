@@ -3,6 +3,12 @@
 import { searchOverlay } from "$lib/stores/searchOverlay.svelte";
 import type { MeasureMode } from "$lib/measure";
 import type { SelectionToolMode } from "$lib/stores/layerSelection.svelte";
+import {
+	isFlyActive,
+	isTypingTarget,
+	matchPrefShortcut,
+	type ShortcutId,
+} from "$lib/shortcuts";
 
 export type MapShortcutAction =
 	| { type: "escape" }
@@ -17,16 +23,66 @@ export type MapShortcutAction =
 	| { type: "measure-mode"; mode: MeasureMode }
 	| { type: "comments-toggle" }
 	| { type: "edit-toggle" }
+	| { type: "add-geometry" }
 	| { type: "graph-toggle" }
-	| { type: "delete-feature" };
+	| { type: "delete-feature" }
+	| { type: "fly-toggle" };
 
-export function isTypingTarget(target: EventTarget | null): boolean {
-	const el = target as HTMLElement | null;
-	if (!el) return false;
-	if (el.isContentEditable) return true;
-	const tag = el.tagName;
-	if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-	return Boolean(el.closest?.("input, textarea, select, [contenteditable=true]"));
+export { isTypingTarget };
+
+const FLY_ALLOWED = new Set<ShortcutId>([
+	"map-escape",
+	"map-enter",
+	"map-fly-toggle",
+]);
+
+function actionFromId(id: ShortcutId): MapShortcutAction | null {
+	switch (id) {
+		case "map-escape":
+			return { type: "escape" };
+		case "map-enter":
+			return { type: "enter" };
+		case "map-undo":
+			return { type: "undo" };
+		case "map-fly-to":
+			return { type: "fly-to" };
+		case "map-home":
+			return { type: "home" };
+		case "map-isolate":
+			return { type: "isolate" };
+		case "map-exit-isolate":
+			return { type: "exit-isolate" };
+		case "map-select-click":
+			return { type: "select-tool", mode: "click" };
+		case "map-select-box":
+			return { type: "select-tool", mode: "box" };
+		case "map-select-lasso":
+			return { type: "select-tool", mode: "lasso" };
+		case "map-measure-toggle":
+			return { type: "measure-toggle" };
+		case "map-measure-point":
+			return { type: "measure-mode", mode: "point" };
+		case "map-measure-length":
+			return { type: "measure-mode", mode: "length" };
+		case "map-measure-area":
+			return { type: "measure-mode", mode: "area" };
+		case "map-measure-volume":
+			return { type: "measure-mode", mode: "volume" };
+		case "map-comments-toggle":
+			return { type: "comments-toggle" };
+		case "map-edit-toggle":
+			return { type: "edit-toggle" };
+		case "map-add-geometry":
+			return { type: "add-geometry" };
+		case "map-graph-toggle":
+			return { type: "graph-toggle" };
+		case "map-delete":
+			return { type: "delete-feature" };
+		case "map-fly-toggle":
+			return { type: "fly-toggle" };
+		default:
+			return null;
+	}
 }
 
 /**
@@ -34,58 +90,11 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * Does not call preventDefault — callers decide.
  */
 export function mapToolShortcut(ev: KeyboardEvent): MapShortcutAction | null {
-	if (searchOverlay.open) return null;
-	if (isTypingTarget(ev.target)) return null;
-
-	const chord = ev.metaKey || ev.ctrlKey;
-	if (chord && !ev.altKey && (ev.key === "z" || ev.key === "Z")) {
-		if (ev.shiftKey) return null;
-		return { type: "undo" };
-	}
-
-	if (ev.metaKey || ev.ctrlKey || ev.altKey) return null;
-
-	if (ev.key === "Escape") return { type: "escape" };
-	if (ev.key === "Enter") return { type: "enter" };
-	if (ev.key === "Tab") {
-		if (ev.shiftKey) return null;
-		return { type: "edit-toggle" };
-	}
-	if (ev.key === "Delete" || ev.key === "Backspace") {
-		return { type: "delete-feature" };
-	}
-
-	const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
-	switch (k) {
-		case "f":
-			return { type: "fly-to" };
-		case "h":
-			return { type: "home" };
-		case "i":
-			return { type: "isolate" };
-		case "u":
-			return { type: "exit-isolate" };
-		case "1":
-			return { type: "select-tool", mode: "click" };
-		case "2":
-			return { type: "select-tool", mode: "box" };
-		case "3":
-			return { type: "select-tool", mode: "lasso" };
-		case "m":
-			return { type: "measure-toggle" };
-		case "c":
-			return { type: "comments-toggle" };
-		case "p":
-			return { type: "measure-mode", mode: "point" };
-		case "l":
-			return { type: "measure-mode", mode: "length" };
-		case "a":
-			return { type: "measure-mode", mode: "area" };
-		case "v":
-			return { type: "measure-mode", mode: "volume" };
-		case "g":
-			return { type: "graph-toggle" };
-		default:
-			return null;
-	}
+	const id = matchPrefShortcut(ev, ["map"], {
+		overlayOpen: searchOverlay.open,
+		typing: isTypingTarget(ev.target),
+	});
+	if (!id) return null;
+	if (isFlyActive() && !FLY_ALLOWED.has(id)) return null;
+	return actionFromId(id);
 }

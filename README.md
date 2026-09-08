@@ -78,13 +78,13 @@ Invite-only PC demos: see [`docs/demo-funnel.md`](../docs/demo-funnel.md).
 - **QFieldCloud bridge** — link/unlink/sync QFieldCloud projects
 - **Member management** — invite by email, role assignment (owner/admin/collaborator/viewer)
 - **Column/value mappings** — vocabulary harmonisation workbench with bulk-apply and progress tracking
-- **User settings** — API tokens, QFieldCloud accounts, theme appearance (accent hue, background base, radius, blur)
+- **User settings** — API tokens, QFieldCloud accounts, theme appearance (highlight hue, background base, radius, surface)
 
 ### Theme engine
 - **5 background presets** — pitch, dark, dim, stone, paper
-- **8 accent hues** — slate, indigo, violet, teal, sage, amber, rose, crimson
+- **8 accent hues** — slate, indigo, violet, teal, sage, amber, rose, crimson (highlight only; backgrounds stay grey)
 - **3 radius scales** — sharp, rounded, pill
-- **3 blur scales** — none, subtle, glass
+- **3 surface treatments** — none, tinted, glass
 - Persisted to localStorage and synced to Supabase user metadata
 
 ## Project structure
@@ -98,7 +98,7 @@ tinyowl/
 │   │   ├── components/
 │   │   │   ├── ui/             # shadcn-svelte primitives + header, mobile-nav, etc.
 │   │   │   ├── dashboard/      # BboxMap, LayerMap, LayerScene, SchemaGraph, CommitTimeline
-│   │   │   ├── artefacts/      # MediaUpload
+    │   │   │   ├── artefacts/      # ArtefactMicroViewer
 │   │   │   └── settings/       # MappingWorkbench
 │   │   ├── stores/             # Theme engine (theme.svelte.ts)
 │   │   ├── supabase/           # Browser + server Supabase clients (SSR-safe)

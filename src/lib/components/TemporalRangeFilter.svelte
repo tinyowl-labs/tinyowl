@@ -230,11 +230,6 @@
         class="flex items-center justify-between text-[11px] tabular-nums text-muted-foreground"
     >
         <span>{formatYear(domainMin)}</span>
-        <span class="text-foreground font-medium"
-            >{formatYear(Math.round(range[0]))} – {formatYear(
-                Math.round(range[1]),
-            )}</span
-        >
         <span>{formatYear(domainMax)}</span>
     </div>
 </div>

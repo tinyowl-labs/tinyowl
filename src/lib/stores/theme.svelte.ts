@@ -1,14 +1,19 @@
+import { MediaQuery } from 'svelte/reactivity';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type BgBase = 'pitch' | 'dark' | 'dim' | 'stone' | 'paper';
 export type RadiusScale = 'sharp' | 'rounded' | 'pill';
-export type BlurScale = 'none' | 'subtle' | 'glass';
+/** Overlay chrome: solid, accent wash, or clear glass (not frost). */
+export type SurfaceEffect = 'none' | 'tinted' | 'glass';
+export type ColorScheme = 'system' | 'light' | 'dark';
 
 export interface ThemePreferences {
 	accentHue: number;
 	bgBase: BgBase;
 	radius: RadiusScale;
-	blur: BlurScale;
+	surface: SurfaceEffect;
+	colorScheme: ColorScheme;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -17,8 +22,24 @@ const DEFAULTS: ThemePreferences = {
 	accentHue: 220,
 	bgBase: 'dark',
 	radius: 'rounded',
-	blur: 'glass'
+	surface: 'glass',
+	colorScheme: 'system'
 };
+
+const COLOR_SCHEMES: Record<ColorScheme, true> = {
+	system: true,
+	light: true,
+	dark: true
+};
+
+export const COLOR_SCHEME_OPTIONS: { value: ColorScheme; label: string }[] = [
+	{ value: 'system', label: 'System' },
+	{ value: 'light', label: 'Light' },
+	{ value: 'dark', label: 'Dark' }
+];
+
+const DEFAULT_DARK_BG: BgBase = 'dark';
+const DEFAULT_LIGHT_BG: BgBase = 'paper';
 
 const BG_L: Record<BgBase, number> = {
 	pitch: 0.07,
@@ -46,42 +67,38 @@ const RADIUS_VALUES: Record<RadiusScale, Record<string, string>> = {
 	pill: { xs: '4px', sm: '8px', md: '12px', lg: '20px', xl: '32px' }
 };
 
-const BLUR_VALUES: Record<
-	BlurScale,
-	{
-		panel: string;
-		dock: string;
-		overlay: string;
-		panelOpacity: string;
-		dockOpacity: string;
-		overlayOpacity: string;
+export const SURFACE_OPTIONS: { value: SurfaceEffect; label: string }[] = [
+	{ value: 'none', label: 'None' },
+	{ value: 'tinted', label: 'Tinted' },
+	{ value: 'glass', label: 'Glass' }
+];
+
+function surfaceCss(
+	mode: SurfaceEffect,
+	isDarkMode: boolean,
+	cardSolid: string
+): { fill: string; filter: string; sheen: string } {
+	if (mode === 'none') {
+		return { fill: cardSolid, filter: 'none', sheen: 'none' };
 	}
-> = {
-	none: {
-		panel: 'none',
-		dock: 'none',
-		overlay: 'none',
-		panelOpacity: '1.0',
-		dockOpacity: '1.0',
-		overlayOpacity: '0.97'
-	},
-	subtle: {
-		panel: 'blur(6px) saturate(1.2)',
-		dock: 'blur(8px) saturate(1.3)',
-		overlay: 'blur(4px) saturate(1.15)',
-		panelOpacity: '0.88',
-		dockOpacity: '0.82',
-		overlayOpacity: '0.88'
-	},
-	glass: {
-		panel: 'blur(14px) saturate(1.4)',
-		dock: 'blur(20px) saturate(1.6)',
-		overlay: 'blur(8px) saturate(1.3)',
-		panelOpacity: '0.72',
-		dockOpacity: '0.65',
-		overlayOpacity: '0.75'
+	if (mode === 'tinted') {
+		return {
+			fill: 'color-mix(in oklab, color-mix(in oklab, var(--background) 94%, var(--selected) 6%) 92%, transparent)',
+			filter: 'none',
+			sheen: 'none'
+		};
 	}
-};
+	// Clear glass: readable pane + sheen + optical saturate. No spatial blur (that is frost).
+	return {
+		fill: isDarkMode ? 'oklch(0.24 0 0 / 0.52)' : 'oklch(0.995 0 0 / 0.50)',
+		filter: isDarkMode
+			? 'saturate(1.9) brightness(1.16)'
+			: 'saturate(1.5) brightness(1.05)',
+		sheen: isDarkMode
+			? 'linear-gradient(165deg, rgb(255 255 255 / 0.26) 0%, rgb(255 255 255 / 0.06) 34%, transparent 70%)'
+			: 'linear-gradient(165deg, rgb(255 255 255 / 0.78) 0%, rgb(255 255 255 / 0.2) 40%, transparent 72%)'
+	};
+}
 
 // ─── localStorage keys ────────────────────────────────────────────────────────
 
@@ -89,8 +106,26 @@ const LS = {
 	accentHue: 'redthread:theme:accentHue',
 	bgBase: 'redthread:theme:bgBase',
 	radius: 'redthread:theme:radius',
-	blur: 'redthread:theme:blur'
+	surface: 'redthread:theme:surface',
+	/** @deprecated replaced by `surface`; still read for migration */
+	blur: 'redthread:theme:blur',
+	colorScheme: 'redthread:theme:colorScheme'
 } as const;
+
+function parseSurface(raw: unknown): SurfaceEffect | null {
+	if (raw === 'subtle') return 'tinted';
+	if (raw === 'none' || raw === 'tinted' || raw === 'glass') return raw;
+	return null;
+}
+
+const prefersDarkMq =
+	typeof window === 'undefined'
+		? null
+		: new MediaQuery('prefers-color-scheme: dark', true);
+
+export function systemPrefersDark(): boolean {
+	return prefersDarkMq?.current ?? true;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,7 +140,11 @@ function readFromStorage(): ThemePreferences {
 	const rawHue = localStorage.getItem(LS.accentHue);
 	const rawBg = localStorage.getItem(LS.bgBase) as BgBase | null;
 	const rawRadius = localStorage.getItem(LS.radius) as RadiusScale | null;
-	const rawBlur = localStorage.getItem(LS.blur) as BlurScale | null;
+	const rawScheme = localStorage.getItem(LS.colorScheme) as ColorScheme | null;
+	const surface =
+		parseSurface(localStorage.getItem(LS.surface)) ??
+		parseSurface(localStorage.getItem(LS.blur)) ??
+		DEFAULTS.surface;
 
 	const hue = rawHue ? Number(rawHue) : DEFAULTS.accentHue;
 
@@ -113,47 +152,70 @@ function readFromStorage(): ThemePreferences {
 		accentHue: isNaN(hue) ? DEFAULTS.accentHue : Math.max(0, Math.min(360, hue)),
 		bgBase: rawBg && rawBg in BG_L ? rawBg : DEFAULTS.bgBase,
 		radius: rawRadius && rawRadius in RADIUS_VALUES ? rawRadius : DEFAULTS.radius,
-		blur: rawBlur && rawBlur in BLUR_VALUES ? rawBlur : DEFAULTS.blur
+		surface,
+		colorScheme: rawScheme && rawScheme in COLOR_SCHEMES ? rawScheme : DEFAULTS.colorScheme
 	};
+}
+
+function schemeIsDark(scheme: ColorScheme): boolean {
+	if (scheme === 'light') return false;
+	if (scheme === 'dark') return true;
+	return systemPrefersDark();
+}
+
+export function resolveColorScheme(p: ThemePreferences = prefs): 'light' | 'dark' {
+	return schemeIsDark(p.colorScheme) ? 'dark' : 'light';
+}
+
+export function resolveBgBase(p: ThemePreferences = prefs): BgBase {
+	const wantDark = schemeIsDark(p.colorScheme);
+	const storedDark = BG_L[p.bgBase] < 0.5;
+	if (wantDark) return storedDark ? p.bgBase : DEFAULT_DARK_BG;
+	return storedDark ? DEFAULT_LIGHT_BG : p.bgBase;
 }
 
 /**
  * Push theme preferences into CSS custom properties consumed by app.css / Tailwind.
  * This is what makes Appearance settings affect the whole UI.
  */
-export function applyTheme(prefs: ThemePreferences): void {
+export function applyTheme(p: ThemePreferences): void {
 	if (typeof document === 'undefined') return;
 
 	const root = document.documentElement;
-	const bgL = BG_L[prefs.bgBase];
+	const bgBase = resolveBgBase(p);
+	const bgL = BG_L[bgBase];
 	const isDarkMode = bgL < 0.5;
-	const hue = prefs.accentHue;
-	const radii = RADIUS_VALUES[prefs.radius];
-	const blurs = BLUR_VALUES[prefs.blur];
+	const hue = p.accentHue;
+	const radii = RADIUS_VALUES[p.radius];
 
 	const fgL = isDarkMode ? 0.95 : 0.12;
-	const bgC = isDarkMode ? 0.012 : 0.008;
-	const fgC = isDarkMode ? 0.01 : 0.02;
+	// Neutrals stay achromatic — hue is highlight-only.
 	const mutedL = isDarkMode ? Math.min(bgL + 0.07, 0.28) : Math.max(bgL - 0.05, 0.88);
 	const secondaryL = isDarkMode ? Math.min(bgL + 0.05, 0.24) : Math.max(bgL - 0.035, 0.9);
 	const borderL = isDarkMode ? Math.min(bgL + 0.1, 0.32) : Math.max(bgL - 0.1, 0.78);
-	const primaryL = isDarkMode ? 0.68 : 0.48;
-	const primaryC = 0.17;
+	// Everyday accent is quiet; --selected is the full hue for chosen items.
+	const primaryL = isDarkMode ? 0.72 : 0.46;
+	const primaryC = 0.08;
+	const selectedL = isDarkMode ? 0.68 : 0.5;
+	const selectedC = 0.17;
 	const destructiveL = isDarkMode ? 0.55 : 0.5;
 
-	const background = oklch(bgL, bgC, hue);
-	const foreground = oklch(fgL, fgC, hue);
-	const card = oklch(isDarkMode ? Math.min(bgL + 0.025, 0.2) : bgL, bgC, hue);
-	const secondary = oklch(secondaryL, bgC * 1.2, hue);
-	const muted = oklch(mutedL, bgC, hue);
-	const mutedFg = oklch(isDarkMode ? 0.68 : 0.42, fgC, hue);
-	const border = oklch(borderL, bgC * 1.4, hue);
+	const background = oklch(bgL, 0, 0);
+	const foreground = oklch(fgL, 0, 0);
+	const cardSolid = oklch(isDarkMode ? Math.min(bgL + 0.025, 0.2) : bgL, 0, 0);
+	const secondary = oklch(secondaryL, 0, 0);
+	const muted = oklch(mutedL, 0, 0);
+	const mutedFg = oklch(isDarkMode ? 0.68 : 0.42, 0, 0);
+	const border = oklch(borderL, 0, 0);
 	const primary = oklch(primaryL, primaryC, hue);
-	const primaryFg = oklch(isDarkMode ? 0.98 : 0.99, 0.01, hue);
-	const accent = oklch(isDarkMode ? Math.min(bgL + 0.08, 0.3) : Math.max(bgL - 0.06, 0.86), bgC * 1.5, hue);
+	const primaryFg = oklch(isDarkMode ? 0.98 : 0.99, 0, 0);
+	const selected = oklch(selectedL, selectedC, hue);
+	const selectedFg = oklch(isDarkMode ? 0.98 : 0.99, 0, 0);
+	const accent = oklch(isDarkMode ? Math.min(bgL + 0.08, 0.3) : Math.max(bgL - 0.06, 0.86), 0, 0);
 	const ring = primary;
 	const destructive = oklch(destructiveL, 0.19, 25);
 	const destructiveFg = oklch(0.98, 0.01, 25);
+	const surface = surfaceCss(p.surface, isDarkMode, cardSolid);
 
 	root.style.setProperty('--accent-hue', String(hue));
 	root.style.setProperty('--bg-l', String(bgL));
@@ -161,12 +223,19 @@ export function applyTheme(prefs: ThemePreferences): void {
 
 	root.style.setProperty('--background', background);
 	root.style.setProperty('--foreground', foreground);
-	root.style.setProperty('--card', card);
+	root.style.setProperty('--card-solid', cardSolid);
+	root.style.setProperty('--surface-fill', surface.fill);
+	root.style.setProperty('--surface-filter', surface.filter);
+	root.style.setProperty('--surface-sheen', surface.sheen);
+	// Content cards stay achromatic. Overlay chrome reads --surface-fill via .surface.
+	root.style.setProperty('--card', cardSolid);
 	root.style.setProperty('--card-foreground', foreground);
-	root.style.setProperty('--popover', card);
+	root.style.setProperty('--popover', cardSolid);
 	root.style.setProperty('--popover-foreground', foreground);
 	root.style.setProperty('--primary', primary);
 	root.style.setProperty('--primary-foreground', primaryFg);
+	root.style.setProperty('--selected', selected);
+	root.style.setProperty('--selected-foreground', selectedFg);
 	root.style.setProperty('--secondary', secondary);
 	root.style.setProperty('--secondary-foreground', foreground);
 	root.style.setProperty('--muted', muted);
@@ -179,28 +248,27 @@ export function applyTheme(prefs: ThemePreferences): void {
 	root.style.setProperty('--input', border);
 	root.style.setProperty('--ring', ring);
 
-	// Leaflet overlays — same accent as UI chrome (resolve to rgb for SVG fills)
-	root.style.setProperty('--map-marker', primary);
+	// Map pins use the full selected hue, not the quiet everyday accent.
+	root.style.setProperty('--map-marker', selected);
 	root.style.setProperty(
 		'--map-marker-stroke',
 		oklch(
-			isDarkMode ? Math.max(primaryL - 0.12, 0.45) : Math.min(primaryL + 0.08, 0.4),
-			primaryC,
+			isDarkMode ? Math.max(selectedL - 0.12, 0.45) : Math.min(selectedL + 0.08, 0.4),
+			selectedC,
 			hue
 		)
 	);
-	// Result pins: same hue, slightly brighter/dimmer so they stay on-brand
 	root.style.setProperty(
 		'--map-result',
-		oklch(isDarkMode ? Math.min(primaryL + 0.08, 0.82) : Math.max(primaryL - 0.06, 0.38), primaryC * 0.95, hue)
+		oklch(
+			isDarkMode ? Math.min(selectedL + 0.08, 0.82) : Math.max(selectedL - 0.06, 0.38),
+			selectedC * 0.95,
+			hue
+		)
 	);
 
-	root.style.setProperty('--blur-panel', blurs.panel);
-	root.style.setProperty('--blur-dock', blurs.dock);
-	root.style.setProperty('--blur-overlay', blurs.overlay);
-	root.style.setProperty('--panel-bg-opacity', blurs.panelOpacity);
-	root.style.setProperty('--dock-bg-opacity', blurs.dockOpacity);
-	root.style.setProperty('--overlay-bg-opacity', blurs.overlayOpacity);
+	root.dataset.surface = p.surface;
+	root.dataset.radius = p.radius;
 
 	root.style.setProperty('--theme-radius-xs', radii.xs);
 	root.style.setProperty('--theme-radius-sm', radii.sm);
@@ -216,6 +284,7 @@ export function applyTheme(prefs: ThemePreferences): void {
 	root.style.setProperty('--radius-xl', radii.xl);
 
 	root.classList.toggle('dark', isDarkMode);
+	root.style.colorScheme = isDarkMode ? 'dark' : 'light';
 }
 
 function persistTheme(prefs: ThemePreferences): void {
@@ -223,7 +292,8 @@ function persistTheme(prefs: ThemePreferences): void {
 	localStorage.setItem(LS.accentHue, String(prefs.accentHue));
 	localStorage.setItem(LS.bgBase, prefs.bgBase);
 	localStorage.setItem(LS.radius, prefs.radius);
-	localStorage.setItem(LS.blur, prefs.blur);
+	localStorage.setItem(LS.surface, prefs.surface);
+	localStorage.setItem(LS.colorScheme, prefs.colorScheme);
 }
 
 // ─── Reactive store ───────────────────────────────────────────────────────────
@@ -238,9 +308,9 @@ let prefs = $state<ThemePreferences>(getInitialPrefs());
 /** The reactive preferences object. Read any property to track it in $effect / $derived. */
 export { prefs as themePrefs };
 
-/** True when the current background base is a dark variant */
+/** True when the resolved appearance (system or override) is a dark variant */
 export function isDark(): boolean {
-	return BG_L[prefs.bgBase] < 0.5;
+	return BG_L[resolveBgBase()] < 0.5;
 }
 
 /** Read a live CSS custom property from :root (post-applyTheme). */
@@ -338,7 +408,7 @@ export async function pullThemeFromSupabase(): Promise<void> {
 		if (error || !user) return;
 
 		const remote = user.user_metadata?.theme_preferences as
-			| Partial<ThemePreferences>
+			| (Partial<ThemePreferences> & { blur?: unknown })
 			| undefined;
 		if (!remote || typeof remote !== "object") return;
 
@@ -351,8 +421,12 @@ export async function pullThemeFromSupabase(): Promise<void> {
 		if (remote.radius && remote.radius in RADIUS_VALUES) {
 			setPreference("radius", remote.radius);
 		}
-		if (remote.blur && remote.blur in BLUR_VALUES) {
-			setPreference("blur", remote.blur);
+		const surface = parseSurface(remote.surface) ?? parseSurface(remote.blur);
+		if (surface) {
+			setPreference("surface", surface);
+		}
+		if (remote.colorScheme && remote.colorScheme in COLOR_SCHEMES) {
+			setPreference("colorScheme", remote.colorScheme);
 		}
 
 		applyTheme(prefs);

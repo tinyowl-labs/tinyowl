@@ -115,11 +115,7 @@
 
 {#if junctions.length > 0 && entityId}
 	<div class="space-y-1.5 border-t border-border pt-2">
-		<p
-			class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-		>
-			Related
-		</p>
+		<p class="text-[11px] text-muted-foreground">Related</p>
 		{#each links as link (link.table + ":" + link.entityId)}
 			<div class="flex items-center gap-1">
 				<button
@@ -148,7 +144,7 @@
 		<div class="flex items-center gap-1">
 			{#if junctions.length > 1}
 				<select
-					class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1 text-[11px]"
+					class="h-7 min-w-0 flex-1 rounded-[min(var(--radius-md),6px)] border border-input bg-background px-1.5 text-[11px] shadow-none"
 					value={addTable}
 					onchange={(e) =>
 						(addTable = (e.currentTarget as HTMLSelectElement).value)}
@@ -159,7 +155,7 @@
 				</select>
 			{/if}
 			<select
-				class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1 text-[11px]"
+				class="h-7 min-w-0 flex-1 rounded-[min(var(--radius-md),6px)] border border-input bg-background px-1.5 text-[11px] shadow-none"
 				value={addOther}
 				onchange={(e) =>
 					(addOther = (e.currentTarget as HTMLSelectElement).value)}

@@ -42,11 +42,11 @@
                     <span
                         class="flex size-4 shrink-0 items-center justify-center rounded-full border {currentLicence ===
                         lic.key
-                            ? 'border-primary bg-primary'
+                            ? 'border-selected bg-selected'
                             : 'border-border'}"
                     >
                         {#if currentLicence === lic.key}
-                            <CheckIcon class="size-2.5 text-primary-foreground" />
+                            <CheckIcon class="size-2.5 text-selected-foreground" />
                         {/if}
                     </span>
                     <span class="min-w-0 flex-1">

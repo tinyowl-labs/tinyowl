@@ -8,7 +8,6 @@
     } from "$app/navigation";
     import { page } from "$app/stores";
     import { untrack } from "svelte";
-    import Header from "$lib/components/ui/header.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import AvatarEditor from "$lib/components/ui/avatar-editor.svelte";
     import AvatarCropDialog from "$lib/components/ui/avatar-crop-dialog.svelte";
@@ -31,10 +30,13 @@
         setPreference,
         pushThemeToSupabase,
         ACCENT_PRESETS,
+        COLOR_SCHEME_OPTIONS,
+        SURFACE_OPTIONS,
+        resolveBgBase,
+        resolveColorScheme,
         type ThemePreferences,
         type BgBase,
         type RadiusScale,
-        type BlurScale,
     } from "$lib/stores/theme.svelte";
     import CopyIcon from "@lucide/svelte/icons/copy";
     import CheckIcon from "@lucide/svelte/icons/check";
@@ -43,11 +45,11 @@
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import LogOutIcon from "@lucide/svelte/icons/log-out";
     import JobLog from "$lib/components/qfield/job-log.svelte";
+    import KeyboardSettings from "$lib/components/settings/KeyboardSettings.svelte";
 
     let { data, form: rawForm } = $props();
     const form = $derived(rawForm as any);
 
-    const hasSession = $derived(Boolean($page.data?.user ?? data?.user));
     const user = $derived(data?.user);
     const hasAvatar = $derived(Boolean(data?.hasAvatar));
     let avatarStyle = $state<AvatarStyle>({});
@@ -99,6 +101,7 @@
         { value: "opencontext", label: "Open Context" },
         { value: "tokens", label: "CLI tokens" },
         { value: "appearance", label: "Appearance" },
+        { value: "keyboard", label: "Keyboard" },
         { value: "security", label: "Security" },
     ];
     const tabValues = new Set(tabs.map((t) => t.value));
@@ -706,16 +709,31 @@
         { value: "stone", label: "Stone" },
         { value: "paper", label: "Paper" },
     ];
+    const darkBgBases = bgBases.filter((o) =>
+        o.value === "pitch" || o.value === "dark" || o.value === "dim",
+    );
+    const lightBgBases = bgBases.filter(
+        (o) => o.value === "stone" || o.value === "paper",
+    );
+    const appliedScheme = $derived(resolveColorScheme());
+    const appliedBgBase = $derived(resolveBgBase());
+    const visibleBgBases = $derived(
+        appliedScheme === "dark" ? darkBgBases : lightBgBases,
+    );
     const radii: { value: RadiusScale; label: string }[] = [
         { value: "sharp", label: "Sharp" },
         { value: "rounded", label: "Rounded" },
         { value: "pill", label: "Pill" },
     ];
-    const blurs: { value: BlurScale; label: string }[] = [
-        { value: "none", label: "None" },
-        { value: "subtle", label: "Subtle" },
-        { value: "glass", label: "Glass" },
-    ];
+    function choiceClass(on: boolean) {
+        const pad = themePrefs.radius === "pill" ? "px-5" : "px-3";
+        return on
+            ? `selected ${pad}`
+            : `border-border text-muted-foreground hover:bg-accent hover:text-foreground ${pad}`;
+    }
+    const previewChipPad = $derived(
+        themePrefs.radius === "pill" ? "px-3.5" : "px-2.5",
+    );
 
     $effect(() => {
         if (form?.success && form?.qfieldAction === "connected") {
@@ -727,9 +745,7 @@
 
 <svelte:head><title>Settings — echidna</title></svelte:head>
 
-<div class="flex flex-col h-screen overflow-hidden">
-    <Header subtitle="Settings" {hasSession} />
-
+<div class="flex h-full flex-col overflow-hidden">
     <main class="flex-1 min-h-0 overflow-y-auto bg-background">
         <div class="mx-auto w-full max-w-5xl px-6 py-6">
             <Tabs
@@ -1004,13 +1020,9 @@
                                 <div class="mb-4 flex flex-wrap gap-2">
                                     <Button
                                         type="button"
-                                        variant={showQFieldPublish
-                                            ? "default"
-                                            : "outline"}
+                                        variant="outline"
                                         size="sm"
-                                        class={showQFieldPublish
-                                            ? ""
-                                            : "text-muted-foreground hover:bg-accent hover:text-foreground"}
+                                        class="text-muted-foreground hover:bg-accent hover:text-foreground"
                                         onclick={() => {
                                             showQFieldPublish = !showQFieldPublish;
                                             if (showQFieldPublish)
@@ -1162,7 +1174,7 @@
                                             >
                                                 <input
                                                     type="checkbox"
-                                                    class="mt-0.5 size-4 accent-primary"
+                                                    class="mt-0.5 size-4 accent-foreground"
                                                     checked={willSnapshot}
                                                     disabled={selectedIsSnapshot}
                                                     onchange={(e) => {
@@ -1945,13 +1957,89 @@
                                 <h2
                                     class="text-sm font-medium text-foreground mb-1"
                                 >
+                                    Preview
+                                </h2>
+                                <p class="text-sm text-muted-foreground mb-4">
+                                    Overlay chrome follows Surface. Selection is the full hue. Buttons stay quiet. Content cards stay neutral.
+                                </p>
+                                <div
+                                    class="relative h-36 overflow-hidden rounded-lg border border-border"
+                                >
+                                    <div
+                                        class="absolute inset-0"
+                                        style="background: linear-gradient(135deg, var(--selected) 0%, transparent 42%), repeating-linear-gradient(-12deg, var(--muted) 0 12px, var(--secondary) 12px 24px);"
+                                    ></div>
+                                    <div
+                                        class="surface absolute inset-x-0 top-0 flex h-10 items-center border-b border-border px-3 text-xs font-medium text-foreground"
+                                    >
+                                        echidna
+                                        <span
+                                            class="ml-auto rounded-full border border-border {themePrefs.radius ===
+                                            'pill'
+                                                ? 'px-3.5'
+                                                : 'px-2.5'} py-0.5 text-[11px] font-semibold"
+                                            >Sign in</span
+                                        >
+                                    </div>
+                                    <div
+                                        class="surface absolute inset-x-3 top-14 flex items-center gap-2 rounded-md border border-border px-3 py-2"
+                                    >
+                                        <span
+                                            class="selected rounded-md {previewChipPad} py-0.5 text-[11px] font-medium"
+                                            >Selected</span
+                                        >
+                                        <span
+                                            class="rounded-md bg-primary {previewChipPad} py-0.5 text-[11px] font-medium text-primary-foreground"
+                                            >Button</span
+                                        >
+                                        <span
+                                            class="ml-auto text-[11px] text-muted-foreground"
+                                            >Chrome</span
+                                        >
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section>
+                                <h2
+                                    class="text-sm font-medium text-foreground mb-1"
+                                >
+                                    Color scheme
+                                </h2>
+                                <p class="text-sm text-muted-foreground mb-4">
+                                    Follows the system appearance unless you override it. Synced to your account when signed in.
+                                </p>
+                                <div class="flex flex-wrap gap-2">
+                                    {#each COLOR_SCHEME_OPTIONS as opt (opt.value)}
+                                        <button
+                                            type="button"
+                                            onclick={() =>
+                                                setThemePreference(
+                                                    "colorScheme",
+                                                    opt.value,
+                                                )}
+                                            class="rounded-md border py-1.5 text-sm transition-colors {choiceClass(
+                                                themePrefs.colorScheme ===
+                                                    opt.value,
+                                            )}"
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    {/each}
+                                </div>
+                            </section>
+
+                            <section>
+                                <h2
+                                    class="text-sm font-medium text-foreground mb-1"
+                                >
                                     Background
                                 </h2>
                                 <p class="text-sm text-muted-foreground mb-4">
-                                    Synced to your account when signed in.
+                                    Shade for the current {appliedScheme} scheme.
                                 </p>
                                 <div class="flex flex-wrap gap-2">
-                                    {#each bgBases as opt}
+                                    {#each visibleBgBases as opt (opt.value)}
                                         <button
                                             type="button"
                                             onclick={() =>
@@ -1959,10 +2047,9 @@
                                                     "bgBase",
                                                     opt.value,
                                                 )}
-                                            class="rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.bgBase ===
-                                            opt.value
-                                                ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                            class="rounded-md border py-1.5 text-sm transition-colors {choiceClass(
+                                                appliedBgBase === opt.value,
+                                            )}"
                                         >
                                             {opt.label}
                                         </button>
@@ -1977,7 +2064,7 @@
                                     Accent
                                 </h2>
                                 <p class="text-sm text-muted-foreground mb-4">
-                                    Curated hues for UI accents.
+                                    Highlight for buttons and links stays quiet. Selection uses the full colour; Tinted is only a hint of the same hue on overlay chrome.
                                 </p>
                                 <div class="flex flex-wrap gap-2">
                                     {#each ACCENT_PRESETS as preset}
@@ -1988,14 +2075,14 @@
                                                     "accentHue",
                                                     preset.hue,
                                                 )}
-                                            class="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.accentHue ===
-                                            preset.hue
-                                                ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                            class="inline-flex items-center gap-2 rounded-md border py-1.5 text-sm transition-colors {choiceClass(
+                                                themePrefs.accentHue ===
+                                                    preset.hue,
+                                            )}"
                                         >
                                             <span
                                                 class="size-3 rounded-full shrink-0"
-                                                style="background: hsl({preset.hue} 60% 50%)"
+                                                style="background: oklch(0.55 0.17 {preset.hue})"
                                             ></span>
                                             {preset.name}
                                         </button>
@@ -2009,7 +2096,10 @@
                                 >
                                     Corner radius
                                 </h2>
-                                <div class="flex flex-wrap gap-2 mt-4">
+                                <p class="text-sm text-muted-foreground mb-4">
+                                    Controls how round corners are, including the preview above.
+                                </p>
+                                <div class="flex flex-wrap gap-2">
                                     {#each radii as opt}
                                         <button
                                             type="button"
@@ -2018,10 +2108,10 @@
                                                     "radius",
                                                     opt.value,
                                                 )}
-                                            class="rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.radius ===
-                                            opt.value
-                                                ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                            class="rounded-md border py-1.5 text-sm transition-colors {choiceClass(
+                                                themePrefs.radius ===
+                                                    opt.value,
+                                            )}"
                                         >
                                             {opt.label}
                                         </button>
@@ -2033,21 +2123,24 @@
                                 <h2
                                     class="text-sm font-medium text-foreground mb-1"
                                 >
-                                    Blur
+                                    Surface
                                 </h2>
-                                <div class="flex flex-wrap gap-2 mt-4">
-                                    {#each blurs as opt}
+                                <p class="text-sm text-muted-foreground mb-4">
+                                    Overlay chrome only — headers, map tools, search. None is solid; tinted is a faint hint of the selected colour; glass is a clear pane with a sheen — not frost. Content cards stay grey.
+                                </p>
+                                <div class="flex flex-wrap gap-2">
+                                    {#each SURFACE_OPTIONS as opt (opt.value)}
                                         <button
                                             type="button"
                                             onclick={() =>
                                                 setThemePreference(
-                                                    "blur",
+                                                    "surface",
                                                     opt.value,
                                                 )}
-                                            class="rounded-md border px-3 py-1.5 text-sm transition-colors {themePrefs.blur ===
-                                            opt.value
-                                                ? 'border-foreground bg-secondary text-foreground'
-                                                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                            class="rounded-md border py-1.5 text-sm transition-colors {choiceClass(
+                                                themePrefs.surface ===
+                                                    opt.value,
+                                            )}"
                                         >
                                             {opt.label}
                                         </button>
@@ -2055,6 +2148,8 @@
                                 </div>
                             </section>
                         </div>
+                    {:else if tabValue === "keyboard"}
+                        <KeyboardSettings />
                     {:else if tabValue === "security"}
                         <div class="space-y-6 w-full">
                             <section>

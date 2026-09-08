@@ -94,7 +94,7 @@
 </script>
 
 <form
-    class="pointer-events-auto flex max-h-[min(22rem,45vh)] min-h-0 w-60 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background/95 text-xs shadow-lg backdrop-blur-sm"
+    class="surface pointer-events-auto flex max-h-[min(22rem,45vh)] min-h-0 w-60 shrink-0 flex-col overflow-hidden rounded-lg border border-border text-xs shadow-lg"
     onsubmit={(e) => {
         e.preventDefault();
         confirm();
@@ -138,7 +138,7 @@
                     ? "No editable attribute columns on this table."
                     : attrOnly
                       ? "No attribute columns."
-                      : "No attribute columns. Save to keep geometry in the session buffer."}
+                      : "No attribute columns. Add to keep geometry in this session."}
             </p>
         {:else}
             {#each fields as name (name)}
@@ -166,10 +166,8 @@
 
     <div class="flex shrink-0 justify-end gap-1.5 border-t border-border p-2">
         <Button variant="ghost" size="sm" type="button" onclick={cancel}
-            >{mode === "edit" ? "Cancel" : "Discard"}</Button
+            >Discard</Button
         >
-        <Button size="sm" type="submit"
-            >{mode === "edit" ? "Save to buffer" : "Add to buffer"}</Button
-        >
+        <Button size="sm" type="submit">Add</Button>
     </div>
 </form>
