@@ -36,11 +36,19 @@
         crm_range: string | null;
     };
 
-    const SHARED_VOCABS = ["periodo", "aat", "crm"] as const;
+    const SHARED_VOCABS = ["periodo", "aat", "crm", "lithology", "soil-color"] as const;
 
     function sharedVocabName(name: string | null | undefined): string | null {
         const v = (name ?? "").trim().toLowerCase();
-        if (v === "periodo" || v === "aat" || v === "crm") return v;
+        if (
+            v === "periodo" ||
+            v === "aat" ||
+            v === "crm" ||
+            v === "lithology" ||
+            v === "soil-color"
+        ) {
+            return v;
+        }
         return null;
     }
 
@@ -326,6 +334,10 @@
         vocabResults = [];
 
         async function fetchVocab(vocab: string): Promise<VocabResult[]> {
+            const warming =
+                vocab === "periodo" ||
+                vocab === "aat" ||
+                vocab === "lithology";
             const budget = vocab === "periodo" ? 90_000 : 12_000;
             const deadline = Date.now() + budget;
             while (!ctrl.signal.aborted) {
@@ -340,7 +352,7 @@
                 }
                 if (
                     res.status === 503 &&
-                    vocab === "periodo" &&
+                    warming &&
                     Date.now() < deadline
                 ) {
                     vocabWarming = true;

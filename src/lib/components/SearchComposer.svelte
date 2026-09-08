@@ -624,18 +624,34 @@
         return 6;
     }
 
-    function sortByCloseness(items: MenuItem[], q = value.trim()): MenuItem[] {
+    function sortQuery(): string {
+        return mentionOpen ? mentionQuery.trim() : value.trim();
+    }
+
+    function sortByCloseness(items: MenuItem[], q = sortQuery()): MenuItem[] {
         return [...items].sort((a, b) => {
             const ra = labelMatchRank(q, omniboxItemLabel(a));
             const rb = labelMatchRank(q, omniboxItemLabel(b));
             if (ra !== rb) return ra - rb;
+            const la = omniboxItemLabel(a);
+            const lb = omniboxItemLabel(b);
+            if (la.length !== lb.length) return la.length - lb.length;
             return omniboxKindRank(a) - omniboxKindRank(b);
         });
     }
 
+    function rankedHits(items: MenuItem[], q = sortQuery()): MenuItem[] {
+        const query = q.trim();
+        const sorted = sortByCloseness(items, query);
+        if (!query) return sorted;
+        return sorted.filter(
+            (item) => labelMatchRank(query, omniboxItemLabel(item)) < 9,
+        );
+    }
+
     function mixedOmniboxItems(): MenuItem[] {
         if (scopedSlug) {
-            return sortByCloseness([
+            return rankedHits([
                 ...layerItems(),
                 ...artefactItems(),
                 ...cellItems(),
@@ -646,7 +662,7 @@
                 ...projectItems("geo"),
             ]);
         }
-        return sortByCloseness([
+        return rankedHits([
             ...projectItems("name"),
             ...periodItems(),
             ...conceptItems(),
@@ -673,7 +689,7 @@
                 hint: k.hint,
             }));
             if (q.length >= 2 && kinds.length === 0) {
-                return sortByCloseness(
+                return rankedHits(
                     [
                         ...layerItems(),
                         ...entityItems(),
@@ -686,7 +702,7 @@
             return [
                 ...kindItems,
                 ...(q.length >= 2
-                    ? sortByCloseness(
+                    ? rankedHits(
                           [
                               ...layerItems(),
                               ...entityItems(),
@@ -732,40 +748,33 @@
                     : [];
             const projects = projectItems();
             const entities = scopedSlug ? entityItems() : [];
+            const extra = rankedHits(
+                [...entities, ...projects, ...tagHits, ...termHits, ...placeItems()],
+                q,
+            );
             // Bare `@slug` (no kind prefix) — project hits first so Tab chips the project
             if (q.length >= 2 && kinds.length === 0) {
-                return [
-                    ...entities,
-                    ...projects,
-                    ...tagHits,
-                    ...termHits,
-                    ...placeItems(),
-                ];
+                return extra;
             }
-            return [
-                ...kinds,
-                ...entities,
-                ...projects,
-                ...tagHits,
-                ...termHits,
-                ...placeItems(),
-            ];
+            return [...kinds, ...extra];
         }
         if (mentionMode === "tag") {
-            return tagSuggestions.map((t) => ({
-                kind: "value" as const,
-                id: `tag:${t}`,
-                label: t,
-                mode: "tag" as const,
-            }));
+            return rankedHits(
+                tagSuggestions.map((t) => ({
+                    kind: "value" as const,
+                    id: `tag:${t}`,
+                    label: t,
+                    mode: "tag" as const,
+                })),
+            );
         }
-        if (mentionMode === "place") return placeItems();
-        if (mentionMode === "project") return projectItems();
-        if (mentionMode === "entity") return entityItems();
-        if (mentionMode === "layer") return layerItems();
-        if (mentionMode === "artefact") return artefactItems();
+        if (mentionMode === "place") return rankedHits(placeItems());
+        if (mentionMode === "project") return rankedHits(projectItems());
+        if (mentionMode === "entity") return rankedHits(entityItems());
+        if (mentionMode === "layer") return rankedHits(layerItems());
+        if (mentionMode === "artefact") return rankedHits(artefactItems());
         if (mentionMode === "row") return rowItems();
-        return [
+        return rankedHits([
             ...conceptItems(),
             ...termSuggestions.map((t) => ({
                 kind: "value" as const,
@@ -773,7 +782,7 @@
                 label: t,
                 mode: "vocab" as const,
             })),
-        ];
+        ]);
     });
 
     function ghostFill(item: MenuItem): string | null {
@@ -2417,8 +2426,8 @@
                           layer: activeLayer,
                       })
                     : Promise.resolve({ layers: [], artefacts: [], values: [] }),
-                searchTerms(prefix, { kind: "period", limit: 8 }),
-                searchTerms(prefix, { kind: "concept", limit: 8 }),
+                searchTerms(prefix, { kind: "period", limit: 16 }),
+                searchTerms(prefix, { kind: "concept", limit: 16 }),
             ]);
             if (req !== placesReq) return;
             placeHits = omnibox.places;
@@ -2501,7 +2510,7 @@
                 jobs.push(
                     (async () => {
                         const res = await fetch(
-                            `/api/v1/search/lexicon/tags?prefix=${encodeURIComponent(prefix)}&limit=20`,
+                            `/api/v1/search/lexicon/tags?prefix=${encodeURIComponent(prefix)}&limit=32`,
                         );
                         if (!res.ok) throw new Error(String(res.status));
                         const data = (await res.json()) as { tags?: string[] };
@@ -2515,7 +2524,7 @@
                 jobs.push(
                     (async () => {
                         const res = await fetch(
-                            `/api/v1/search/lexicon/terms?prefix=${encodeURIComponent(prefix)}&limit=20`,
+                            `/api/v1/search/lexicon/terms?prefix=${encodeURIComponent(prefix)}&limit=32`,
                         );
                         if (!res.ok) throw new Error(String(res.status));
                         const data = (await res.json()) as { terms?: string[] };
@@ -2530,7 +2539,7 @@
                     (async () => {
                         conceptHits = await searchTerms(prefix, {
                             kind: "concept",
-                            limit: 8,
+                            limit: 16,
                         });
                     })(),
                 );
@@ -2879,7 +2888,7 @@
             </div>
         {/if}
         <div
-            class="search-vt-bar relative z-10 flex w-full min-h-11 items-center rounded-xl border border-border py-1.5 pl-10 pr-12 surface shadow-lg focus-within:border-primary {dragOver
+            class="search-vt-bar relative z-10 flex w-full min-h-11 items-center rounded-2xl border border-border py-1.5 pl-10 pr-12 surface shadow-lg focus-within:border-primary {dragOver
                 ? 'ring-2 ring-primary/40'
                 : ''} {klass}"
             onclick={() => inputEl?.focus()}
@@ -2981,7 +2990,7 @@
             <div
                 id={listboxId}
                 role="listbox"
-                class="surface absolute left-0 right-0 top-full z-[1100] mt-1 overflow-hidden rounded-xl border border-border shadow-lg"
+                class="surface absolute left-0 right-0 top-full z-[1100] mt-1.5 overflow-hidden rounded-2xl border border-border shadow-lg"
                 transition:slide={{
                     duration: reduceMotion ? 0 : 220,
                     axis: "y",
@@ -2989,7 +2998,7 @@
             >
                 {#if mentionOpen}
                     <div
-                        class="border-b border-border px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                        class="border-b border-border px-3.5 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
                     >
                         {#if mentionMode === "kinds" && mentionOpen}
                             Add filter
@@ -3018,7 +3027,7 @@
                         {/if}
                     </div>
                 {/if}
-                <div class="max-h-64 overflow-y-auto p-1">
+                <div class="max-h-64 overflow-y-auto p-1.5">
                     {#if (loading || loadingPlaces) && menuItems.length === 0}
                         <p class="px-2.5 py-3 text-xs text-muted-foreground">
                             Loading…
@@ -3095,7 +3104,7 @@
                             {#if item.kind === "period" || item.kind === "concept"}
                                 <div
                                     role="group"
-                                    class="flex w-full items-center gap-0.5 rounded-lg {i ===
+                                    class="flex w-full items-center gap-0.5 rounded-xl {i ===
                                     activeHighlight
                                         ? 'selected'
                                         : 'hover:bg-muted/70'}"
@@ -3179,7 +3188,7 @@
                                 type="button"
                                 role="option"
                                 aria-selected={i === activeHighlight}
-                                class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm {i ===
+                                class="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm {i ===
                                 activeHighlight
                                     ? 'selected'
                                     : 'hover:bg-muted/70'}"

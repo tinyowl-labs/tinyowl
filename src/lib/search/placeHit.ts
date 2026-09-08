@@ -65,10 +65,10 @@ export function labelMatchRank(query: string, label: string): number {
 	if (!q || !n) return 9;
 	if (n === q) return 0;
 	const words = n.split(/[\s,/()·.–_-]+/).filter(Boolean);
-	if words.some((w) => w === q)) return 1;
+	if (words.some((w) => w === q)) return 1;
 	if (n.startsWith(q)) return 2;
 	if (words.some((w) => w.startsWith(q))) return 3;
-	if (q.length >= 3 && n.includes(q)) return 4;
+	if (q.length >= 4 && n.includes(q)) return 4;
 	return 9;
 }
 

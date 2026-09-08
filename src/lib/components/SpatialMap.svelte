@@ -890,7 +890,7 @@
                 const L = await loadLeafletWithCluster();
                 if (cancelled || !container) return;
 
-                const m = createLeafletMap(L, container);
+                const m = createLeafletMap(L, container, { wrapLng: true });
                 const stopResize = observeLeafletResize(m, container);
                 resultsPolygons = L.featureGroup().addTo(m);
                 resultsCluster = createClusterGroup(L, {

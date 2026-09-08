@@ -155,23 +155,14 @@
 			{/if}
 		</div>
 
-		<nav class="flex shrink-0 items-center gap-1">
-			{#if path !== "/"}
-				<button
-					type="button"
-					onclick={() => searchOverlay.show()}
-					class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-					aria-keyshortcuts={ariaKeyshortcuts(searchChord, isMac)}
-					aria-label="Open search"
-					title="Search"
-				>
-					<SearchIcon class="size-4" />
-				</button>
+		<nav class="flex h-7 shrink-0 items-center gap-1">
+			{#if presenceChrome.active}
+				<PresenceDock peers={presenceChrome.peers} />
 			{/if}
 			{#if hasSession}
 				<a
 					href="/inbox"
-					class="relative rounded-md p-1.5 text-muted-foreground no-underline hover:text-foreground hover:bg-accent transition-colors"
+					class="relative inline-flex size-7 items-center justify-center rounded-md text-muted-foreground no-underline hover:text-foreground hover:bg-accent transition-colors"
 					aria-label={inboxUnread > 0
 						? `Inbox, ${inboxUnread} unread`
 						: "Inbox"}
@@ -186,9 +177,16 @@
 					{/if}
 				</a>
 			{/if}
-			{#if presenceChrome.active}
-				<PresenceDock peers={presenceChrome.peers} />
-			{/if}
+			<button
+				type="button"
+				onclick={() => searchOverlay.show()}
+				class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+				aria-keyshortcuts={ariaKeyshortcuts(searchChord, isMac)}
+				aria-label="Open search"
+				title="Search"
+			>
+				<SearchIcon class="size-4" />
+			</button>
 			{#if hasSession}
 				<div class="group/profile relative">
 					<a

@@ -8,6 +8,7 @@ import type {
 	MarkerClusterGroupOptions,
 } from "leaflet";
 import {
+	OSM_MAX_LAT,
 	OSM_MAX_ZOOM,
 	OSM_MIN_ZOOM,
 	OSM_TILE_SIZE,
@@ -21,6 +22,8 @@ export type LeafletNS = typeof import("leaflet");
 export type LeafletMapOpts = {
 	interactive?: boolean;
 	zoomControl?: boolean;
+	/** Repeat tiles east-west so the home world map can pan around. */
+	wrapLng?: boolean;
 };
 
 export type ClusterOpts = {
@@ -89,9 +92,14 @@ export function createClusterGroup(
 	return L.markerClusterGroup(groupOpts);
 }
 
-/** Raise min zoom so the world always covers the pane (no grey gutters). */
-function minZoomToCover(width: number, height: number): number {
-	const span = Math.max(width, height, 1);
+/** Raise min zoom so the world always covers the pane (no grey gutters).
+ *  With wrapLng, only the vertical span matters — copies fill the width. */
+function minZoomToCover(
+	width: number,
+	height: number,
+	wrapLng = false,
+): number {
+	const span = Math.max(wrapLng ? height : Math.max(width, height), 1);
 	const needed = Math.log2(span / OSM_TILE_SIZE);
 	if (!Number.isFinite(needed)) return OSM_MIN_ZOOM;
 	return Math.min(
@@ -100,12 +108,26 @@ function minZoomToCover(width: number, height: number): number {
 	);
 }
 
+function wrapLongitude(map: LeafletMap): boolean {
+	return map.options.maxBounds == null;
+}
+
+function clampMapLatitude(map: LeafletMap) {
+	const c = map.getCenter();
+	const lat = Math.min(OSM_MAX_LAT, Math.max(-OSM_MAX_LAT, c.lat));
+	if (Math.abs(lat - c.lat) > 1e-4) {
+		map.panTo([lat, c.lng], { animate: false });
+	}
+}
+
 function constrainLeafletView(map: LeafletMap, el: HTMLElement) {
-	const z = minZoomToCover(el.clientWidth, el.clientHeight);
+	const wrapLng = wrapLongitude(map);
+	const z = minZoomToCover(el.clientWidth, el.clientHeight, wrapLng);
 	if (map.getMinZoom() !== z) map.setMinZoom(z);
 	if (map.getZoom() < z) map.setZoom(z);
 	const bounds = map.options.maxBounds;
 	if (bounds) map.panInsideBounds(bounds, { animate: false });
+	else clampMapLatitude(map);
 }
 
 export function createLeafletMap(
@@ -114,7 +136,8 @@ export function createLeafletMap(
 	opts: LeafletMapOpts = {},
 ): LeafletMap {
 	const interactive = opts.interactive !== false;
-	const zoom = minZoomToCover(el.clientWidth, el.clientHeight);
+	const wrapLng = opts.wrapLng === true;
+	const zoom = minZoomToCover(el.clientWidth, el.clientHeight, wrapLng);
 	const mapOpts: MapOptions = {
 		attributionControl: false,
 		zoomControl: opts.zoomControl ?? false,
@@ -128,22 +151,26 @@ export function createLeafletMap(
 		zoom,
 		minZoom: OSM_MIN_ZOOM,
 		maxZoom: OSM_MAX_ZOOM,
-		maxBounds: OSM_WORLD_BOUNDS,
-		maxBoundsViscosity: 1,
-		worldCopyJump: false,
+		worldCopyJump: wrapLng,
 	};
+	if (!wrapLng) {
+		mapOpts.maxBounds = OSM_WORLD_BOUNDS;
+		mapOpts.maxBoundsViscosity = 1;
+	}
 	const map = L.map(el, mapOpts);
 	L.tileLayer(OSM_TILE_URL, {
 		subdomains: OSM_TILE_SUBDOMAINS,
 		minZoom: OSM_MIN_ZOOM,
 		maxZoom: OSM_MAX_ZOOM,
-		bounds: OSM_WORLD_BOUNDS,
-		noWrap: true,
+		...(wrapLng
+			? {}
+			: { bounds: OSM_WORLD_BOUNDS, noWrap: true }),
 	}).addTo(map);
 
 	map.on("drag zoomend", () => {
 		const bounds = map.options.maxBounds;
 		if (bounds) map.panInsideBounds(bounds, { animate: false });
+		else clampMapLatitude(map);
 	});
 
 	if (!interactive) {
