@@ -55,6 +55,8 @@
         periodLabel?: string | null;
         conceptUri?: string | null;
         subjectLabel?: string | null;
+        matchClose?: boolean;
+        matchNarrower?: boolean;
         results: DiscoveryProject[];
         /** When false, temporal + viewport filters stay client-side (home browse). */
         persistFilters?: boolean;
@@ -92,6 +94,8 @@
         periodLabel = null,
         conceptUri = null,
         subjectLabel = null,
+        matchClose = false,
+        matchNarrower = false,
         results,
         persistFilters = false,
         onTemporalCommit,
@@ -321,6 +325,8 @@
                     {periodLabel}
                     {conceptUri}
                     {subjectLabel}
+                    {matchClose}
+                    {matchNarrower}
                     {accessToken}
                     {autofocus}
                     {examples}

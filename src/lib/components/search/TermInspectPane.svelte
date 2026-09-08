@@ -11,9 +11,21 @@
         doc: TermInspectDoc | null;
         loading?: boolean;
         empty?: string | null;
+        allowMatch?: boolean;
+        matchClose?: boolean;
+        matchNarrower?: boolean;
+        onMatchChange?: (next: { close: boolean; narrower: boolean }) => void;
     };
 
-    let { doc, loading = false, empty = null }: Props = $props();
+    let {
+        doc,
+        loading = false,
+        empty = null,
+        allowMatch = false,
+        matchClose = false,
+        matchNarrower = false,
+        onMatchChange,
+    }: Props = $props();
 
     const subtitle = $derived.by(() => {
         if (!doc) return "";
@@ -43,6 +55,22 @@
         ...(doc?.broad_match ?? []),
     ]);
     const members = $derived(doc?.members ?? []);
+    const canClose = $derived((doc?.close_match ?? []).length > 0);
+    const canNarrow = $derived((doc?.narrower ?? []).length > 0);
+
+    function normalizeTermUri(uri: string): string {
+        return uri
+            .trim()
+            .replace(/\/+$/, "")
+            .replace(/^https:/i, "http:")
+            .toLowerCase();
+    }
+
+    function isHubRef(uri: string): boolean {
+        const hub = doc?.hub?.trim();
+        if (!hub) return false;
+        return normalizeTermUri(uri) === normalizeTermUri(hub);
+    }
 
     function refLabel(ref: TermRef): string {
         const label = ref.label?.trim();
@@ -78,6 +106,13 @@
                 >
                     {doc.uri}
                 </p>
+                {#if doc.hub && !isHubRef(doc.uri)}
+                    <p
+                        class="font-mono text-[10px] text-muted-foreground break-all"
+                    >
+                        Hub · {doc.hub}
+                    </p>
+                {/if}
             </div>
 
             {#if doc.scope_note}
@@ -139,7 +174,9 @@
                     <ul class="mt-0.5 space-y-0.5">
                         {#each clique as ref (ref.uri)}
                             <li class="min-w-0 truncate" title={ref.uri}>
-                                {refLabel(ref)}
+                                {refLabel(ref)}{isHubRef(ref.uri)
+                                    ? " (hub)"
+                                    : ""}
                             </li>
                         {/each}
                     </ul>
@@ -163,6 +200,49 @@
                     <p class="mt-1 text-[10px] text-muted-foreground">
                         Not applied to search
                     </p>
+                </div>
+            {/if}
+
+            {#if allowMatch && (canClose || canNarrow)}
+                <div>
+                    {#if canClose}
+                        <label
+                            class="mt-1 flex items-center gap-2 text-[11px] text-foreground"
+                        >
+                            <input
+                                type="checkbox"
+                                checked={matchClose}
+                                onclick={(e) => e.stopPropagation()}
+                                onchange={(e) => {
+                                    e.stopPropagation();
+                                    onMatchChange?.({
+                                        close: e.currentTarget.checked,
+                                        narrower: matchNarrower,
+                                    });
+                                }}
+                            />
+                            Include close matches
+                        </label>
+                    {/if}
+                    {#if canNarrow}
+                        <label
+                            class="mt-1 flex items-center gap-2 text-[11px] text-foreground"
+                        >
+                            <input
+                                type="checkbox"
+                                checked={matchNarrower}
+                                onclick={(e) => e.stopPropagation()}
+                                onchange={(e) => {
+                                    e.stopPropagation();
+                                    onMatchChange?.({
+                                        close: matchClose,
+                                        narrower: e.currentTarget.checked,
+                                    });
+                                }}
+                            />
+                            Include narrower
+                        </label>
+                    {/if}
                 </div>
             {/if}
 

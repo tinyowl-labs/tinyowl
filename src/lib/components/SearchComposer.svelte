@@ -181,6 +181,10 @@
         conceptUri?: string | null;
         /** AAT prefLabel restored from `?subject=` */
         subjectLabel?: string | null;
+        /** Opt-in closeMatch expansion (`?match=close`). */
+        matchClose?: boolean;
+        /** Opt-in narrower expansion (`?match=narrower`). */
+        matchNarrower?: boolean;
         /** Combobox listbox id (overlay vs page to avoid duplicate ids). */
         listboxId?: string;
         /**
@@ -222,6 +226,8 @@
         periodLabel = null,
         conceptUri = null,
         subjectLabel = null,
+        matchClose = false,
+        matchNarrower = false,
         listboxId = "search-mention-list",
         palette = false,
         bare = false,
@@ -318,6 +324,9 @@
             ? { title: subjectLabel, uri: conceptUri ?? "" }
             : null,
     );
+    let pendingMatchURI = $state("");
+    let pendingMatchClose = $state(false);
+    let pendingMatchNarrower = $state(false);
     let appliedPlaceLabel = $state<string | null>(null);
     let projectChipTitles = $state<Record<string, string>>({});
     /** Mentions chipped locally (e.g. `@slug `) before Enter navigates. */
@@ -1025,6 +1034,8 @@
         periodLabel?: string | null;
         conceptUri?: string | null;
         subjectLabel?: string | null;
+        matchClose?: boolean;
+        matchNarrower?: boolean;
     }) {
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
@@ -1040,11 +1051,26 @@
             next.termUri !== undefined || next.periodLabel !== undefined;
         const applyingConcept =
             next.conceptUri !== undefined || next.subjectLabel !== undefined;
+        const applyingMatch =
+            next.matchClose !== undefined || next.matchNarrower !== undefined;
+        const nextMatchClose =
+            next.matchClose !== undefined
+                ? next.matchClose
+                : applyingConcept
+                  ? false
+                  : matchClose;
+        const nextMatchNarrower =
+            next.matchNarrower !== undefined
+                ? next.matchNarrower
+                : applyingConcept
+                  ? false
+                  : matchNarrower;
         if (
             nextProjects.length === 1 &&
             !applyingDates &&
             !applyingPeriod &&
-            !applyingConcept
+            !applyingConcept &&
+            !applyingMatch
         ) {
             const slug = nextProjects[0]!;
             const placeBBox = nextBBox;
@@ -1124,6 +1150,8 @@
                     next.subjectLabel !== undefined
                         ? next.subjectLabel
                         : (conceptChip?.title ?? subjectLabel ?? null),
+                matchClose: nextMatchClose,
+                matchNarrower: nextMatchNarrower,
                 semantic: semantic ? undefined : false,
                 mediaHash:
                     next.mediaHash !== undefined
@@ -1788,14 +1816,34 @@
         closeMention();
         abortSuggestions();
         value = "";
+        const pending = pendingMatchURI === hit.uri;
         if (atSearch || palette) {
             navigate({
                 q: "",
-                conceptUri: hit.uri,
+                conceptUri: hit.hub_uri || hit.uri,
                 subjectLabel: hit.label,
+                matchClose: pending ? pendingMatchClose : false,
+                matchNarrower: pending ? pendingMatchNarrower : false,
             });
         }
+        pendingMatchURI = "";
+        pendingMatchClose = false;
+        pendingMatchNarrower = false;
         queueMicrotask(() => inputEl?.focus());
+    }
+
+    function removeConcept() {
+        if (atSearch) {
+            navigate({
+                conceptUri: null,
+                subjectLabel: null,
+                matchClose: false,
+                matchNarrower: false,
+            });
+        }
+        pendingMatchURI = "";
+        pendingMatchClose = false;
+        pendingMatchNarrower = false;
     }
 
     function removePeriod() {
@@ -1805,15 +1853,6 @@
                 dateTo: null,
                 termUri: null,
                 periodLabel: null,
-            });
-        }
-    }
-
-    function removeConcept() {
-        if (atSearch) {
-            navigate({
-                conceptUri: null,
-                subjectLabel: null,
             });
         }
     }
@@ -2662,6 +2701,14 @@
                                 label={conceptChip.title}
                                 title="Inspect subject"
                                 class="min-w-0 max-w-[13rem] hover:bg-transparent"
+                                allowMatch
+                                {matchClose}
+                                {matchNarrower}
+                                onMatchChange={(next) =>
+                                    navigate({
+                                        matchClose: next.close,
+                                        matchNarrower: next.narrower,
+                                    })}
                             >
                                 <BookMarkedIcon
                                     class="size-3 shrink-0 text-muted-foreground"
@@ -3014,6 +3061,27 @@
                                         uri={item.hit.uri}
                                         label={item.hit.label}
                                         class="mr-1.5"
+                                        allowMatch={item.kind !== "period"}
+                                        matchClose={
+                                            pendingMatchURI === item.hit.uri
+                                                ? pendingMatchClose
+                                                : false
+                                        }
+                                        matchNarrower={
+                                            pendingMatchURI === item.hit.uri
+                                                ? pendingMatchNarrower
+                                                : false
+                                        }
+                                        onOpen={(inspectUri) => {
+                                            pendingMatchURI = inspectUri;
+                                            pendingMatchClose = false;
+                                            pendingMatchNarrower = false;
+                                        }}
+                                        onMatchChange={(next) => {
+                                            pendingMatchURI = item.hit.uri;
+                                            pendingMatchClose = next.close;
+                                            pendingMatchNarrower = next.narrower;
+                                        }}
                                     />
                                 </div>
                             {:else}

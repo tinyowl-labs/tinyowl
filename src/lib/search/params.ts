@@ -42,6 +42,10 @@ export type SearchParams = {
   conceptUri: string | null;
   /** AAT prefLabel for the chip (`?subject=`), display-only. */
   subjectLabel: string | null;
+  /** Opt-in closeMatch expansion (`?match=close`), inspect only. */
+  matchClose: boolean;
+  /** Opt-in immediate narrower expansion (`?match=narrower`), inspect only. */
+  matchNarrower: boolean;
 };
 
 export const DEFAULT_SEARCH_RADIUS = 5000;
@@ -78,6 +82,20 @@ function parseListParam(sp: URLSearchParams, key: string): string[] {
   return out;
 }
 
+function parseMatchFlags(sp: URLSearchParams): {
+  matchClose: boolean;
+  matchNarrower: boolean;
+} {
+  let matchClose = false;
+  let matchNarrower = false;
+  for (const raw of sp.getAll("match")) {
+    const v = raw.trim().toLowerCase();
+    if (v === "close") matchClose = true;
+    if (v === "narrower" || v === "narrow") matchNarrower = true;
+  }
+  return { matchClose, matchNarrower };
+}
+
 export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
   const sp = url instanceof URL ? url.searchParams : url;
   const q = sp.get("q")?.trim() ?? "";
@@ -111,6 +129,7 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
   const imageFlag = (sp.get("image") ?? "").trim().toLowerCase();
   const imageQuery =
     imageFlag === "1" || imageFlag === "true" || imageFlag === "yes";
+  const { matchClose, matchNarrower } = parseMatchFlags(sp);
 
   return {
     q,
@@ -132,6 +151,8 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     periodLabel: (sp.get("period") ?? "").trim() || null,
     conceptUri: (sp.get("concept") ?? "").trim() || null,
     subjectLabel: (sp.get("subject") ?? "").trim() || null,
+    matchClose,
+    matchNarrower,
   };
 }
 
@@ -155,6 +176,8 @@ export function buildSearchParams(input: {
   periodLabel?: string | null;
   conceptUri?: string | null;
   subjectLabel?: string | null;
+  matchClose?: boolean | null;
+  matchNarrower?: boolean | null;
 }): URLSearchParams {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
@@ -246,6 +269,8 @@ export function buildSearchParams(input: {
   if (concept) params.set("concept", concept);
   const subject = (input.subjectLabel ?? "").trim();
   if (subject) params.set("subject", subject);
+  if (concept && input.matchClose) params.append("match", "close");
+  if (concept && input.matchNarrower) params.append("match", "narrower");
 
   return params;
 }

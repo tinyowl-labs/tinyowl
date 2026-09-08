@@ -14,6 +14,11 @@
         class?: string;
         align?: "start" | "center" | "end";
         children?: Snippet;
+        allowMatch?: boolean;
+        matchClose?: boolean;
+        matchNarrower?: boolean;
+        onMatchChange?: (next: { close: boolean; narrower: boolean }) => void;
+        onOpen?: (uri: string) => void;
     };
 
     let {
@@ -23,6 +28,11 @@
         class: klass = "",
         align = "end",
         children,
+        allowMatch = false,
+        matchClose = false,
+        matchNarrower = false,
+        onMatchChange,
+        onOpen,
     }: Props = $props();
 
     let open = $state(false);
@@ -80,6 +90,7 @@
     function handleOpenChange(next: boolean) {
         open = next;
         if (next) {
+            onOpen?.(uri);
             void loadInspect();
         } else {
             requestId += 1;
@@ -124,7 +135,16 @@
         onOpenAutoFocus={keepMenu}
         onCloseAutoFocus={stopApply}
         onmousedown={stopApply}
+        onclick={stopApply}
     >
-        <TermInspectPane {doc} {loading} {empty} />
+        <TermInspectPane
+            {doc}
+            {loading}
+            {empty}
+            {allowMatch}
+            {matchClose}
+            {matchNarrower}
+            {onMatchChange}
+        />
     </Popover.Content>
 </Popover.Root>

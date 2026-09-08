@@ -13,6 +13,7 @@ export type TermHit = {
 	spatial?: string;
 	start_year?: number;
 	end_year?: number;
+	hub_uri?: string;
 };
 
 export type TermRef = {
@@ -48,6 +49,7 @@ export type TermInspectDoc = {
 	spatial?: string;
 	start_year?: number;
 	end_year?: number;
+	hub?: string;
 	provenance: string;
 };
 

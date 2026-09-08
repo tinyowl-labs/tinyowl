@@ -74,5 +74,7 @@ export type DiscoveryPageData = {
   periodLabel: string | null;
   conceptUri: string | null;
   subjectLabel: string | null;
+  matchClose: boolean;
+  matchNarrower: boolean;
   accessToken: string | null;
 };

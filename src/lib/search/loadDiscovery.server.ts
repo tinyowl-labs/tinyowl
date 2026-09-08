@@ -225,6 +225,8 @@ export async function loadDiscoverySearch(
     for (const t of parsed.tags) params.append("tag", t);
     for (const v of parsed.vocabularies) params.append("vocab", v);
     if (parsed.conceptUri) params.append("vocab", parsed.conceptUri);
+    if (parsed.matchClose) params.append("match", "close");
+    if (parsed.matchNarrower) params.append("match", "narrower");
     for (const p of parsed.projects) params.append("project", p);
 
     try {
@@ -284,6 +286,8 @@ export async function loadDiscoverySearch(
     periodLabel: parsed.periodLabel,
     conceptUri: parsed.conceptUri,
     subjectLabel: parsed.subjectLabel,
+    matchClose: parsed.matchClose,
+    matchNarrower: parsed.matchNarrower,
     accessToken,
   };
 }
@@ -388,6 +392,8 @@ export async function loadHomeDiscovery(args: LoadArgs): Promise<DiscoveryPageDa
     periodLabel: null,
     conceptUri: null,
     subjectLabel: null,
+    matchClose: false,
+    matchNarrower: false,
     accessToken,
   };
 }

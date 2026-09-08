@@ -64,6 +64,19 @@
 	const urlSubject = $derived(
 		($page.url.searchParams.get("subject") ?? "").trim() || null,
 	);
+	const urlMatchClose = $derived(
+		$page.url.searchParams
+			.getAll("match")
+			.some((v) => v.trim().toLowerCase() === "close"),
+	);
+	const urlMatchNarrower = $derived(
+		$page.url.searchParams
+			.getAll("match")
+			.some((v) => {
+				const k = v.trim().toLowerCase();
+				return k === "narrower" || k === "narrow";
+			}),
+	);
 	const urlDateFrom = $derived.by(() => {
 		const n = Number($page.url.searchParams.get("date_from"));
 		return Number.isFinite(n) ? n : null;
@@ -146,6 +159,8 @@
 					periodLabel={urlPeriod}
 					conceptUri={urlConcept}
 					subjectLabel={urlSubject}
+					matchClose={urlMatchClose}
+					matchNarrower={urlMatchNarrower}
 					dateFrom={urlDateFrom}
 					dateTo={urlDateTo}
 					placeholder={scopeSlug

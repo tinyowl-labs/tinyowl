@@ -63,12 +63,12 @@ No authentication required.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1/search` | Full-text + semantic search across projects. `?q=, bbox=, date_from=, date_to=, tags=, semantic=0\|1, limit=` |
+| `GET` | `/api/v1/search` | Full-text + semantic search across projects. `?q=, bbox=, date_from=, date_to=, tags=, vocab=, match=close\|narrower, semantic=0\|1, limit=`. URI `vocab=` expands the exactMatch clique (OR). |
 | `GET` | `/api/v1/search/lexicon` | List periods from PeriodO vocabulary |
 | `GET` | `/api/v1/search/lexicon/tags?prefix=` | Tag autocomplete |
 | `GET` | `/api/v1/search/lexicon/terms?prefix=` | Mapped value autocomplete |
 | `GET` | `/api/v1/terms?q=&kind=period\|concept\|material\|object_type\|style\|monument\|event&limit=` | Catalog typeahead. PeriodO when `kind` is omitted or `period` (`start_year` / `end_year`). AAT + FISH as `kind=concept` (or a facet: materials / objects / styles / monument types / events). 503 while warming. |
-| `GET` | `/api/v1/terms/inspect?uri=` | Typed context for one catalog URI: label, scheme/facet, scope note, altLabels, broader/narrower, identity clique, PeriodO same-label members, provenance. 404 if unknown; 503 while warming. Does not expand `match=`. |
+| `GET` | `/api/v1/terms/inspect?uri=` | Typed context for one catalog URI: label, scheme/facet, scope note, altLabels, broader/narrower, identity clique (`hub` first), PeriodO same-label members, provenance. 404 if unknown; 503 while warming. Does not apply `match=`; inspect UI writes `match=close\|narrower` on `/search`. |
 | `GET` | `/api/v1/vocab/search?q=&vocab=periodo\|aat\|crm&limit=` | Search external vocabularies |
 | `GET` | `/api/v1/projects/centroids` | List all projects with centroid coords (map overview) |
 | `GET` | `/api/v1/projects/{slug}` | Get project detail (title, description, bbox, dates, tags, counts, visibility, licence, embargo) |

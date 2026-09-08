@@ -23,8 +23,11 @@ Returns projects the caller can access (public + membership), ranked by text sco
 | `bbox` | string | No | Map-view rectangle `west,south,east,north` (WGS84). Preferred over lat/lng when set |
 | `date_from` | integer | No | Inclusive lower year (negative = BCE). Overlaps project temporal extent |
 | `date_to` | integer | No | Inclusive upper year |
+| `tag` | string | No | Repeatable project-tag facet (AND) |
+| `vocab` | string | No | Repeatable mapped-concept facet (AND across chips). A non-URI value joins on local_value aliases. An http(s) URI is one chip: `concept_uri` IN the exactMatch clique (OR), not AND of members. |
+| `match` | string | No | Repeatable. `close` = 1-hop closeMatch of any clique member; `narrower` = immediate children. Default off. Does not change identity. |
 
-At least one of `q`, (`lat`+`lng`), `bbox`, or (`date_from`/`date_to`) is required.
+At least one of `q`, (`lat`+`lng`), `bbox`, (`date_from`/`date_to`), `tag`, `vocab`, or `project` is required.
 
 ### Response
 

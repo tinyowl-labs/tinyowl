@@ -62,6 +62,8 @@
         periodLabel: string | null;
         conceptUri: string | null;
         subjectLabel: string | null;
+        matchClose: boolean;
+        matchNarrower: boolean;
         browse?: boolean;
     };
 
@@ -121,6 +123,8 @@
             periodLabel: data.periodLabel,
             conceptUri: data.conceptUri,
             subjectLabel: data.subjectLabel,
+            matchClose: data.matchClose,
+            matchNarrower: data.matchNarrower,
         } satisfies SearchParams),
     );
 
@@ -238,6 +242,8 @@
             periodLabel: string | null;
             conceptUri: string | null;
             subjectLabel: string | null;
+            matchClose: boolean;
+            matchNarrower: boolean;
         }> = {},
         nav: { replaceState?: boolean } = {},
     ) {
@@ -306,6 +312,14 @@
                     overrides.subjectLabel !== undefined
                         ? overrides.subjectLabel
                         : data.subjectLabel,
+                matchClose:
+                    overrides.matchClose !== undefined
+                        ? overrides.matchClose
+                        : data.matchClose,
+                matchNarrower:
+                    overrides.matchNarrower !== undefined
+                        ? overrides.matchNarrower
+                        : data.matchNarrower,
                 semantic: data.semantic ? undefined : false,
             }),
             { keepFocus: true, noScroll: true, ...nav },
@@ -474,6 +488,8 @@
     periodLabel={data.periodLabel}
     conceptUri={data.conceptUri}
     subjectLabel={data.subjectLabel}
+    matchClose={data.matchClose}
+    matchNarrower={data.matchNarrower}
     results={displayProjects}
     persistFilters={!data.browse}
     onTemporalCommit={data.browse ? undefined : onTemporalCommit}
