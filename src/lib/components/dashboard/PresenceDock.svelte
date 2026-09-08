@@ -1,6 +1,7 @@
 <script lang="ts">
 	import UserAvatar from "$lib/components/ui/user-avatar.svelte";
 	import { peerCursorColor, type PresencePeer } from "$lib/map-presence";
+	import { MAX_GLOBE_EDITORS, globeEditorsCapped } from "$lib/map-presence-send";
 
 	let {
 		peers = [],
@@ -10,6 +11,7 @@
 
 	const shown = $derived(peers.slice(0, 5));
 	const extra = $derived(Math.max(0, peers.length - shown.length));
+	const capped = $derived(globeEditorsCapped(peers.length + 1));
 </script>
 
 {#if shown.length > 0}
@@ -44,6 +46,14 @@
 				title="{extra} more"
 			>
 				+{extra}
+			</span>
+		{/if}
+		{#if capped}
+			<span
+				class="ml-1 text-[11px] tabular-nums text-muted-foreground"
+				title="Live globe cursors are limited to {MAX_GLOBE_EDITORS} people"
+			>
+				{MAX_GLOBE_EDITORS} live
 			</span>
 		{/if}
 	</div>

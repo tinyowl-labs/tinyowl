@@ -3445,7 +3445,8 @@
             onRoster: (list) => {
                 if (!stopped) presenceRoster = list;
             },
-            node: (id) => presenceCursorNodes.get(id),
+            node: (id, kind) =>
+                presenceCursorNodes.get(kind === "field" ? `field:${id}` : id),
         });
         void connectMapPresence({
             slug,

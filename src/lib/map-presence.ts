@@ -3,7 +3,18 @@ import { createClient } from "$lib/supabase/client";
 import type { EditBufferEntry } from "$lib/geoDiff/types";
 import { asGeometry, compactGeometry } from "$lib/geoDiff/geometry";
 import {
+	CURSOR_THROTTLE_MS,
+	FIELD_EVENT,
+	FIELD_MIN_MOVE_DEG,
+	FIELD_THROTTLE_MS,
+	MIN_MOVE_DEG,
+	createLatestWinsGate,
 	cursorTickPayload,
+	fieldTickPayload,
+	holdsCursorSlot,
+	movedEnough,
+	releaseLatestWins,
+	requestLatestWins,
 	shouldBroadcastPresence,
 } from "$lib/map-presence-send";
 
@@ -11,9 +22,8 @@ const PRESENCE_TOPIC_PREFIX = "presence:";
 const CURSOR_EVENT = "cursor";
 const OVERLAY_EVENT = "overlay";
 const STALE_MS = 15_000;
-const THROTTLE_MS = 32;
+const FIELD_STALE_MS = 30_000;
 const OVERLAY_THROTTLE_MS = 200;
-const MIN_MOVE_DEG = 1e-7;
 export const MAX_OVERLAY_ITEMS = 40;
 
 const CURSOR_COLORS = [
@@ -53,6 +63,9 @@ export type PresencePeer = {
 	lat?: number;
 	h?: number;
 	t?: number;
+	fieldLon?: number;
+	fieldLat?: number;
+	fieldT?: number;
 	tracking_ref?: string;
 	based_on?: string;
 	selection?: PresenceSelection[];
@@ -219,10 +232,7 @@ function cursorMovedEnough(
 	lon: number,
 	lat: number,
 ): boolean {
-	if (!prev) return true;
-	const dlon = lon - prev.lon;
-	const dlat = lat - prev.lat;
-	return dlon * dlon + dlat * dlat >= MIN_MOVE_DEG * MIN_MOVE_DEG;
+	return movedEnough(prev, lon, lat, MIN_MOVE_DEG);
 }
 
 function dropStaleTicks(
@@ -231,13 +241,19 @@ function dropStaleTicks(
 ): boolean {
 	let changed = false;
 	for (const peer of peers.values()) {
-		if (peer.t == null) continue;
-		if (now - peer.t <= STALE_MS) continue;
-		peer.lon = undefined;
-		peer.lat = undefined;
-		peer.h = undefined;
-		peer.t = undefined;
-		changed = true;
+		if (peer.t != null && now - peer.t > STALE_MS) {
+			peer.lon = undefined;
+			peer.lat = undefined;
+			peer.h = undefined;
+			peer.t = undefined;
+			changed = true;
+		}
+		if (peer.fieldT != null && now - peer.fieldT > FIELD_STALE_MS) {
+			peer.fieldLon = undefined;
+			peer.fieldLat = undefined;
+			peer.fieldT = undefined;
+			changed = true;
+		}
 	}
 	return changed;
 }
@@ -325,6 +341,11 @@ export async function connectMapPresence(opts: {
 	let lastSent: { lon: number; lat: number } | null = null;
 	let lastH: number | undefined;
 	let lastSentAt = 0;
+	let lastField: { lon: number; lat: number } | null = null;
+	let lastFieldAt = 0;
+	const cursorGate = createLatestWinsGate();
+	const fieldGate = createLatestWinsGate();
+	let geoWatch: number | null = null;
 	let overlayTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingOverlay: PresenceOverlay | null = null;
 	let lastSlimOverlay: PresenceOverlay | null = null;
@@ -403,17 +424,108 @@ export async function connectMapPresence(opts: {
 		emit();
 	};
 
+	const canSendLive = () =>
+		shouldBroadcastPresence(peers.size) &&
+		holdsCursorSlot(userId, peers.keys());
+
+	const applyField = (tick: CursorTick) => {
+		if (tick.user_id === userId) return;
+		const existing = peers.get(tick.user_id);
+		if (!existing) {
+			peers.set(tick.user_id, {
+				userId: tick.user_id,
+				displayName: "Collaborator",
+				fieldLon: tick.lon,
+				fieldLat: tick.lat,
+				fieldT: tick.t,
+			});
+		} else {
+			existing.fieldLon = tick.lon;
+			existing.fieldLat = tick.lat;
+			existing.fieldT = tick.t;
+		}
+		emit();
+	};
+
+	const dispatchCursor = () => {
+		if (stopped || !pageVisible || !lastSent) {
+			cursorGate.busy = false;
+			cursorGate.queued = false;
+			return;
+		}
+		const now = Date.now();
+		lastSentAt = now;
+		void Promise.resolve(
+			channel.send({
+				type: "broadcast",
+				event: CURSOR_EVENT,
+				payload: cursorTickPayload(
+					userId,
+					lastSent.lon,
+					lastSent.lat,
+					lastH,
+					now,
+				),
+			}),
+		).finally(() => {
+			if (stopped) {
+				cursorGate.busy = false;
+				cursorGate.queued = false;
+				return;
+			}
+			if (releaseLatestWins(cursorGate)) dispatchCursor();
+		});
+	};
+
 	const sendCursor = (force: boolean) => {
 		if (stopped || !pageVisible || !lastSent) return;
-		if (!shouldBroadcastPresence(peers.size)) return;
+		if (!canSendLive()) return;
 		const now = Date.now();
-		if (!force && now - lastSentAt < THROTTLE_MS) return;
-		lastSentAt = now;
-		void channel.send({
-			type: "broadcast",
-			event: CURSOR_EVENT,
-			payload: cursorTickPayload(userId, lastSent.lon, lastSent.lat, lastH, now),
+		if (!force && now - lastSentAt < CURSOR_THROTTLE_MS) return;
+		if (requestLatestWins(cursorGate) === "queue") return;
+		dispatchCursor();
+	};
+
+	const dispatchField = () => {
+		if (stopped || !pageVisible || !lastField) {
+			fieldGate.busy = false;
+			fieldGate.queued = false;
+			return;
+		}
+		const now = Date.now();
+		lastFieldAt = now;
+		void Promise.resolve(
+			channel.send({
+				type: "broadcast",
+				event: FIELD_EVENT,
+				payload: fieldTickPayload(userId, lastField.lon, lastField.lat, now),
+			}),
+		).finally(() => {
+			if (stopped) {
+				fieldGate.busy = false;
+				fieldGate.queued = false;
+				return;
+			}
+			if (releaseLatestWins(fieldGate)) dispatchField();
 		});
+	};
+
+	const sendField = (force: boolean) => {
+		if (stopped || !pageVisible || !lastField) return;
+		if (!canSendLive()) return;
+		const now = Date.now();
+		if (!force && now - lastFieldAt < FIELD_THROTTLE_MS) return;
+		if (requestLatestWins(fieldGate) === "queue") return;
+		dispatchField();
+	};
+
+	const publishFieldLocation = (lon: number, lat: number) => {
+		if (stopped || !pageVisible) return;
+		if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+		if (lon < -180 || lon > 180 || lat < -90 || lat > 90) return;
+		if (!movedEnough(lastField, lon, lat, FIELD_MIN_MOVE_DEG)) return;
+		lastField = { lon, lat };
+		sendField(false);
 	};
 
 	const flushOverlay = (overlay: PresenceOverlay) => {
@@ -421,7 +533,7 @@ export async function connectMapPresence(opts: {
 		const now = Date.now();
 		const slim = slimOverlay(overlay);
 		lastSlimOverlay = slim;
-		if (!shouldBroadcastPresence(peers.size)) return;
+		if (!canSendLive()) return;
 		const payload = {
 			user_id: userId,
 			t: now,
@@ -450,6 +562,7 @@ export async function connectMapPresence(opts: {
 
 	const flushToNewPeers = () => {
 		sendCursor(true);
+		sendField(true);
 		if (lastSlimOverlay && overlayHasContent(lastSlimOverlay)) {
 			flushOverlay(lastSlimOverlay);
 		}
@@ -483,6 +596,10 @@ export async function connectMapPresence(opts: {
 		.on("broadcast", { event: OVERLAY_EVENT }, ({ payload }) => {
 			const overlay = parseOverlayPayload(payload);
 			if (overlay) applyOverlay(overlay);
+		})
+		.on("broadcast", { event: FIELD_EVENT }, ({ payload }) => {
+			const tick = parseCursorPayload(payload);
+			if (tick) applyField(tick);
 		});
 
 	const subscribed = await new Promise<boolean>((resolve) => {
@@ -552,6 +669,39 @@ export async function connectMapPresence(opts: {
 
 	if (pageVisible) await track();
 
+	const stopFieldWatch = () => {
+		if (geoWatch != null && typeof navigator !== "undefined") {
+			try {
+				navigator.geolocation.clearWatch(geoWatch);
+			} catch {
+				/* ignore */
+			}
+			geoWatch = null;
+		}
+	};
+	const startFieldWatch = () => {
+		stopFieldWatch();
+		if (typeof navigator === "undefined" || !navigator.geolocation) return;
+		try {
+			geoWatch = navigator.geolocation.watchPosition(
+				(pos) => {
+					publishFieldLocation(pos.coords.longitude, pos.coords.latitude);
+				},
+				() => {
+					/* permission denied / unavailable — field clock stays unused */
+				},
+				{
+					enableHighAccuracy: true,
+					maximumAge: FIELD_THROTTLE_MS,
+					timeout: 8_000,
+				},
+			);
+		} catch {
+			geoWatch = null;
+		}
+	};
+	if (pageVisible) startFieldWatch();
+
 	staleTimer = setInterval(() => {
 		if (dropStaleTicks(peers)) emit();
 	}, 5_000);
@@ -561,8 +711,12 @@ export async function connectMapPresence(opts: {
 			pageVisible = visible;
 			if (!visible) {
 				clearOverlay();
+				stopFieldWatch();
 				await untrack();
-			} else await track();
+			} else {
+				await track();
+				startFieldWatch();
+			}
 		},
 		publishCursor: (lon, lat, h) => {
 			if (stopped || !pageVisible) return;
@@ -583,6 +737,7 @@ export async function connectMapPresence(opts: {
 			}
 			clearOverlay();
 			stopped = true;
+			stopFieldWatch();
 			if (staleTimer) clearInterval(staleTimer);
 			staleTimer = null;
 			await untrack();

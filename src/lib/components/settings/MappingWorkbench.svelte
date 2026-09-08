@@ -4,10 +4,14 @@
     import SearchIcon from "@lucide/svelte/icons/search";
     import LoaderIcon from "@lucide/svelte/icons/loader";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+    import InfoIcon from "@lucide/svelte/icons/info";
     import * as Popover from "$lib/components/ui/popover/index.js";
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
     import { Button, buttonVariants } from "$lib/components/ui/button/index.js";
     import { cn } from "$lib/utils.js";
+    import TermInspectButton from "$lib/components/search/TermInspectButton.svelte";
+    import TermInspectPane from "$lib/components/search/TermInspectPane.svelte";
+    import { inspectTerm, type TermInspectDoc } from "$lib/search/terms";
 
     export type ValueMappingRow = {
         entity_type: string;
@@ -232,6 +236,9 @@
     let pickerVocabs = $state<string[]>([...SHARED_VOCABS]);
     let searchTimer: ReturnType<typeof setTimeout> | null = null;
     let searchAbort: AbortController | null = null;
+    let pickerInspectUri = $state<string | null>(null);
+    let pickerInspectDoc = $state.raw<TermInspectDoc | null>(null);
+    let pickerInspectLoading = $state(false);
 
     let annotationForm = $state<HTMLFormElement | null>(null);
     let mappingForm = $state<HTMLFormElement | null>(null);
@@ -272,7 +279,20 @@
         manualSearchQuery = "";
         pickerMode = "search";
         pickerVocabs = [...SHARED_VOCABS];
+        pickerInspectUri = null;
+        pickerInspectDoc = null;
+        pickerInspectLoading = false;
         if (searchTimer) clearTimeout(searchTimer);
+    }
+
+    async function openPickerInspect(uri: string) {
+        pickerInspectUri = uri;
+        pickerInspectDoc = null;
+        pickerInspectLoading = true;
+        const result = await inspectTerm(uri);
+        if (pickerInspectUri !== uri) return;
+        pickerInspectDoc = result;
+        pickerInspectLoading = false;
     }
 
     async function sleepMs(ms: number, signal: AbortSignal) {
@@ -383,6 +403,9 @@
         pickerVocabs = vocabsForValue(row, col);
         const auto = row.display_label?.trim() || row.local_value;
         manualSearchQuery = auto;
+        pickerInspectUri = null;
+        pickerInspectDoc = null;
+        pickerInspectLoading = false;
         void searchVocab(auto);
     }
 
@@ -401,6 +424,9 @@
         vocabResults = [];
         vocabLoading = false;
         vocabWarming = false;
+        pickerInspectUri = null;
+        pickerInspectDoc = null;
+        pickerInspectLoading = false;
     }
 
     function applyResult(
@@ -842,15 +868,27 @@
                                                     class="tabular-nums text-muted-foreground text-xs"
                                                     >{row.entity_count ?? "—"}</span
                                                 >
-                                                <span
-                                                    class="truncate {mapped
-                                                        ? 'font-mono text-xs text-foreground'
-                                                        : 'italic text-xs text-muted-foreground/50'}"
+                                                <div
+                                                    class="flex min-w-0 items-center gap-0.5"
                                                 >
-                                                    {mapped
-                                                        ? row.concept_uri
-                                                        : "unmapped"}
-                                                </span>
+                                                    <span
+                                                        class="min-w-0 truncate {mapped
+                                                            ? 'font-mono text-xs text-foreground'
+                                                            : 'italic text-xs text-muted-foreground/50'}"
+                                                    >
+                                                        {mapped
+                                                            ? row.concept_uri
+                                                            : "unmapped"}
+                                                    </span>
+                                                    {#if mapped && row.concept_uri}
+                                                        <TermInspectButton
+                                                            uri={row.concept_uri}
+                                                            label={valueDisplay(
+                                                                row,
+                                                            )}
+                                                        />
+                                                    {/if}
+                                                </div>
 
                                                 <Popover.Root
                                                     open={editing}
@@ -965,6 +1003,28 @@
                                                             <div
                                                                 class="max-h-56 overflow-y-auto p-1.5"
                                                             >
+                                                                {#if pickerInspectUri}
+                                                                    <button
+                                                                        type="button"
+                                                                        class="mb-1.5 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+                                                                        onclick={() => {
+                                                                            pickerInspectUri = null;
+                                                                            pickerInspectDoc = null;
+                                                                            pickerInspectLoading = false;
+                                                                        }}
+                                                                    >
+                                                                        Back
+                                                                    </button>
+                                                                    <div
+                                                                        class="px-1.5 pb-1.5"
+                                                                    >
+                                                                        <TermInspectPane
+                                                                            doc={pickerInspectDoc}
+                                                                            loading={pickerInspectLoading}
+                                                                            empty="Not in the catalog yet"
+                                                                        />
+                                                                    </div>
+                                                                {:else}
                                                                 {#if vocabLoading}
                                                                     <div
                                                                         class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground"
@@ -979,36 +1039,53 @@
                                                                 {/if}
                                                                 {#if vocabResults.length > 0}
                                                                     {#each vocabResults as result (result.uri)}
-                                                                        <button
-                                                                            type="button"
-                                                                            onclick={() =>
-                                                                                applyResult(
-                                                                                    row,
-                                                                                    result,
-                                                                                )}
-                                                                            class="w-full flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
+                                                                        <div
+                                                                            class="flex items-center gap-0.5"
                                                                         >
-                                                                            <div
-                                                                                class="min-w-0"
+                                                                            <button
+                                                                                type="button"
+                                                                                onclick={() =>
+                                                                                    applyResult(
+                                                                                        row,
+                                                                                        result,
+                                                                                    )}
+                                                                                class="min-w-0 flex-1 flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
                                                                             >
-                                                                                <span
-                                                                                    class="font-medium text-foreground truncate block"
-                                                                                    >{result.label}</span
+                                                                                <div
+                                                                                    class="min-w-0"
                                                                                 >
+                                                                                    <span
+                                                                                        class="font-medium text-foreground truncate block"
+                                                                                        >{result.label}</span
+                                                                                    >
+                                                                                    <span
+                                                                                        class="text-muted-foreground"
+                                                                                        >{result.vocabulary}{#if result.context}
+                                                                                            — {result.context}{/if}</span
+                                                                                    >
+                                                                                </div>
                                                                                 <span
-                                                                                    class="text-muted-foreground"
-                                                                                    >{result.vocabulary}{#if result.context}
-                                                                                        — {result.context}{/if}</span
+                                                                                    class="shrink-0 text-muted-foreground font-mono text-[10px]"
+                                                                                    >{Math.round(
+                                                                                        result.score *
+                                                                                            100,
+                                                                                    )}%</span
                                                                                 >
-                                                                            </div>
-                                                                            <span
-                                                                                class="shrink-0 text-muted-foreground font-mono text-[10px]"
-                                                                                >{Math.round(
-                                                                                    result.score *
-                                                                                        100,
-                                                                                )}%</span
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
+                                                                                title="Inspect term"
+                                                                                onclick={() =>
+                                                                                    openPickerInspect(
+                                                                                        result.uri,
+                                                                                    )}
                                                                             >
-                                                                        </button>
+                                                                                <InfoIcon
+                                                                                    class="size-3.5"
+                                                                                />
+                                                                            </button>
+                                                                        </div>
                                                                     {/each}
                                                                 {:else if !vocabLoading}
                                                                     <p
@@ -1018,6 +1095,7 @@
                                                                             ? "No matching terms. Try another query or switch to Manual."
                                                                             : "Type to search vocabularies."}
                                                                     </p>
+                                                                {/if}
                                                                 {/if}
                                                             </div>
                                                         {/if}

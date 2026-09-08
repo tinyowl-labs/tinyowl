@@ -1,17 +1,21 @@
 import type { PresencePeer } from "$lib/map-presence";
 import { peerCursorColor } from "$lib/map-presence";
+import { CURSOR_PLAYBACK_DELAY_MS } from "$lib/map-presence-send";
 
 /**
  * Playback delay so we interpolate *between* samples instead of chasing the
- * latest tick. ~1.5× the 32 ms send interval.
+ * latest tick. ~1.5× the cursor send interval.
  */
-const DELAY_MS = 50;
+const DELAY_MS = CURSOR_PLAYBACK_DELAY_MS;
 const MAX_SAMPLES = 8;
+
+export type PresenceRosterKind = "cursor" | "field";
 
 export type PresenceRosterCursor = {
 	userId: string;
 	displayName: string;
 	color: string;
+	kind: PresenceRosterKind;
 };
 
 type Vec = { x: number; y: number; z: number };
@@ -26,8 +30,13 @@ type Track = {
 	userId: string;
 	displayName: string;
 	color: string;
+	kind: PresenceRosterKind;
 	samples: Sample[];
 };
+
+function trackKey(userId: string, kind: PresenceRosterKind): string {
+	return kind === "field" ? `field:${userId}` : userId;
+}
 
 function vsub(a: Vec, b: Vec): Vec {
 	return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
@@ -95,7 +104,7 @@ export function createPresenceLayer(
 	viewer: any,
 	opts: {
 		onRoster: (cursors: PresenceRosterCursor[]) => void;
-		node: (userId: string) => HTMLElement | undefined;
+		node: (userId: string, kind: PresenceRosterKind) => HTMLElement | undefined;
 	},
 ): PresenceLayer {
 	const tracks = new Map<string, Track>();
@@ -133,7 +142,7 @@ export function createPresenceLayer(
 
 		for (const track of tracks.values()) {
 			const pos = positionAt(track.samples, play);
-			const el = opts.node(track.userId);
+			const el = opts.node(track.userId, track.kind);
 			if (!pos || !el) continue;
 			scratch.x = pos.x;
 			scratch.y = pos.y;
@@ -171,8 +180,9 @@ export function createPresenceLayer(
 			userId: t.userId,
 			displayName: t.displayName,
 			color: t.color,
+			kind: t.kind,
 		}));
-		const sig = list.map((c) => `${c.userId}:${c.displayName}`).join("|");
+		const sig = list.map((c) => `${c.kind}:${c.userId}:${c.displayName}`).join("|");
 		if (sig === rosterSig) return;
 		rosterSig = sig;
 		opts.onRoster(list);
@@ -188,22 +198,37 @@ export function createPresenceLayer(
 		sync(peers) {
 			const keep = new Set<string>();
 			const now = performance.now();
-			for (const peer of peers) {
-				if (peer.lon == null || peer.lat == null) continue;
-				keep.add(peer.userId);
-				const p = cartesian(peer);
-				let track = tracks.get(peer.userId);
+			const upsert = (
+				peer: PresencePeer,
+				kind: PresenceRosterKind,
+				lon: number,
+				lat: number,
+				h: number,
+			) => {
+				const key = trackKey(peer.userId, kind);
+				keep.add(key);
+				const p = cartesian({ ...peer, lon, lat, h });
+				let track = tracks.get(key);
 				if (!track) {
 					track = {
 						userId: peer.userId,
 						displayName: peer.displayName,
 						color: peerCursorColor(peer.userId),
+						kind,
 						samples: [{ t: now, p }],
 					};
-					tracks.set(peer.userId, track);
+					tracks.set(key, track);
 				} else {
 					track.displayName = peer.displayName;
 					pushSample(track, p, now);
+				}
+			};
+			for (const peer of peers) {
+				if (peer.lon != null && peer.lat != null) {
+					upsert(peer, "cursor", peer.lon, peer.lat, peer.h ?? 0);
+				}
+				if (peer.fieldLon != null && peer.fieldLat != null) {
+					upsert(peer, "field", peer.fieldLon, peer.fieldLat, 0);
 				}
 			}
 			for (const id of [...tracks.keys()]) {

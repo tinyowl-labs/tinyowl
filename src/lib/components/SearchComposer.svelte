@@ -79,6 +79,7 @@
     } from "$lib/search/imageQuery";
     import { browserThumbUrl } from "$lib/project/mediaUrl";
     import FilterChip from "$lib/components/search/FilterChip.svelte";
+    import TermInspectButton from "$lib/components/search/TermInspectButton.svelte";
 
     type MentionMode =
         | "kinds"
@@ -2632,34 +2633,51 @@
                         </FilterChip>
                     {/if}
                     {#if periodChip}
-                        <button
-                            type="button"
-                            tabindex="-1"
-                            class="{chipBtn} max-w-[16rem]"
-                            onclick={removePeriod}
-                            title={periodChipHint}
-                        >
-                            <CalendarRangeIcon
-                                class="size-3 shrink-0 text-muted-foreground"
-                            />
-                            <span class="truncate">{periodChip.title}</span>
-                            <XIcon class="size-3 text-muted-foreground" />
-                        </button>
+                        <span class="{chipBtn} max-w-[16rem] pr-0.5">
+                            <TermInspectButton
+                                uri={termUri || periodChip.uri}
+                                label={periodChip.title}
+                                class="min-w-0 max-w-[13rem] hover:bg-transparent"
+                            >
+                                <CalendarRangeIcon
+                                    class="size-3 shrink-0 text-muted-foreground"
+                                />
+                                <span class="truncate">{periodChip.title}</span>
+                            </TermInspectButton>
+                            <button
+                                type="button"
+                                tabindex="-1"
+                                class="inline-flex items-center"
+                                onclick={removePeriod}
+                                title={periodChipHint}
+                            >
+                                <XIcon class="size-3 text-muted-foreground" />
+                            </button>
+                        </span>
                     {/if}
                     {#if conceptChip}
-                        <button
-                            type="button"
-                            tabindex="-1"
-                            class="{chipBtn} max-w-[16rem]"
-                            onclick={removeConcept}
-                            title="Subject filter"
-                        >
-                            <BookMarkedIcon
-                                class="size-3 shrink-0 text-muted-foreground"
-                            />
-                            <span class="truncate">{conceptChip.title}</span>
-                            <XIcon class="size-3 text-muted-foreground" />
-                        </button>
+                        <span class="{chipBtn} max-w-[16rem] pr-0.5">
+                            <TermInspectButton
+                                uri={conceptChip.uri}
+                                label={conceptChip.title}
+                                title="Inspect subject"
+                                class="min-w-0 max-w-[13rem] hover:bg-transparent"
+                            >
+                                <BookMarkedIcon
+                                    class="size-3 shrink-0 text-muted-foreground"
+                                />
+                                <span class="truncate">{conceptChip.title}</span>
+                            </TermInspectButton>
+                            <button
+                                type="button"
+                                tabindex="-1"
+                                class="inline-flex items-center"
+                                onclick={removeConcept}
+                                title="Remove subject filter"
+                            >
+                                <XIcon class="size-3 text-muted-foreground" />
+                            </button>
+                        </span>
                     {/if}
                     {#each activeTags as tag (tag.toLowerCase())}
                         <FilterChip
@@ -2937,6 +2955,68 @@
                                           : item.kind === "rowop"
                                             ? `rowop:${item.op}`
                                             : `${item.kind}:${item.id}`)}
+                            {#if item.kind === "period" || item.kind === "concept"}
+                                <div
+                                    role="group"
+                                    class="flex w-full items-center gap-0.5 rounded-lg {i ===
+                                    activeHighlight
+                                        ? 'selected'
+                                        : 'hover:bg-muted/70'}"
+                                    onmouseenter={() => (highlight = i)}
+                                >
+                                    <button
+                                        type="button"
+                                        role="option"
+                                        aria-selected={i === activeHighlight}
+                                        class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left text-sm"
+                                        in:slide={{
+                                            duration: reduceMotion ? 0 : 160,
+                                            delay: reduceMotion
+                                                ? 0
+                                                : Math.min(i, 8) * 24,
+                                            axis: "y",
+                                        }}
+                                        onmousedown={(e) => e.preventDefault()}
+                                        onclick={() => selectItem(item)}
+                                    >
+                                        {#if item.kind === "period"}
+                                            <CalendarRangeIcon
+                                                class="size-3.5 shrink-0 text-muted-foreground"
+                                            />
+                                            <span class="min-w-0 flex-1">
+                                                <span class="font-medium"
+                                                    >{item.hit.label}</span
+                                                >
+                                                <span
+                                                    class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                                    >{periodSubtitle(item.hit) ||
+                                                        "Period"}</span
+                                                >
+                                            </span>
+                                        {:else}
+                                            <BookMarkedIcon
+                                                class="size-3.5 shrink-0 text-muted-foreground"
+                                            />
+                                            <span class="min-w-0 flex-1">
+                                                <span class="font-medium"
+                                                    >{item.hit.label}</span
+                                                >
+                                                <span
+                                                    class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                                    >{conceptSubtitle(
+                                                        item.hit,
+                                                    ) || "Concept"}</span
+                                                >
+                                            </span>
+                                        {/if}
+                                    </button>
+                                    <TermInspectButton
+                                        uri={item.hit.uri}
+                                        label={item.hit.label}
+                                        class="mr-1.5"
+                                    />
+                                </div>
+                            {:else}
                             <button
                                 type="button"
                                 role="option"
@@ -2999,34 +3079,6 @@
                                             >{item.kind === "slash"
                                                 ? `/${item.id} · ${item.hint}`
                                                 : item.hint}</span
-                                        >
-                                    </span>
-                                {:else if item.kind === "period"}
-                                    <CalendarRangeIcon
-                                        class="size-3.5 shrink-0 text-muted-foreground"
-                                    />
-                                    <span class="min-w-0 flex-1">
-                                        <span class="font-medium"
-                                            >{item.hit.label}</span
-                                        >
-                                        <span
-                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
-                                            >{periodSubtitle(item.hit) ||
-                                                "Period"}</span
-                                        >
-                                    </span>
-                                {:else if item.kind === "concept"}
-                                    <BookMarkedIcon
-                                        class="size-3.5 shrink-0 text-muted-foreground"
-                                    />
-                                    <span class="min-w-0 flex-1">
-                                        <span class="font-medium"
-                                            >{item.hit.label}</span
-                                        >
-                                        <span
-                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
-                                            >{conceptSubtitle(item.hit) ||
-                                                "Concept"}</span
                                         >
                                     </span>
                                 {:else if item.kind === "place"}
@@ -3156,6 +3208,7 @@
                                     >
                                 {/if}
                             </button>
+                            {/if}
                         {/each}
                     {/if}
                 </div>

@@ -15,6 +15,42 @@ export type TermHit = {
 	end_year?: number;
 };
 
+export type TermRef = {
+	uri: string;
+	label?: string;
+	scheme?: string;
+};
+
+export type TermMember = {
+	uri: string;
+	label: string;
+	spatial?: string;
+	start_year?: number;
+	end_year?: number;
+};
+
+/** Typed context from GET /api/v1/terms/inspect?uri= */
+export type TermInspectDoc = {
+	id: string;
+	label: string;
+	uri: string;
+	scheme: string;
+	kind: string;
+	context?: string;
+	scope_note?: string;
+	alt_labels?: string[];
+	broader?: TermRef[];
+	narrower?: TermRef[];
+	clique: TermRef[];
+	close_match?: TermRef[];
+	broad_match?: TermRef[];
+	members?: TermMember[];
+	spatial?: string;
+	start_year?: number;
+	end_year?: number;
+	provenance: string;
+};
+
 export async function searchTerms(
 	q: string,
 	opts?: { kind?: string; limit?: number; signal?: AbortSignal },
@@ -31,7 +67,26 @@ export async function searchTerms(
 	return Array.isArray(data) ? data : [];
 }
 
-export function formatTermYears(hit: TermHit): string {
+export async function inspectTerm(
+	uri: string,
+	opts?: { signal?: AbortSignal },
+): Promise<TermInspectDoc | null> {
+	const id = uri.trim();
+	if (!id) return null;
+	const params = new URLSearchParams({ uri: id });
+	const res = await fetch(`/api/v1/terms/inspect?${params}`, {
+		signal: opts?.signal,
+	});
+	if (res.status === 503 || res.status === 404 || !res.ok) return null;
+	const data = (await res.json()) as TermInspectDoc | null;
+	if (!data || typeof data.uri !== "string") return null;
+	return data;
+}
+
+export function formatTermYears(hit: {
+	start_year?: number;
+	end_year?: number;
+}): string {
 	if (hit.start_year == null && hit.end_year == null) return "";
 	if (hit.start_year != null && hit.end_year != null) {
 		return `${hit.start_year} – ${hit.end_year}`;
