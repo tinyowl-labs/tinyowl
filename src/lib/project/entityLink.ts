@@ -77,6 +77,9 @@ export function projectLayersPlaceHref(
   const params = new URLSearchParams();
   params.set("view", "map");
   if (place.label) params.set("place", place.label);
+  if (place.kind === "country" && place.cc) {
+    params.set("cc", place.cc);
+  }
   const geom = place.geom;
   if (geom.type === "bbox") {
     params.set(

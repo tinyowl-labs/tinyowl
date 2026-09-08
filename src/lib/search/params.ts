@@ -34,6 +34,8 @@ export type SearchParams = {
   imageQuery: boolean;
   /** Gazetteer label for a point filter (`?place=`), display-only. */
   placeName: string | null;
+  /** ISO A2 country polygon filter (`?cc=`). */
+  countryCode: string | null;
   /** PeriodO ARK for a named when-filter (`?term=`). */
   termUri: string | null;
   /** PeriodO prefLabel for the chip (`?period=`), display-only. */
@@ -52,6 +54,12 @@ export const DEFAULT_SEARCH_RADIUS = 5000;
 
 export function formatBBox(b: SearchBBox): string {
   return `${b.west},${b.south},${b.east},${b.north}`;
+}
+
+export function parseCountryCode(raw: string | null | undefined): string | null {
+  const cc = (raw ?? "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc)) return null;
+  return cc;
 }
 
 export function parseBBox(raw: string | null | undefined): SearchBBox | null {
@@ -130,13 +138,14 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
   const imageQuery =
     imageFlag === "1" || imageFlag === "true" || imageFlag === "yes";
   const { matchClose, matchNarrower } = parseMatchFlags(sp);
+  const cc = parseCountryCode(sp.get("cc"));
 
   return {
     q,
-    lat: lat != null && !Number.isNaN(lat) ? lat : null,
-    lng: lng != null && !Number.isNaN(lng) ? lng : null,
-    radius: radius != null && !Number.isNaN(radius) ? radius : null,
-    bbox: parseBBox(sp.get("bbox")),
+    lat: cc || lat == null || Number.isNaN(lat) ? null : lat,
+    lng: cc || lng == null || Number.isNaN(lng) ? null : lng,
+    radius: cc || radius == null || Number.isNaN(radius) ? null : radius,
+    bbox: cc ? null : parseBBox(sp.get("bbox")),
     dateFrom: dateFrom != null && !Number.isNaN(dateFrom) ? dateFrom : null,
     dateTo: dateTo != null && !Number.isNaN(dateTo) ? dateTo : null,
     tags: parseListParam(sp, "tag"),
@@ -147,6 +156,7 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     mediaHash,
     imageQuery,
     placeName: (sp.get("place") ?? "").trim() || null,
+    countryCode: cc,
     termUri: (sp.get("term") ?? "").trim() || null,
     periodLabel: (sp.get("period") ?? "").trim() || null,
     conceptUri: (sp.get("concept") ?? "").trim() || null,
@@ -172,6 +182,7 @@ export function buildSearchParams(input: {
   mediaHash?: string | null;
   imageQuery?: boolean | null;
   placeName?: string | null;
+  countryCode?: string | null;
   termUri?: string | null;
   periodLabel?: string | null;
   conceptUri?: string | null;
@@ -189,12 +200,14 @@ export function buildSearchParams(input: {
   if (/^[0-9a-f]{16,}$/.test(media)) params.set("media_hash", media);
   if (input.imageQuery) params.set("image", "1");
 
-  // Prefer explicit map-view bbox over point+radius when both present.
-  if (input.bbox) {
+  const cc = parseCountryCode(input.countryCode ?? null);
+  if (cc) params.set("cc", cc);
+
+  // Country polygon is the spatial filter — do not also persist a bbox envelope.
+  if (!cc && input.bbox) {
     params.set("bbox", formatBBox(input.bbox));
-    const place = (input.placeName ?? "").trim();
-    if (place) params.set("place", place);
   } else if (
+    !cc &&
     input.lat != null &&
     input.lng != null &&
     !Number.isNaN(input.lat) &&
@@ -207,8 +220,10 @@ export function buildSearchParams(input: {
         ? Number(input.radius)
         : DEFAULT_SEARCH_RADIUS;
     params.set("radius", String(r));
-    const place = (input.placeName ?? "").trim();
-    if (place) params.set("place", place);
+  }
+  const place = (input.placeName ?? "").trim();
+  if (place && (cc || params.has("bbox") || params.has("lat"))) {
+    params.set("place", place);
   }
 
   const df =
@@ -287,6 +302,7 @@ export function hasActiveSearch(p: SearchParams): boolean {
     Boolean(p.mediaHash) ||
     Boolean(p.imageQuery) ||
     p.bbox != null ||
+    Boolean(p.countryCode) ||
     (p.lat != null && p.lng != null) ||
     p.dateFrom != null ||
     p.dateTo != null ||

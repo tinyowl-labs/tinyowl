@@ -29,6 +29,10 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	const profile = (await res.json()) as {
 		id: string;
 		display_name: string;
+		username?: string;
+		first_name?: string;
+		last_name?: string;
+		dotted_name?: string;
 		email?: string;
 		has_avatar: boolean;
 		orgs: UserOrg[];

@@ -73,7 +73,29 @@ export async function searchProjectsByText(
 	return takeHits(await res.json(), "name", opts?.limit ?? NAME_LIMIT);
 }
 
-/** Projects whose bbox or entity geom intersects a gazetteer bbox. */
+/** Projects whose bbox or entity geom intersects a country outline (`?cc=`). */
+export async function searchProjectsByCountry(
+	cc: string,
+	opts?: { accessToken?: string | null; limit?: number; placeLabel?: string },
+): Promise<ProjectHit[]> {
+	const code = cc.trim().toUpperCase();
+	if (!/^[A-Z]{2}$/.test(code)) return [];
+	const params = new URLSearchParams({
+		cc: code,
+		semantic: "0",
+	});
+	const res = await fetch(`/api/v1/search?${params}`, {
+		headers: authHeaders(opts?.accessToken),
+	});
+	if (!res.ok) return [];
+	return takeHits(
+		await res.json(),
+		"geo",
+		opts?.limit ?? GEO_LIMIT,
+		opts?.placeLabel,
+	);
+}
+
 export async function searchProjectsByBBox(
 	bbox: SearchBBox,
 	opts?: { accessToken?: string | null; limit?: number; placeLabel?: string },
@@ -95,26 +117,22 @@ export async function searchProjectsByBBox(
 }
 
 /**
- * Country/admin prefix or exact hit whose bbox can suggest overlapping projects.
- * Membership is ACL on the search API, not a ranking signal here.
+ * Country/admin hit whose bbox can suggest overlapping projects.
+ * Only fire after a confident name (4+ chars, exact or prefix) — 2-letter
+ * prefixes like "hu"/"un" match many countries and used to hit
+ * `/api/v1/search?cc=` (50m polygon ∩ every project) on every keystroke.
  */
 export function geoAnchorPlace(
 	q: string,
 	places: PlaceHit[],
 ): PlaceHit | null {
 	const nq = q.trim().toLowerCase();
-	if (nq.length < 2) return null;
+	if (nq.length < 4) return null;
 	for (const p of places) {
 		if (p.kind !== "country" && p.kind !== "admin") continue;
 		if (p.geom.type !== "bbox") continue;
 		const label = p.label.toLowerCase();
-		if (
-			label === nq ||
-			label.startsWith(nq) ||
-			label.split(/[\s,/]+/).some((w) => w.startsWith(nq))
-		) {
-			return p;
-		}
+		if (label === nq || label.startsWith(nq)) return p;
 	}
 	return null;
 }
@@ -168,20 +186,27 @@ export async function searchOmnibox(
 
 	const anchor = geoAnchorPlace(prefix, places);
 	let geo: ProjectHit[] = [];
-	if (anchor && anchor.geom.type === "bbox") {
+	if (anchor) {
 		try {
-			geo = await searchProjectsByBBox(
-				{
-					west: anchor.geom.west,
-					south: anchor.geom.south,
-					east: anchor.geom.east,
-					north: anchor.geom.north,
-				},
-				{
+			if (anchor.cc) {
+				geo = await searchProjectsByCountry(anchor.cc, {
 					accessToken: opts?.accessToken,
 					placeLabel: anchor.label,
-				},
-			);
+				});
+			} else if (anchor.geom.type === "bbox") {
+				geo = await searchProjectsByBBox(
+					{
+						west: anchor.geom.west,
+						south: anchor.geom.south,
+						east: anchor.geom.east,
+						north: anchor.geom.north,
+					},
+					{
+						accessToken: opts?.accessToken,
+						placeLabel: anchor.label,
+					},
+				);
+			}
 		} catch {
 			geo = [];
 		}

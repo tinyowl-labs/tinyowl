@@ -3,10 +3,9 @@
     import PlusIcon from "@lucide/svelte/icons/plus";
     import Trash2Icon from "@lucide/svelte/icons/trash-2";
     import { Button } from "$lib/components/ui/button/index.js";
-    import { Input } from "$lib/components/ui/input/index.js";
-    import { Field, FieldLabel } from "$lib/components/ui/field/index.js";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import PendingJoinRequests from "$lib/components/join/PendingJoinRequests.svelte";
+    import InviteMembers from "$lib/components/join/InviteMembers.svelte";
 
     const SELECT_CLASS =
         "flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm";
@@ -16,9 +15,20 @@
     const org = $derived(data.org);
     const members = $derived(data.members ?? []);
     const joinRequests = $derived(data.joinRequests ?? []);
+    const invites = $derived(data.invites ?? []);
     const currentUserId = $derived(data.currentUserId ?? "");
     const isOwner = $derived(org.role === "owner");
+    const canManage = $derived(org.role === "owner" || org.role === "admin");
     let showInvite = $state(false);
+    const inviteUrl = $derived(
+        typeof form?.inviteUrl === "string" ? form.inviteUrl : "",
+    );
+
+    $effect(() => {
+        if (form?.memberAction === "invited" || form?.memberAction === "added") {
+            showInvite = true;
+        }
+    });
 
     const ROLE_LABELS: Record<string, string> = {
         owner: "Owner",
@@ -39,6 +49,7 @@
                 Organisation roles — distinct from project members.
             </p>
         </div>
+        {#if canManage}
         <Button
             type="button"
             size="sm"
@@ -46,8 +57,9 @@
             onclick={() => (showInvite = !showInvite)}
         >
             <PlusIcon class="size-3.5" />
-            {showInvite ? "Cancel" : "Add member"}
+            {showInvite ? "Cancel" : "Invite"}
         </Button>
+        {/if}
     </div>
     {#if form?.error}
         <p
@@ -56,6 +68,19 @@
             {form.error}
         </p>
     {/if}
+    <InviteMembers
+        canManage={canManage}
+        showForm={showInvite}
+        defaultRole="member"
+        selectClass={SELECT_CLASS}
+        inviteUrl={inviteUrl}
+        invites={invites}
+        roleOptions={[
+            { value: "member", label: "Member" },
+            { value: "admin", label: "Admin" },
+            ...(isOwner ? [{ value: "owner", label: "Owner" }] : []),
+        ]}
+    />
     <PendingJoinRequests
         requests={joinRequests}
         defaultRole="member"
@@ -65,32 +90,6 @@
             ...(isOwner ? [{ value: "owner", label: "Owner" }] : []),
         ]}
     />
-    {#if showInvite}
-        <form
-            method="POST"
-            action="?/addMember"
-            class="mb-4 space-y-3 rounded-lg border border-border p-4"
-            use:enhance
-        >
-            <div class="grid grid-cols-2 gap-3">
-                <Field>
-                    <FieldLabel for="invite_email">Email</FieldLabel>
-                    <Input id="invite_email" type="email" name="email" required />
-                </Field>
-                <Field>
-                    <FieldLabel for="invite_role">Role</FieldLabel>
-                    <select id="invite_role" name="role" class={SELECT_CLASS}>
-                        <option value="member">Member</option>
-                        <option value="admin">Admin</option>
-                        {#if isOwner}
-                            <option value="owner">Owner</option>
-                        {/if}
-                    </select>
-                </Field>
-            </div>
-            <Button type="submit" size="sm">Add</Button>
-        </form>
-    {/if}
     {#if members.length > 0}
         <div class="divide-y divide-border rounded-lg border border-border">
             {#each members as member (member.user_id)}
@@ -98,7 +97,7 @@
                     <div class="flex min-w-0 items-center gap-3">
                         <UserAvatar
                             userId={member.user_id}
-                            name={member.email || member.user_id}
+                            name={member.display_name || member.email || member.user_id}
                             href="/users/{member.user_id}"
                             class="size-8"
                         />
@@ -107,7 +106,7 @@
                             <a
                                 href="/users/{member.user_id}"
                                 class="text-foreground no-underline hover:underline"
-                                >{member.email || member.user_id}</a
+                                >{member.display_name || member.email || member.user_id}</a
                             >
                             {#if member.user_id === currentUserId}
                                 <span
@@ -117,7 +116,7 @@
                             {/if}
                         </p>
                         <p class="mt-0.5 text-xs text-muted-foreground">
-                            {ROLE_LABELS[member.role] ?? member.role}
+                            {#if member.username && member.display_name !== member.username}@{member.username} · {/if}{ROLE_LABELS[member.role] ?? member.role}
                         </p>
                         </div>
                     </div>

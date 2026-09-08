@@ -18,6 +18,9 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
       qfieldLinks: [],
       ocLinks: [],
       cliTokens: [],
+      username: "",
+      firstName: "",
+      lastName: "",
     };
   }
 
@@ -96,21 +99,41 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
 
   let hasAvatar = false;
   let avatarStyle: Record<string, string> | null = null;
+  let username = "";
+  let firstName = "";
+  let lastName = "";
   try {
     const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/me`, { headers });
     if (res.ok) {
       const me = (await res.json()) as {
         has_avatar?: boolean;
         avatar_style?: Record<string, string> | null;
+        username?: string;
+        first_name?: string;
+        last_name?: string;
       };
       hasAvatar = Boolean(me.has_avatar);
       if (me.avatar_style && typeof me.avatar_style === "object") {
         avatarStyle = me.avatar_style;
       }
+      username = me.username ?? "";
+      firstName = me.first_name ?? "";
+      lastName = me.last_name ?? "";
     }
   } catch (_) {}
 
-  return { user, hasAvatar, avatarStyle, qfieldAccounts, qfieldLinks, ocLinks, cliTokens };
+  return {
+    user,
+    hasAvatar,
+    avatarStyle,
+    qfieldAccounts,
+    qfieldLinks,
+    ocLinks,
+    cliTokens,
+    username,
+    firstName,
+    lastName,
+  };
 };
 
 export const actions: Actions = {

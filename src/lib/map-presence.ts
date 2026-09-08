@@ -267,9 +267,16 @@ export function displayNameFromUser(user: {
 		const v = meta[key];
 		return typeof v === "string" ? v.trim() : "";
 	};
-	const combined = `${str("first_name")} ${str("last_name")}`.trim();
+	const dotted = [str("first_name"), str("last_name")]
+		.map((s) => s.toLowerCase().replace(/[^a-z0-9]/g, ""))
+		.filter(Boolean)
+		.join(".");
 	const name =
-		str("full_name") || str("name") || str("display_name") || combined;
+		str("username") ||
+		dotted ||
+		str("full_name") ||
+		str("name") ||
+		str("display_name");
 	if (name) return name;
 	const email = (user?.email ?? "").trim();
 	const at = email.indexOf("@");

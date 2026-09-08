@@ -1,9 +1,14 @@
 <script lang="ts">
+	import { dottedPersonName } from "$lib/auth-identifier";
 	import UserAvatar from "$lib/components/ui/user-avatar.svelte";
 	import SettingsIcon from "@lucide/svelte/icons/settings";
 
 	let { data } = $props();
 	const profile = $derived(data.profile);
+	const dottedName = $derived(
+		profile.dotted_name ||
+			dottedPersonName(profile.first_name, profile.last_name),
+	);
 </script>
 
 <svelte:head>
@@ -24,6 +29,11 @@
 					<h1 class="text-2xl font-semibold text-foreground">
 						{profile.display_name}
 					</h1>
+					{#if dottedName && dottedName !== profile.display_name}
+						<p class="mt-1 text-sm text-muted-foreground">
+							{dottedName}
+						</p>
+					{/if}
 					{#if profile.email}
 						<p class="mt-1 text-sm text-muted-foreground">{profile.email}</p>
 					{/if}

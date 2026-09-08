@@ -58,6 +58,7 @@
         projects: SearchProject[];
         entityHits: Record<string, SearchEntityHit[]>;
         placeName: string | null;
+        countryCode: string | null;
         termUri: string | null;
         periodLabel: string | null;
         conceptUri: string | null;
@@ -71,10 +72,12 @@
     const hasSession = $derived(Boolean($page.data?.user));
 
     let query = $state(untrack(() => data.query) || "");
+    let clearingAll = false;
     let centerLat = $state(untrack(() => data.lat));
     let centerLng = $state(untrack(() => data.lng));
     let radius = $state(untrack(() => data.radius ?? DEFAULT_SEARCH_RADIUS));
     let searchBBox = $state<SearchBBox | null>(untrack(() => data.bbox));
+    let countryCode = $state<string | null>(untrack(() => data.countryCode ?? null));
     let dateFrom = $state(untrack(() => data.dateFrom?.toString() ?? ""));
     let dateTo = $state(untrack(() => data.dateTo?.toString() ?? ""));
     let tags = $state<string[]>(untrack(() => data.tags ?? []));
@@ -87,19 +90,34 @@
     );
 
     $effect(() => {
-        query = data.query || "";
-        centerLat = data.lat;
-        centerLng = data.lng;
-        radius = data.radius ?? DEFAULT_SEARCH_RADIUS;
-        searchBBox = data.bbox;
-        dateFrom = data.dateFrom?.toString() ?? "";
-        dateTo = data.dateTo?.toString() ?? "";
-        tags = data.tags ?? [];
-        vocabularies = data.vocabularies ?? [];
-        projectSlugs = data.projectSlugs ?? [];
-        mediaHash = data.mediaHash;
-        imageQuery = data.imageQuery;
-        imageSession = data.imageQuery ? loadImageQuery() : null;
+        const nextQuery = data.query || "";
+        const nextLat = data.lat;
+        const nextLng = data.lng;
+        const nextRadius = data.radius ?? DEFAULT_SEARCH_RADIUS;
+        const nextBBox = data.bbox;
+        const nextCc = data.countryCode ?? null;
+        const nextFrom = data.dateFrom?.toString() ?? "";
+        const nextTo = data.dateTo?.toString() ?? "";
+        const nextTags = data.tags ?? [];
+        const nextVocabs = data.vocabularies ?? [];
+        const nextProjects = data.projectSlugs ?? [];
+        const nextMedia = data.mediaHash;
+        const nextImage = data.imageQuery;
+        if (clearingAll) return;
+        query = nextQuery;
+        centerLat = nextLat;
+        centerLng = nextLng;
+        radius = nextRadius;
+        searchBBox = nextBBox;
+        countryCode = nextCc;
+        dateFrom = nextFrom;
+        dateTo = nextTo;
+        tags = nextTags;
+        vocabularies = nextVocabs;
+        projectSlugs = nextProjects;
+        mediaHash = nextMedia;
+        imageQuery = nextImage;
+        imageSession = nextImage ? loadImageQuery() : null;
     });
 
     const activeQuery = $derived(
@@ -119,6 +137,7 @@
             mediaHash: data.mediaHash,
             imageQuery: data.imageQuery,
             placeName: data.placeName,
+            countryCode: data.countryCode ?? null,
             termUri: data.termUri,
             periodLabel: data.periodLabel,
             conceptUri: data.conceptUri,
@@ -238,6 +257,7 @@
             mediaHash: string | null;
             imageQuery: boolean;
             placeName: string | null;
+            countryCode: string | null;
             termUri: string | null;
             periodLabel: string | null;
             conceptUri: string | null;
@@ -253,6 +273,10 @@
             overrides.lat !== undefined ? overrides.lat : centerLat;
         const nextLng =
             overrides.lng !== undefined ? overrides.lng : centerLng;
+        const nextCountryCode =
+            overrides.countryCode !== undefined
+                ? overrides.countryCode
+                : countryCode;
         const nextMediaHash =
             overrides.mediaHash !== undefined
                 ? overrides.mediaHash
@@ -265,10 +289,11 @@
         goto(
             searchHref({
                 q: overrides.q ?? query,
-                bbox: nextBBox,
-                lat: nextBBox ? null : nextLat,
-                lng: nextBBox ? null : nextLng,
-                radius: nextBBox
+                bbox: nextCountryCode ? null : nextBBox,
+                lat: nextCountryCode || nextBBox ? null : nextLat,
+                lng: nextCountryCode || nextBBox ? null : nextLng,
+                radius:
+                    nextCountryCode || nextBBox
                     ? null
                     : overrides.radius !== undefined
                       ? overrides.radius
@@ -296,6 +321,7 @@
                     overrides.placeName !== undefined
                         ? overrides.placeName
                         : data.placeName,
+                countryCode: nextCountryCode,
                 termUri:
                     overrides.termUri !== undefined
                         ? overrides.termUri
@@ -369,11 +395,29 @@
     }
 
     function onSpatialChange() {
-        navigateWith({});
+        if (clearingAll) return;
+        navigateWith({ countryCode: null, placeName: null });
     }
 
-    function onViewportSearch(bounds: SearchBBox) {
-        navigateWith({ bbox: bounds, lat: null, lng: null }, { replaceState: true });
+    function clearAllQuery() {
+        clearingAll = true;
+        query = "";
+        centerLat = null;
+        centerLng = null;
+        radius = DEFAULT_SEARCH_RADIUS;
+        searchBBox = null;
+        countryCode = null;
+        dateFrom = "";
+        dateTo = "";
+        tags = [];
+        vocabularies = [];
+        projectSlugs = [];
+        mediaHash = null;
+        imageQuery = false;
+        clearImageQuery();
+        void goto("/").finally(() => {
+            clearingAll = false;
+        });
     }
 
     function formatDistance(m: number): string {
@@ -474,6 +518,7 @@
     bind:centerLng
     bind:radius
     bind:searchBBox
+    bind:countryCode
     bind:dateFrom
     bind:dateTo
     {tags}
@@ -494,7 +539,7 @@
     persistFilters={!data.browse}
     onTemporalCommit={data.browse ? undefined : onTemporalCommit}
     onSpatialChange={data.browse ? undefined : onSpatialChange}
-    onViewportSearch={data.browse ? undefined : onViewportSearch}
+    onClearAll={clearAllQuery}
     examples={data.browse
         ? [
               "neolithic pottery",
@@ -648,7 +693,13 @@
             (Boolean(snippet) ||
                 hits.length > 0 ||
                 (ents && ents.length > 0))}
-        {#if showReason || proj.distance_m != null}
+        {@const showDistance =
+            proj.distance_m != null &&
+            data.lat != null &&
+            data.lng != null &&
+            data.bbox == null &&
+            !data.countryCode}
+        {#if showReason || showDistance}
             <div class="px-3 pb-3">
                 {#if showReason}
                     <div class="mt-2">
@@ -708,7 +759,7 @@
                         {/if}
                     </div>
                 {/if}
-                {#if proj.distance_m != null}
+                {#if showDistance && proj.distance_m != null}
                     <p class="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                         <MapPinIcon class="size-3" />
                         {formatDistance(proj.distance_m)}

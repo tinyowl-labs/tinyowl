@@ -118,33 +118,34 @@ async function copyCesiumAssets() {
   }
 }
 
-function copyPleiadesIndexPlugin() {
-  const src = path.resolve(
-    projectRoot,
-    "src/lib/search/data/pleiades-index.json.gz",
-  );
-  const copyTo = async (dest: string) => {
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.copyFile(src, dest);
-  };
+function copyGazetteerIndexPlugin() {
+  const names = [
+    "pleiades-index.json.gz",
+    "ne-countries-50m.json.gz",
+    "geonames-cities15000.json.gz",
+  ];
+  const destDirs = [
+    path.resolve(projectRoot, "build"),
+    path.resolve(projectRoot, "build/server"),
+    path.resolve(projectRoot, ".svelte-kit/output/server"),
+  ];
   return {
-    name: "copy-pleiades-index",
+    name: "copy-gazetteer-index",
     async closeBundle() {
-      try {
-        await fs.access(src);
-      } catch {
-        return;
+      for (const name of names) {
+        const src = path.resolve(projectRoot, "src/lib/search/data", name);
+        try {
+          await fs.access(src);
+        } catch {
+          continue;
+        }
+        await Promise.all(
+          destDirs.map(async (dir) => {
+            await fs.mkdir(dir, { recursive: true });
+            await fs.copyFile(src, path.join(dir, name));
+          }),
+        );
       }
-      await Promise.all([
-        copyTo(path.resolve(projectRoot, "build/pleiades-index.json.gz")),
-        copyTo(path.resolve(projectRoot, "build/server/pleiades-index.json.gz")),
-        copyTo(
-          path.resolve(
-            projectRoot,
-            ".svelte-kit/output/server/pleiades-index.json.gz",
-          ),
-        ),
-      ]);
     },
   };
 }
@@ -176,7 +177,7 @@ function ensureCesiumAssetsPlugin() {
 export default defineConfig({
   plugins: [
     ensureCesiumAssetsPlugin(),
-    copyPleiadesIndexPlugin(),
+    copyGazetteerIndexPlugin(),
     tailwindcss(),
     sveltekit({
       adapter: kitAdapter,

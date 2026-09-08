@@ -1,7 +1,13 @@
 import type { PageServerLoad, Actions } from "./$types";
 import { TINYOWL_CORE_URL } from "$env/static/private";
 
-type Member = { user_id: string; email: string; role: string };
+type Member = {
+    user_id: string;
+    email: string;
+    role: string;
+    display_name?: string;
+    username?: string;
+};
 type JoinRequest = {
     id: string;
     requester_id: string;
@@ -9,6 +15,13 @@ type JoinRequest = {
     requester_email?: string;
     status: string;
     created_at?: string;
+};
+type Invite = {
+    id: string;
+    role: string;
+    email?: string | null;
+    expired?: boolean;
+    expires_at?: string;
 };
 
 async function apiError(res: Response) {
@@ -24,6 +37,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     const accessToken = await locals.getAccessToken();
     let members: Member[] = [];
     let joinRequests: JoinRequest[] = [];
+    let invites: Invite[] = [];
     try {
         const res = await fetch(
             `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/members`,
@@ -38,27 +52,34 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
         );
         if (res.ok) joinRequests = await res.json();
     } catch (_) {}
+    try {
+        const res = await fetch(
+            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/invites`,
+            { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (res.ok) invites = await res.json();
+    } catch (_) {}
     return {
         members,
         joinRequests,
+        invites,
         currentUserId: (await locals.getSession()).user?.id ?? "",
     };
 };
 
 export const actions: Actions = {
-    addMember: async ({ request, locals, params, fetch }) => {
+    createInvite: async ({ request, locals, params, fetch }) => {
         const { user } = await locals.getSession();
         if (!user) return { error: "Not signed in" };
 
         const data = await request.formData();
         const email = String(data.get("email") ?? "").trim();
         const role = String(data.get("role") ?? "viewer").trim();
-        if (!email) return { error: "Email is required." };
 
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/members`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/invites`,
             {
                 method: "POST",
                 headers: {
@@ -68,8 +89,37 @@ export const actions: Actions = {
                 body: JSON.stringify({ email, role }),
             },
         );
-        if (!res.ok) return { error: `Failed: ${await res.text()}` };
-        return { success: true, memberAction: "added" };
+        if (!res.ok) return { error: await apiError(res) };
+        const body = (await res.json()) as {
+            status?: string;
+            url?: string;
+        };
+        if (body.status === "added") {
+            return { success: true, memberAction: "added" };
+        }
+        return {
+            success: true,
+            memberAction: "invited",
+            inviteUrl: body.url ?? "",
+        };
+    },
+
+    revokeInvite: async ({ request, locals, params, fetch }) => {
+        const { user } = await locals.getSession();
+        if (!user) return { error: "Not signed in" };
+        const data = await request.formData();
+        const id = String(data.get("id") ?? "").trim();
+        if (!id) return { error: "Invite id required." };
+        const accessToken = await locals.getAccessToken();
+        const res = await fetch(
+            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/invites/${id}`,
+            {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${accessToken}` },
+            },
+        );
+        if (!res.ok) return { error: await apiError(res) };
+        return { success: true, memberAction: "revoked" };
     },
 
     updateRole: async ({ request, locals, params, fetch }) => {

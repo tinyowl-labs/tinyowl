@@ -19,6 +19,11 @@ export type InboxNotification = {
 	read_at?: string | null;
 	created_at: string;
 	join_request?: InboxJoinRequest | null;
+	invite?: {
+		kind: string;
+		org_slug?: string;
+		project_slug?: string;
+	} | null;
 };
 
 function safeHref(raw: string): string | null {

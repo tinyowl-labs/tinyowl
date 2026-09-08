@@ -10,19 +10,27 @@
 
     function targetHref(n: InboxNotification): string {
         const jr = n.join_request;
-        if (!jr) return "/inbox";
-        if (jr.kind === "org" && jr.org_slug) {
-            if (n.kind === "join_request") {
-                return `/orgs/${jr.org_slug}/settings/members`;
+        if (jr) {
+            if (jr.kind === "org" && jr.org_slug) {
+                if (n.kind === "join_request") {
+                    return `/orgs/${jr.org_slug}/settings/members`;
+                }
+                return `/orgs/${jr.org_slug}`;
             }
-            return `/orgs/${jr.org_slug}`;
+            if (jr.project_slug) {
+                const slug = encodeURIComponent(jr.project_slug);
+                if (n.kind === "join_request") {
+                    return `/${slug}/settings/members`;
+                }
+                return `/${slug}`;
+            }
         }
-        if (jr.project_slug) {
-            const slug = encodeURIComponent(jr.project_slug);
-            if (n.kind === "join_request") {
-                return `/${slug}/settings/members`;
-            }
-            return `/${slug}`;
+        const inv = n.invite;
+        if (inv?.kind === "org" && inv.org_slug) {
+            return `/orgs/${inv.org_slug}/settings/members`;
+        }
+        if (inv?.project_slug) {
+            return `/${encodeURIComponent(inv.project_slug)}/settings/members`;
         }
         return "/inbox";
     }

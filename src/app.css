@@ -34,21 +34,20 @@
     --input: oklch(0.22 0 0);
     --ring: oklch(0.72 0.08 220);
 
-    --theme-radius-xs: 2px;
-    --theme-radius-sm: 4px;
-    --theme-radius-md: 6px;
-    --theme-radius-lg: 8px;
-    --theme-radius-xl: 12px;
+    --theme-radius-xs: 4px;
+    --theme-radius-sm: 8px;
+    --theme-radius-md: 12px;
+    --theme-radius-lg: 20px;
+    --theme-radius-xl: 32px;
 
     --card-solid: oklch(0.145 0 0);
-    --surface-fill: oklch(0.24 0 0 / 0.52);
-    --surface-filter: saturate(1.9) brightness(1.16);
-    --surface-sheen: linear-gradient(
-        165deg,
-        rgb(255 255 255 / 0.26) 0%,
-        rgb(255 255 255 / 0.06) 34%,
-        transparent 70%
+    --surface-fill: color-mix(
+        in oklab,
+        color-mix(in oklab, var(--background) 94%, var(--selected) 6%) 92%,
+        transparent
     );
+    --surface-filter: none;
+    --surface-sheen: none;
 }
 
 @theme inline {

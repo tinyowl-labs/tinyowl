@@ -427,13 +427,15 @@
     // Account
     let firstName = $state("");
     let lastName = $state("");
+    let username = $state("");
     let accountSaving = $state(false);
     let accountMsg = $state("");
     let accountError = $state("");
 
     $effect(() => {
-        firstName = user?.user_metadata?.first_name ?? "";
-        lastName = user?.user_metadata?.last_name ?? "";
+        firstName = data?.firstName || user?.user_metadata?.first_name || "";
+        lastName = data?.lastName || user?.user_metadata?.last_name || "";
+        username = data?.username || "";
     });
 
     let avatarHydrated = $state(false);
@@ -459,21 +461,36 @@
             data: {
                 first_name: firstName.trim(),
                 last_name: lastName.trim(),
+                username: username.trim(),
             },
         });
         if (!error) {
-            const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
             const { data: sessionData } = await supabase.auth.getSession();
             const token = sessionData.session?.access_token;
             if (token) {
-                await fetch("/api/v1/me", {
+                const res = await fetch("/api/v1/me", {
                     method: "PATCH",
                     headers: {
                         Authorization: `Bearer ${token}`,
                         "Content-Type": "application/json",
                     },
-                    body: JSON.stringify({ display_name: displayName }),
+                    body: JSON.stringify({
+                        username: username.trim(),
+                        first_name: firstName.trim(),
+                        last_name: lastName.trim(),
+                    }),
                 });
+                if (!res.ok) {
+                    const text = await res.text();
+                    try {
+                        const body = JSON.parse(text) as { error?: string };
+                        accountError = body.error || text;
+                    } catch {
+                        accountError = text || "Could not save profile.";
+                    }
+                    accountSaving = false;
+                    return;
+                }
             }
         }
         accountSaving = false;
@@ -885,6 +902,22 @@
                                                 />
                                             </Field>
                                         </div>
+                                        <Field>
+                                            <FieldLabel for="username"
+                                                >Username</FieldLabel
+                                            >
+                                            <Input
+                                                id="username"
+                                                bind:value={username}
+                                                autocomplete="username"
+                                                minlength={3}
+                                                maxlength={30}
+                                            />
+                                            <FieldDescription
+                                                >3–30 characters: a–z, 0–9,
+                                                _</FieldDescription
+                                            >
+                                        </Field>
                                         <Field>
                                             <FieldLabel for="email"
                                                 >Email</FieldLabel

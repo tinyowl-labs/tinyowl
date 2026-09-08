@@ -7,6 +7,7 @@
 	import {
 		DEFAULT_SEARCH_RADIUS,
 		parseBBox,
+		parseCountryCode,
 	} from "$lib/search/params";
 	import {
 		isSearchModK,
@@ -52,6 +53,9 @@
 		return Number.isFinite(n) ? n : DEFAULT_SEARCH_RADIUS;
 	});
 	const urlBBox = $derived(parseBBox($page.url.searchParams.get("bbox")));
+	const urlCountryCode = $derived(
+		parseCountryCode($page.url.searchParams.get("cc")),
+	);
 	const urlTerm = $derived(
 		($page.url.searchParams.get("term") ?? "").trim() || null,
 	);
@@ -155,6 +159,7 @@
 					radius={urlRadius}
 					bbox={urlBBox}
 					placeLabel={urlPlace}
+					countryCode={urlCountryCode}
 					termUri={urlTerm}
 					periodLabel={urlPeriod}
 					conceptUri={urlConcept}

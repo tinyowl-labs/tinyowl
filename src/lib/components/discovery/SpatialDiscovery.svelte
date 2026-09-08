@@ -10,10 +10,10 @@
     import ProjectInspector from "$lib/components/discovery/ProjectInspector.svelte";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import MapIcon from "@lucide/svelte/icons/map";
+    import HexagonIcon from "@lucide/svelte/icons/hexagon";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import MinusIcon from "@lucide/svelte/icons/minus";
     import BoxIcon from "@lucide/svelte/icons/box";
-    import ScanSearchIcon from "@lucide/svelte/icons/scan-search";
     import XIcon from "@lucide/svelte/icons/x";
     import { goto } from "$app/navigation";
     import { searchOverlay } from "$lib/stores/searchOverlay.svelte";
@@ -32,7 +32,7 @@
         type DiscoveryProject,
     } from "$lib/search/discovery";
 
-    type DrawTool = "area" | "point" | null;
+    type DrawTool = "area" | "point" | "polygon" | null;
 
     type Props = {
         accessToken?: string | null;
@@ -41,6 +41,7 @@
         centerLng?: number | null;
         radius?: number;
         searchBBox?: SearchBBox | null;
+        countryCode?: string | null;
         dateFrom?: string;
         dateTo?: string;
         tags?: string[];
@@ -62,7 +63,7 @@
         persistFilters?: boolean;
         onTemporalCommit?: (from: number | null, to: number | null) => void;
         onSpatialChange?: () => void;
-        onViewportSearch?: (bounds: SearchBBox) => void;
+        onClearAll?: () => void;
         examples?: string[];
         shortcutHint?: boolean;
         autofocus?: boolean;
@@ -80,6 +81,7 @@
         centerLng = $bindable(null),
         radius = $bindable(DEFAULT_SEARCH_RADIUS),
         searchBBox = $bindable(null),
+        countryCode = $bindable(null),
         dateFrom = $bindable(""),
         dateTo = $bindable(""),
         tags = [],
@@ -100,7 +102,7 @@
         persistFilters = false,
         onTemporalCommit,
         onSpatialChange,
-        onViewportSearch,
+        onClearAll,
         examples = [],
         shortcutHint = false,
         autofocus = false,
@@ -112,12 +114,14 @@
     }: Props = $props();
 
     let mapRef = $state<{
-        useMapArea: () => void;
+        startAreaMode: () => void;
+        startPolygonMode: () => void;
         startPointMode: () => void;
         clearSpatial: () => void;
         zoomIn: () => void;
         zoomOut: () => void;
         flyToSlug: (slug: string) => void;
+        fitAllResults: (animate?: boolean) => void;
     } | null>(null);
     let composer = $state<{ focusField?: () => void } | null>(null);
     let suggesting = $state(false);
@@ -126,12 +130,10 @@
     let hoveredProjectId = $state<string | null>(null);
     let selectedProjectId = $state<string | null>(null);
     let inspectorOpen = $state(false);
-    let searchAsMove = $state(false);
     let viewBounds = $state<SearchBBox | null>(null);
     let cursorLat = $state<number | null>(null);
     let cursorLng = $state<number | null>(null);
     let cursorZoom = $state<number | null>(null);
-    let moveTimer: ReturnType<typeof setTimeout> | null = null;
 
     const parsedFrom = $derived(
         dateFrom !== "" && !Number.isNaN(Number(dateFrom))
@@ -144,17 +146,13 @@
             : null,
     );
 
-    const visibleResults = $derived.by(() => {
+    const mapResults = $derived.by(() => {
         let list = results;
         if (!persistFilters) {
             list = list.filter((p) =>
                 projectInTemporalRange(p, parsedFrom, parsedTo),
             );
-            if (searchAsMove && viewBounds) {
-                list = list.filter((p) =>
-                    projectIntersectsBounds(p, viewBounds!),
-                );
-            } else if (searchBBox) {
+            if (searchBBox) {
                 list = list.filter((p) =>
                     projectIntersectsBounds(p, searchBBox!),
                 );
@@ -167,16 +165,43 @@
         return list;
     });
 
+    const visibleResults = $derived.by(() => {
+        if (!viewBounds) return mapResults;
+        return mapResults.filter((p) =>
+            projectIntersectsBounds(p, viewBounds!),
+        );
+    });
+
     const inspecting = $derived(
         inspectorOpen
-            ? (visibleResults.find((p) => p.slug === selectedProjectId) ??
+            ? (mapResults.find((p) => p.slug === selectedProjectId) ??
                   results.find((p) => p.slug === selectedProjectId) ??
                   null)
             : null,
     );
 
     const spatialActive = $derived(
-        searchBBox != null || (centerLat != null && centerLng != null),
+        searchBBox != null ||
+            Boolean(countryCode) ||
+            (centerLat != null && centerLng != null) ||
+            drawTool != null,
+    );
+
+    const canClear = $derived(
+        spatialActive ||
+            Boolean(query.trim()) ||
+            dateFrom !== "" ||
+            dateTo !== "" ||
+            tags.length > 0 ||
+            vocabularies.length > 0 ||
+            projects.length > 0 ||
+            Boolean(mediaHash) ||
+            imageQuery ||
+            Boolean(termUri) ||
+            Boolean(periodLabel) ||
+            Boolean(conceptUri) ||
+            Boolean(subjectLabel) ||
+            Boolean(placeName),
     );
 
     const showResultList = $derived(
@@ -198,21 +223,31 @@
         onTemporalCommit?.(from, to);
     }
 
-    function setArea() {
-        drawTool = "area";
-        searchAsMove = false;
-        mapRef?.useMapArea();
-    }
-
     function setPoint() {
         drawTool = "point";
-        searchAsMove = false;
         mapRef?.startPointMode();
+    }
+
+    function setArea() {
+        drawTool = "area";
+        mapRef?.startAreaMode();
+    }
+
+    function setPolygon() {
+        drawTool = "polygon";
+        mapRef?.startPolygonMode();
     }
 
     function clearSpatial() {
         drawTool = null;
-        searchAsMove = false;
+        query = "";
+        dateFrom = "";
+        dateTo = "";
+        if (onClearAll) {
+            onClearAll();
+            mapRef?.clearSpatial();
+            return;
+        }
         mapRef?.clearSpatial();
     }
 
@@ -234,7 +269,10 @@
     }
 
     function closeInspector() {
+        selectedProjectId = null;
+        hoveredProjectId = null;
         inspectorOpen = false;
+        mapRef?.fitAllResults(true);
     }
 
     function onCursor(lat: number | null, lng: number | null, zoom: number | null) {
@@ -245,19 +283,6 @@
 
     function onView(bounds: SearchBBox) {
         viewBounds = bounds;
-        if (!searchAsMove) return;
-        if (moveTimer) clearTimeout(moveTimer);
-        moveTimer = setTimeout(() => {
-            onViewportSearch?.(bounds);
-        }, 420);
-    }
-
-    function toggleSearchAsMove() {
-        searchAsMove = !searchAsMove;
-        if (searchAsMove) {
-            drawTool = null;
-            if (viewBounds) onViewportSearch?.(viewBounds);
-        }
     }
 
     function open3d() {
@@ -281,12 +306,13 @@
                 bind:centerLng
                 bind:radius
                 bind:searchBBox
-                results={visibleResults}
-                fitResults={!searchAsMove && !selectedProjectId}
-                lockView={searchAsMove}
+                bind:countryCode
+                results={mapResults}
+                fitResults={!selectedProjectId}
+                lockView={false}
                 displayMode="point"
                 hoveredSlug={hoveredProjectId}
-                selectedSlug={inspecting?.slug ?? selectedProjectId}
+                selectedSlug={inspecting?.slug ?? null}
                 onResultClick={onMapResultClick}
                 onResultHover={onCardHover}
                 {onCursor}
@@ -301,7 +327,7 @@
         </div>
 
         <aside
-            class="pointer-events-auto absolute top-12 left-3 z-30 flex w-[min(22.5rem,calc(100%-1.5rem))] max-h-[calc(100%-4.25rem)] flex-col overflow-visible"
+            class="pointer-events-auto absolute top-14 left-3 z-30 flex w-[min(22.5rem,calc(100%-1.5rem))] max-h-[calc(100%-6.25rem)] min-h-0 flex-col overflow-visible"
         >
                 <SearchComposer
                     bind:this={composer}
@@ -321,6 +347,7 @@
                     {mediaHash}
                     {imageQuery}
                     placeLabel={placeName}
+                    bind:countryCode
                     {termUri}
                     {periodLabel}
                     {conceptUri}
@@ -337,7 +364,7 @@
 
             {#if !suggesting}
             <div
-                class="search-vt-panel surface mt-1.5 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/80 shadow-lg"
+                class="search-vt-panel surface mt-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/80 shadow-lg"
             >
                 {#if !inspecting}
                     <div class="shrink-0 p-2.5">
@@ -349,64 +376,82 @@
                             >
                                 <button
                                     type="button"
-                                    onclick={setArea}
-                                    aria-pressed={drawTool === "area" ||
-                                        (searchBBox && !searchAsMove)}
-                                    class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
-                                        'area' ||
-                                    (searchBBox && !searchAsMove)
-                                        ? 'bg-background text-foreground shadow-sm'
-                                        : 'text-muted-foreground hover:text-foreground'}"
-                                    title="Filter by area"
-                                >
-                                    <MapIcon class="size-3.5" />
-                                    Area
-                                </button>
-                                <button
-                                    type="button"
                                     onclick={setPoint}
                                     aria-pressed={drawTool === "point" ||
                                         (centerLat != null &&
                                             centerLng != null &&
-                                            !searchBBox &&
-                                            !searchAsMove)}
+                                            !searchBBox)}
                                     class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
                                         'point' ||
                                     (centerLat != null &&
                                         centerLng != null &&
-                                        !searchBBox &&
-                                        !searchAsMove)
+                                        !searchBBox)
                                         ? 'bg-background text-foreground shadow-sm'
                                         : 'text-muted-foreground hover:text-foreground'}"
-                                    title="Filter by point"
+                                    title="Click centre, then radius"
                                 >
                                     <CrosshairIcon class="size-3.5" />
                                     Point
                                 </button>
                                 <button
                                     type="button"
-                                    onclick={toggleSearchAsMove}
-                                    aria-pressed={searchAsMove}
-                                    class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {searchAsMove
+                                    onclick={setArea}
+                                    aria-pressed={drawTool === "area" ||
+                                        Boolean(
+                                            searchBBox &&
+                                                !countryCode &&
+                                                drawTool !== "polygon",
+                                        )}
+                                    class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
+                                        'area' ||
+                                    (searchBBox &&
+                                        !countryCode &&
+                                        drawTool !== 'polygon')
                                         ? 'bg-background text-foreground shadow-sm'
                                         : 'text-muted-foreground hover:text-foreground'}"
-                                    title="Filter to map view"
+                                    title="Drag a rectangle"
                                 >
-                                    <ScanSearchIcon class="size-3.5" />
-                                    View
+                                    <MapIcon class="size-3.5" />
+                                    Area
+                                </button>
+                                <button
+                                    type="button"
+                                    onclick={setPolygon}
+                                    aria-pressed={drawTool === "polygon"}
+                                    class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
+                                    'polygon'
+                                        ? 'bg-background text-foreground shadow-sm'
+                                        : 'text-muted-foreground hover:text-foreground'}"
+                                    title="Click corners, double-click to close"
+                                >
+                                    <HexagonIcon class="size-3.5" />
+                                    Polygon
                                 </button>
                             </div>
                             <button
                                 type="button"
                                 onclick={clearSpatial}
                                 class="flex size-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
-                                title="Clear spatial filter"
-                                aria-label="Clear spatial filter"
-                                disabled={!spatialActive && !searchAsMove}
+                                title="Clear search"
+                                aria-label="Clear search"
+                                disabled={!canClear}
                             >
                                 <XIcon class="size-3.5" />
                             </button>
                         </div>
+                        {#if drawTool === "point"}
+                            <p class="mt-1.5 text-[10px] text-muted-foreground">
+                                Click a centre, then the radius.
+                            </p>
+                        {:else if drawTool === "area"}
+                            <p class="mt-1.5 text-[10px] text-muted-foreground">
+                                Drag a rectangle on the map.
+                            </p>
+                        {:else if drawTool === "polygon"}
+                            <p class="mt-1.5 text-[10px] text-muted-foreground">
+                                Click corners. Double-click or click the first point to close.
+                            </p>
+                        {/if}
 
                         <div class="mt-2">
                             <TemporalRangeFilter
@@ -421,7 +466,7 @@
 
             {#if inspecting}
                 <div
-                    class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4"
+                    class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3"
                     transition:fade={{ duration: motionOff ? 0 : 160 }}
                 >
                     <ProjectInspector
@@ -530,7 +575,7 @@
         </aside>
 
         <div
-            class="surface pointer-events-auto absolute right-3 bottom-12 z-40 flex flex-col overflow-hidden rounded-lg border border-border shadow-lg"
+            class="surface pointer-events-auto absolute right-3 bottom-11 z-40 flex flex-col overflow-hidden rounded-lg border border-border shadow-lg"
         >
             <button
                 type="button"
@@ -591,6 +636,24 @@
                     class="hover:text-foreground"
                     target="_blank"
                     rel="noopener noreferrer">© OSM</a
+                >
+                <a
+                    href="https://www.naturalearthdata.com/"
+                    class="hover:text-foreground"
+                    target="_blank"
+                    rel="noopener noreferrer">Natural Earth</a
+                >
+                <a
+                    href="https://www.geonames.org/"
+                    class="hover:text-foreground"
+                    target="_blank"
+                    rel="noopener noreferrer">GeoNames</a
+                >
+                <a
+                    href="https://pleiades.stoa.org/"
+                    class="hover:text-foreground"
+                    target="_blank"
+                    rel="noopener noreferrer">Pleiades</a
                 >
             </nav>
         </footer>

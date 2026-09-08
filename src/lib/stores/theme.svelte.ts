@@ -21,8 +21,8 @@ export interface ThemePreferences {
 const DEFAULTS: ThemePreferences = {
 	accentHue: 220,
 	bgBase: 'dark',
-	radius: 'rounded',
-	surface: 'glass',
+	radius: 'pill',
+	surface: 'tinted',
 	colorScheme: 'system'
 };
 

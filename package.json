@@ -13,7 +13,8 @@
     "prepare": "svelte-kit sync",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"pleiades:index": "python3 scripts/pleiades-index.py"
+		"pleiades:index": "python3 scripts/pleiades-index.py",
+		"gazetteer:index": "python3 scripts/ne-countries-index.py && python3 scripts/geonames-cities-index.py"
 	},
 	"devDependencies": {
 		"@internationalized/date": "^3.12.2",

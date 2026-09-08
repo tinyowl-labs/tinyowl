@@ -29,7 +29,7 @@
         type SearchBBox,
     } from "$lib/search/params";
     import { searchMergedPlaces } from "$lib/search/photon";
-    import type { PlaceHit } from "$lib/search/placeHit";
+    import { labelMatchRank, type PlaceHit } from "$lib/search/placeHit";
     import {
         searchTerms,
         formatTermYears,
@@ -173,6 +173,8 @@
         shortcutHint?: boolean;
         /** Gazetteer title restored from `?place=` */
         placeLabel?: string | null;
+        /** ISO A2 country polygon (`?cc=`). */
+        countryCode?: string | null;
         /** PeriodO ARK restored from `?term=` */
         termUri?: string | null;
         /** PeriodO prefLabel restored from `?period=` */
@@ -222,6 +224,7 @@
         examples = [],
         shortcutHint = false,
         placeLabel = null,
+        countryCode = $bindable(null),
         termUri = null,
         periodLabel = null,
         conceptUri = null,
@@ -311,6 +314,8 @@
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     let placesTimer: ReturnType<typeof setTimeout> | undefined;
     let placesReq = 0;
+    let mentionReq = 0;
+    let periodApplyGen = 0;
     let placeChip = $state<{
         title: string;
         lat?: number;
@@ -396,7 +401,7 @@
         Boolean(activeMediaHash) || Boolean(imageSession?.previewDataUrl),
     );
     const hasSpatialChip = $derived(
-        bbox != null || (lat != null && lng != null),
+        bbox != null || Boolean(countryCode) || (lat != null && lng != null),
     );
     const hasChips = $derived(
         hasImageChip ||
@@ -594,10 +599,43 @@
         }));
     }
 
-    /** Name matches, then places, then geo-suggested projects. */
+    function omniboxItemLabel(item: MenuItem): string {
+        if (item.kind === "place") return item.place.label;
+        if (item.kind === "period") return item.hit.label;
+        if (item.kind === "concept") return item.hit.label;
+        if (item.kind === "project") return item.project.title;
+        if (item.kind === "layer") return item.layer.label;
+        if (item.kind === "artefact") return item.artefact.label;
+        if (item.kind === "entity") return item.entity.id;
+        if (item.kind === "cell") return item.cell.match;
+        if (item.kind === "kind" || item.kind === "slash" || item.kind === "value") {
+            return item.label;
+        }
+        return "";
+    }
+
+    function omniboxKindRank(item: MenuItem): number {
+        if (item.kind === "place" && item.place.kind === "country") return 0;
+        if (item.kind === "place" && item.place.kind === "admin") return 1;
+        if (item.kind === "project" && item.project.via === "name") return 2;
+        if (item.kind === "place") return 3;
+        if (item.kind === "period" || item.kind === "concept") return 4;
+        if (item.kind === "project") return 5;
+        return 6;
+    }
+
+    function sortByCloseness(items: MenuItem[], q = value.trim()): MenuItem[] {
+        return [...items].sort((a, b) => {
+            const ra = labelMatchRank(q, omniboxItemLabel(a));
+            const rb = labelMatchRank(q, omniboxItemLabel(b));
+            if (ra !== rb) return ra - rb;
+            return omniboxKindRank(a) - omniboxKindRank(b);
+        });
+    }
+
     function mixedOmniboxItems(): MenuItem[] {
         if (scopedSlug) {
-            return [
+            return sortByCloseness([
                 ...layerItems(),
                 ...artefactItems(),
                 ...cellItems(),
@@ -606,15 +644,15 @@
                 ...placeItems(),
                 ...projectItems("name"),
                 ...projectItems("geo"),
-            ];
+            ]);
         }
-        return [
+        return sortByCloseness([
             ...projectItems("name"),
             ...periodItems(),
             ...conceptItems(),
             ...placeItems(),
             ...projectItems("geo"),
-        ];
+        ]);
     }
 
     const menuItems = $derived.by((): MenuItem[] => {
@@ -635,22 +673,28 @@
                 hint: k.hint,
             }));
             if (q.length >= 2 && kinds.length === 0) {
-                return [
-                    ...layerItems(),
-                    ...entityItems(),
-                    ...artefactItems(),
-                    ...placeItems(),
-                ];
+                return sortByCloseness(
+                    [
+                        ...layerItems(),
+                        ...entityItems(),
+                        ...artefactItems(),
+                        ...placeItems(),
+                    ],
+                    q,
+                );
             }
             return [
                 ...kindItems,
                 ...(q.length >= 2
-                    ? [
-                          ...layerItems(),
-                          ...entityItems(),
-                          ...artefactItems(),
-                          ...placeItems(),
-                      ]
+                    ? sortByCloseness(
+                          [
+                              ...layerItems(),
+                              ...entityItems(),
+                              ...artefactItems(),
+                              ...placeItems(),
+                          ],
+                          q,
+                      )
                     : []),
             ];
         }
@@ -978,11 +1022,8 @@
     });
 
     $effect(() => {
-        if (bbox) {
-            if (
-                placeLabel &&
-                (!placeChip || placeChip.title !== placeLabel)
-            ) {
+        if (bbox || countryCode) {
+            if (placeLabel && !placeChip) {
                 placeChip = { title: placeLabel };
                 appliedPlaceLabel = placeLabel;
             }
@@ -1026,6 +1067,7 @@
         radius?: number | null;
         bbox?: SearchBBox | null;
         placeName?: string | null;
+        countryCode?: string | null;
         keepFocus?: boolean;
         rows?: RowPredicate[];
         dateFrom?: number | null;
@@ -1040,6 +1082,8 @@
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
         const nextLng = next.lng !== undefined ? next.lng : lng;
+        const nextCountryCode =
+            next.countryCode !== undefined ? next.countryCode : countryCode;
         const nextProjects = next.projects ?? activeProjects;
         const nextQ = next.q ?? value;
         const nextDateFrom =
@@ -1098,14 +1142,15 @@
                 void goto(
                     projectLayersPlaceHref(slug, {
                         id: "apply",
-                        source: "photon",
-                        kind: "place",
+                        source: nextCountryCode ? "naturalearth" : "geonames",
+                        kind: nextCountryCode ? "country" : "place",
                         label:
                             next.placeName !== undefined
                                 ? (next.placeName ?? "")
                                 : (placeChip?.title ?? ""),
                         detail: "",
                         geom,
+                        cc: nextCountryCode ?? undefined,
                     }),
                 );
                 return;
@@ -1132,6 +1177,7 @@
                     next.placeName !== undefined
                         ? next.placeName
                         : placeChip?.title ?? null,
+                countryCode: nextCountryCode,
                 dateFrom: nextDateFrom,
                 dateTo: nextDateTo,
                 termUri:
@@ -1294,6 +1340,7 @@
         clearTimeout(placesTimer);
         clearTimeout(debounceTimer);
         placesReq += 1;
+        mentionReq += 1;
         loadingPlaces = false;
         loading = false;
         placeHits = [];
@@ -1720,7 +1767,14 @@
         abortSuggestions();
         value = "";
         const geom = place.geom;
-        if (geom.type === "bbox") {
+        const isCountry = place.kind === "country";
+        countryCode = isCountry ? (place.cc ?? null) : null;
+        if (isCountry) {
+            bbox = null;
+            lat = null;
+            lng = null;
+            placeChip = { title: place.label };
+        } else if (geom.type === "bbox") {
             bbox = {
                 west: geom.west,
                 south: geom.south,
@@ -1749,11 +1803,12 @@
         if (atSearch || palette) {
             navigate({
                 q: "",
-                lat: geom.type === "bbox" ? null : geom.lat,
-                lng: geom.type === "bbox" ? null : geom.lng,
-                radius: geom.type === "bbox" ? null : geom.radius,
-                bbox: geom.type === "bbox" ? bbox : null,
+                lat: isCountry || geom.type === "bbox" ? null : geom.lat,
+                lng: isCountry || geom.type === "bbox" ? null : geom.lng,
+                radius: isCountry || geom.type === "bbox" ? null : geom.radius,
+                bbox: isCountry || geom.type !== "bbox" ? null : bbox,
                 placeName: place.label,
+                countryCode: isCountry ? (place.cc ?? null) : null,
             });
         }
         queueMicrotask(() => inputEl?.focus());
@@ -1777,39 +1832,59 @@
         abortSuggestions();
         value = "";
         const hasDates = hit.start_year != null || hit.end_year != null;
-        const place = await resolvePeriodPlace(hit.spatial);
-        const geom = place?.geom.type === "bbox" ? place.geom : null;
-        if (!hasDates && !geom) {
+        const spatialQ = periodSpatialQuery(hit.spatial);
+        const gen = ++periodApplyGen;
+        if (!hasDates && !spatialQ) {
             queueMicrotask(() => inputEl?.focus());
             return;
         }
-        if (geom && place) {
-            bbox = {
-                west: geom.west,
-                south: geom.south,
-                east: geom.east,
-                north: geom.north,
-            };
-            lat = null;
-            lng = null;
-            placeChip = { title: place.label };
-            appliedPlaceLabel = place.label;
-        }
-        if (atSearch || palette) {
+        if ((atSearch || palette) && hasDates) {
             navigate({
                 q: "",
-                dateFrom: hasDates ? (hit.start_year ?? null) : undefined,
-                dateTo: hasDates ? (hit.end_year ?? null) : undefined,
-                lat: geom ? null : undefined,
-                lng: geom ? null : undefined,
-                radius: geom ? null : undefined,
-                bbox: geom ?? undefined,
-                placeName: geom && place ? place.label : undefined,
+                dateFrom: hit.start_year ?? null,
+                dateTo: hit.end_year ?? null,
                 termUri: hit.uri,
                 periodLabel: hit.label,
             });
         }
         queueMicrotask(() => inputEl?.focus());
+        const place = await resolvePeriodPlace(hit.spatial);
+        if (gen !== periodApplyGen) return;
+        const geom = place?.geom.type === "bbox" ? place.geom : null;
+        if (!hasDates && !geom) return;
+        if (geom && place) {
+            const isCountry = place.kind === "country";
+            countryCode = isCountry ? (place.cc ?? null) : null;
+            if (isCountry) {
+                bbox = null;
+            } else {
+                bbox = {
+                    west: geom.west,
+                    south: geom.south,
+                    east: geom.east,
+                    north: geom.north,
+                };
+            }
+            lat = null;
+            lng = null;
+            placeChip = { title: place.label };
+            appliedPlaceLabel = place.label;
+        }
+        if ((atSearch || palette) && geom && place) {
+            navigate({
+                q: "",
+                dateFrom: hasDates ? (hit.start_year ?? null) : undefined,
+                dateTo: hasDates ? (hit.end_year ?? null) : undefined,
+                lat: null,
+                lng: null,
+                radius: null,
+                bbox: place.kind === "country" ? null : geom,
+                placeName: place.label,
+                countryCode: place.kind === "country" ? (place.cc ?? null) : null,
+                termUri: hit.uri,
+                periodLabel: hit.label,
+            });
+        }
     }
 
     function applyConcept(hit: TermHit) {
@@ -1870,6 +1945,7 @@
         bbox = null;
         lat = null;
         lng = null;
+        countryCode = null;
         radius = DEFAULT_SEARCH_RADIUS;
         if (atSearch) {
             navigate({
@@ -1878,6 +1954,7 @@
                 radius: null,
                 bbox: null,
                 placeName: null,
+                countryCode: null,
             });
         }
     }
@@ -2406,6 +2483,7 @@
             mentionMode !== "artefact" &&
             mentionMode !== "row"
         ) {
+            mentionReq += 1;
             tagSuggestions = [];
             termSuggestions = [];
             if (mentionMode === "place") placeHits = [];
@@ -2416,6 +2494,7 @@
         }
 
         loading = true;
+        const req = ++mentionReq;
         try {
             const jobs: Promise<void>[] = [];
             if (wantTags && prefix) {
@@ -2461,8 +2540,7 @@
             if (wantPlaces && prefix.length >= 2) {
                 jobs.push(
                     (async () => {
-                        const hits = await searchMergedPlaces(prefix, 10);
-                        placeHits = hits;
+                        placeHits = await searchMergedPlaces(prefix, 10);
                     })(),
                 );
             } else if (mentionMode === "place" || wantSlashHits) {
@@ -2653,6 +2731,18 @@
                                     → {formatLatLng(bbox.north, bbox.east)}</span
                                 >
                             {/if}
+                            <XIcon class="size-3 text-muted-foreground" />
+                        </button>
+                    {:else if countryCode}
+                        <button
+                            type="button"
+                            tabindex="-1"
+                            class="{chipBtn} max-w-[16rem]"
+                            onclick={removeSpatial}
+                            title="Remove country filter"
+                        >
+                            <GlobeIcon class="size-3 text-muted-foreground" />
+                            <span class="truncate">{placeChip?.title || countryCode}</span>
                             <XIcon class="size-3 text-muted-foreground" />
                         </button>
                     {:else if lat != null && lng != null}

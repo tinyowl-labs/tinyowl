@@ -1,4 +1,4 @@
-/** Unified omnibox place hit (Pleiades + Photon). */
+/** Unified omnibox place hit (Pleiades + Natural Earth + GeoNames). */
 
 import { haversineMetres } from "$lib/geo/haversine";
 import {
@@ -9,7 +9,7 @@ import {
 import type { PleiadesPlace } from "./pleiades";
 
 export type PlaceKind = "country" | "admin" | "ancient" | "place";
-export type PlaceSource = "pleiades" | "photon";
+export type PlaceSource = "pleiades" | "naturalearth" | "geonames";
 
 export type GeomHint =
 	| { type: "point"; lat: number; lng: number; radius: number }
@@ -23,22 +23,8 @@ export type PlaceHit = {
 	detail: string;
 	geom: GeomHint;
 	uri?: string;
-	osm?: { type: "N" | "W" | "R"; id: number };
+	cc?: string;
 };
-
-export function bboxFromPhotonExtent(
-	extent: unknown,
-): SearchBBox | null {
-	if (!Array.isArray(extent) || extent.length < 4) return null;
-	const nums = extent.slice(0, 4).map(Number);
-	if (nums.some((n) => !Number.isFinite(n))) return null;
-	const [a, b, c, d] = nums as [number, number, number, number];
-	const west = Math.min(a, c);
-	const east = Math.max(a, c);
-	const south = Math.min(b, d);
-	const north = Math.max(b, d);
-	return parseBBox(`${west},${south},${east},${north}`);
-}
 
 export function radiusFromSearchBBox(
 	bbox: SearchBBox,
@@ -50,26 +36,6 @@ export function radiusFromSearchBBox(
 	const m = Math.max(width, height) * 0.55;
 	if (!Number.isFinite(m)) return fallback;
 	return Math.min(50_000, Math.max(1_500, Math.round(m)));
-}
-
-export function photonKind(
-	type: string | undefined,
-	osmValue: string | undefined,
-): PlaceKind | null {
-	const t = (type || osmValue || "").toLowerCase();
-	if (t === "country") return "country";
-	if (t === "state" || t === "county") return "admin";
-	if (
-		t === "city" ||
-		t === "locality" ||
-		t === "district" ||
-		t === "town" ||
-		t === "village" ||
-		t === "municipality"
-	) {
-		return "place";
-	}
-	return null;
 }
 
 export function pleiadesToHit(place: PleiadesPlace): PlaceHit {
@@ -93,32 +59,42 @@ export function pleiadesToHit(place: PleiadesPlace): PlaceHit {
 	};
 }
 
+export function labelMatchRank(query: string, label: string): number {
+	const q = query.trim().toLowerCase();
+	const n = label.trim().toLowerCase();
+	if (!q || !n) return 9;
+	if (n === q) return 0;
+	const words = n.split(/[\s,/()·.–_-]+/).filter(Boolean);
+	if words.some((w) => w === q)) return 1;
+	if (n.startsWith(q)) return 2;
+	if (words.some((w) => w.startsWith(q))) return 3;
+	if (q.length >= 3 && n.includes(q)) return 4;
+	return 9;
+}
+
 export function mergePlaceHits(
 	query: string,
-	photon: PlaceHit[],
+	modern: PlaceHit[],
 	pleiades: PlaceHit[],
 	limit = 10,
 ): PlaceHit[] {
-	const q = query.trim().toLowerCase();
-	const short = q.split(/\s+/).filter(Boolean).length <= 2;
-
 	const rank = (h: PlaceHit): [number, number, number, string] => {
-		const label = h.label.toLowerCase();
-		let match = 5;
-		if (label === q) match = 0;
-		else if (label.startsWith(q)) match = 1;
-		else if (label.split(/[\s,/]+/).some((w) => w.startsWith(q))) match = 2;
-		else if (q.length >= 4 && label.includes(q)) match = 3;
-
+		const match = labelMatchRank(query, h.label);
 		let kindBoost = 3;
 		if (h.kind === "country") kindBoost = 0;
 		else if (h.kind === "admin") kindBoost = 1;
 		else if (h.kind === "ancient") kindBoost = match <= 1 ? 1 : 2;
-		if (!short && h.kind === "place") kindBoost = 3;
-		return [match, kindBoost, label.length, label];
+		else if (h.kind === "place") kindBoost = 2;
+		return [match, kindBoost, h.label.length, h.label.toLowerCase()];
 	};
 
-	const mixed = [...photon.slice(0, 5), ...pleiades.slice(0, 5)];
+	const seen = new Set<string>();
+	const mixed: PlaceHit[] = [];
+	for (const h of [...modern, ...pleiades]) {
+		if (seen.has(h.id)) continue;
+		seen.add(h.id);
+		mixed.push(h);
+	}
 	mixed.sort((a, b) => {
 		const ra = rank(a);
 		const rb = rank(b);
@@ -129,4 +105,9 @@ export function mergePlaceHits(
 		return 0;
 	});
 	return mixed.slice(0, limit);
+}
+
+export function parseBBoxFromHit(h: PlaceHit): SearchBBox | null {
+	if (h.geom.type !== "bbox") return null;
+	return parseBBox(`${h.geom.west},${h.geom.south},${h.geom.east},${h.geom.north}`);
 }

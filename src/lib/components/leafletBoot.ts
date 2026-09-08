@@ -72,7 +72,7 @@ export function createClusterGroup(
 		showCoverageOnHover: false,
 		spiderfyOnMaxZoom: true,
 		zoomToBoundsOnClick: true,
-		animate: true,
+		animate: false,
 		disableClusteringAtZoom: opts.disableClusteringAtZoom ?? 12,
 		maxClusterRadius: opts.maxClusterRadius ?? 56,
 		iconCreateFunction: (cluster) => {

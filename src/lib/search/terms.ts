@@ -119,7 +119,7 @@ export function periodSpatialQuery(spatial: string | undefined): string | null {
 	return first;
 }
 
-/** Country/admin bbox only — do not pin a city or Pleiades point for a period region. */
+/** Country/admin bbox only — do not pin a city or Pleiades point for a period region. Country hits carry `cc` for `?cc=` apply. */
 export function pickPeriodPlace(
 	query: string,
 	places: PlaceHit[],

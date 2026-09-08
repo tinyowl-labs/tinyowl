@@ -68,6 +68,8 @@ export type DiscoveryPageData = {
   projects: SearchProject[];
   entityHits: Record<string, SearchEntityHit[]>;
   placeName: string | null;
+  /** ISO A2 country polygon (`?cc=`). */
+  countryCode: string | null;
   /** PeriodO ARK (`?term=`). */
   termUri: string | null;
   /** PeriodO prefLabel (`?period=`). */

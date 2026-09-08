@@ -199,6 +199,7 @@ export async function loadDiscoverySearch(
   const wantProjects =
     Boolean(parsed.q) ||
     parsed.bbox != null ||
+    parsed.countryCode != null ||
     (parsed.lat != null && parsed.lng != null) ||
     parsed.dateFrom != null ||
     parsed.dateTo != null ||
@@ -213,6 +214,7 @@ export async function loadDiscoverySearch(
     const scoped = parsed.projects.length > 0;
     if (parsed.q && !scoped) params.set("q", parsed.q);
     if (parsed.q && !parsed.semantic && !scoped) params.set("semantic", "0");
+    if (parsed.countryCode) params.set("cc", parsed.countryCode);
     if (parsed.bbox) {
       params.set("bbox", formatBBox(parsed.bbox));
     } else if (parsed.lat != null && parsed.lng != null) {
@@ -282,6 +284,7 @@ export async function loadDiscoverySearch(
     projects,
     entityHits,
     placeName: parsed.placeName,
+    countryCode: parsed.countryCode,
     termUri: parsed.termUri,
     periodLabel: parsed.periodLabel,
     conceptUri: parsed.conceptUri,
@@ -388,6 +391,7 @@ export async function loadHomeDiscovery(args: LoadArgs): Promise<DiscoveryPageDa
     projects,
     entityHits: {},
     placeName: null,
+    countryCode: null,
     termUri: null,
     periodLabel: null,
     conceptUri: null,

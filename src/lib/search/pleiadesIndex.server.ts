@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { haversineMetres } from "$lib/geo/haversine";
+import { labelMatchRank } from "./placeHit";
 import type { PleiadesPlace } from "./pleiades";
 
 export type IndexedPlace = {
@@ -87,20 +88,14 @@ function levenshteinAtMost(a: string, b: string, maxd: number): number {
 
 /** Lower is better. 99 = no match. */
 function nameScore(query: string, foldedName: string): number {
-	if (foldedName === query) return 0;
-	if (foldedName.startsWith(query)) return 1;
-	if (query.length >= 3) {
-		for (const word of foldedName.split(/[\s,;/]+/)) {
-			if (word.startsWith(query)) return 2;
-		}
-	}
-	if (query.length >= 4 && foldedName.includes(query)) return 3;
+	const s = labelMatchRank(query, foldedName);
+	if (s < 9) return s;
 	if (
 		query.length >= 4 &&
 		foldedName.length <= query.length + 4 &&
 		levenshteinAtMost(query, foldedName, 1) <= 1
 	) {
-		return 4;
+		return 5;
 	}
 	return 99;
 }
