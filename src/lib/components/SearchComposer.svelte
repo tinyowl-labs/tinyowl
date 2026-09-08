@@ -8,6 +8,7 @@
     import ImageIcon from "@lucide/svelte/icons/image";
     import LoaderIcon from "@lucide/svelte/icons/loader";
     import GlobeIcon from "@lucide/svelte/icons/globe";
+    import CalendarRangeIcon from "@lucide/svelte/icons/calendar-range";
     import MapIcon from "@lucide/svelte/icons/map";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
@@ -28,6 +29,13 @@
     } from "$lib/search/params";
     import { searchMergedPlaces } from "$lib/search/photon";
     import type { PlaceHit } from "$lib/search/placeHit";
+    import {
+        searchTerms,
+        formatTermYears,
+        periodSpatialQuery,
+        pickPeriodPlace,
+        type TermHit,
+    } from "$lib/search/terms";
     import {
         searchOmnibox,
         searchProjectsByText,
@@ -102,6 +110,7 @@
         mode: "tag" | "vocab";
     };
     type PlaceItem = { kind: "place"; place: PlaceHit };
+    type PeriodItem = { kind: "period"; hit: TermHit };
     type ProjectItem = { kind: "project"; project: ProjectHit };
     type LayerItem = { kind: "layer"; layer: LayerHit };
     type ArtefactItem = { kind: "artefact"; artefact: ArtefactHit };
@@ -119,6 +128,7 @@
         | SlashItem
         | ValueItem
         | PlaceItem
+        | PeriodItem
         | ProjectItem
         | LayerItem
         | ArtefactItem
@@ -266,6 +276,7 @@
     let tagSuggestions = $state<string[]>([]);
     let termSuggestions = $state<string[]>([]);
     let placeHits = $state<PlaceHit[]>([]);
+    let periodHits = $state.raw<TermHit[]>([]);
     let projectHits = $state<ProjectHit[]>([]);
     let layerHits = $state<LayerHit[]>([]);
     let artefactHits = $state<ArtefactHit[]>([]);
@@ -379,6 +390,7 @@
         !mentionOpen &&
             value.trim().length >= 2 &&
             (placeHits.length > 0 ||
+                periodHits.length > 0 ||
                 projectHits.length > 0 ||
                 layerHits.length > 0 ||
                 artefactHits.length > 0 ||
@@ -462,6 +474,15 @@
         return placeHits.map((p) => ({ kind: "place" as const, place: p }));
     }
 
+    function periodItems(): PeriodItem[] {
+        return periodHits.map((hit) => ({ kind: "period" as const, hit }));
+    }
+
+    function periodSubtitle(hit: TermHit): string {
+        const years = formatTermYears(hit);
+        return [hit.spatial, years].filter(Boolean).join(" · ");
+    }
+
     function projectItems(via?: ProjectHit["via"]): ProjectItem[] {
         return projectHits
             .filter((p) => via == null || p.via === via)
@@ -518,6 +539,7 @@
                 ...layerItems(),
                 ...artefactItems(),
                 ...cellItems(),
+                ...periodItems(),
                 ...placeItems(),
                 ...projectItems("name"),
                 ...projectItems("geo"),
@@ -525,6 +547,7 @@
         }
         return [
             ...projectItems("name"),
+            ...periodItems(),
             ...placeItems(),
             ...projectItems("geo"),
         ];
@@ -696,6 +719,7 @@
             return null;
         }
         if (item.kind === "place") return item.place.label;
+        if (item.kind === "period") return item.hit.label;
         if (item.kind === "project") return item.project.title;
         if (item.kind === "layer") return item.layer.label;
         if (item.kind === "artefact") return item.artefact.label;
@@ -935,13 +959,20 @@
         placeName?: string | null;
         keepFocus?: boolean;
         rows?: RowPredicate[];
+        dateFrom?: number | null;
+        dateTo?: number | null;
     }) {
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
         const nextLng = next.lng !== undefined ? next.lng : lng;
         const nextProjects = next.projects ?? activeProjects;
         const nextQ = next.q ?? value;
-        if (nextProjects.length === 1) {
+        const nextDateFrom =
+            next.dateFrom !== undefined ? next.dateFrom : dateFrom;
+        const nextDateTo = next.dateTo !== undefined ? next.dateTo : dateTo;
+        const applyingDates =
+            next.dateFrom !== undefined || next.dateTo !== undefined;
+        if (nextProjects.length === 1 && !applyingDates) {
             const slug = nextProjects[0]!;
             const placeBBox = nextBBox;
             const placeLat = nextLat;
@@ -1002,8 +1033,8 @@
                     next.placeName !== undefined
                         ? next.placeName
                         : placeChip?.title ?? null,
-                dateFrom,
-                dateTo,
+                dateFrom: nextDateFrom,
+                dateTo: nextDateTo,
                 semantic: semantic ? undefined : false,
                 mediaHash:
                     next.mediaHash !== undefined
@@ -1149,6 +1180,7 @@
         loadingPlaces = false;
         loading = false;
         placeHits = [];
+        periodHits = [];
         projectHits = [];
         layerHits = [];
         artefactHits = [];
@@ -1609,6 +1641,57 @@
         queueMicrotask(() => inputEl?.focus());
     }
 
+    async function resolvePeriodPlace(
+        spatial: string | undefined,
+    ): Promise<PlaceHit | null> {
+        const q = periodSpatialQuery(spatial);
+        if (!q) return null;
+        try {
+            const places = await searchMergedPlaces(q, 8);
+            return pickPeriodPlace(q, places);
+        } catch {
+            return null;
+        }
+    }
+
+    async function applyPeriod(hit: TermHit) {
+        closeMention();
+        abortSuggestions();
+        value = "";
+        const hasDates = hit.start_year != null || hit.end_year != null;
+        const place = await resolvePeriodPlace(hit.spatial);
+        const geom = place?.geom.type === "bbox" ? place.geom : null;
+        if (!hasDates && !geom) {
+            queueMicrotask(() => inputEl?.focus());
+            return;
+        }
+        if (geom && place) {
+            bbox = {
+                west: geom.west,
+                south: geom.south,
+                east: geom.east,
+                north: geom.north,
+            };
+            lat = null;
+            lng = null;
+            placeChip = { title: place.label };
+            appliedPlaceLabel = place.label;
+        }
+        if (atSearch || palette) {
+            navigate({
+                q: "",
+                dateFrom: hasDates ? (hit.start_year ?? null) : undefined,
+                dateTo: hasDates ? (hit.end_year ?? null) : undefined,
+                lat: geom ? null : undefined,
+                lng: geom ? null : undefined,
+                radius: geom ? null : undefined,
+                bbox: geom ?? undefined,
+                placeName: geom && place ? place.label : undefined,
+            });
+        }
+        queueMicrotask(() => inputEl?.focus());
+    }
+
     function applyProject(project: ProjectHit) {
         closeMention();
         abortSuggestions();
@@ -1687,6 +1770,10 @@
         }
         if (item.kind === "place") {
             applyPlace(item.place);
+            return;
+        }
+        if (item.kind === "period") {
+            void applyPeriod(item.hit);
             return;
         }
         if (item.kind === "project") {
@@ -2049,6 +2136,7 @@
         if (prefix.length < 2) {
             placesReq += 1;
             placeHits = [];
+            periodHits = [];
             projectHits = [];
             layerHits = [];
             artefactHits = [];
@@ -2064,7 +2152,7 @@
         loadingPlaces = true;
         try {
             const slug = scopedSlug;
-            const [omnibox, scoped] = await Promise.all([
+            const [omnibox, scoped, periods] = await Promise.all([
                 searchOmnibox(prefix, { accessToken }),
                 slug
                     ? searchProjectScope(slug, prefix, {
@@ -2072,9 +2160,11 @@
                           layer: activeLayer,
                       })
                     : Promise.resolve({ layers: [], artefacts: [], values: [] }),
+                searchTerms(prefix, { kind: "period", limit: 8 }),
             ]);
             if (req !== placesReq) return;
             placeHits = omnibox.places;
+            periodHits = periods;
             projectHits = slug
                 ? omnibox.projects.filter(
                       (p) => p.slug.toLowerCase() !== slug.toLowerCase(),
@@ -2086,6 +2176,7 @@
         } catch {
             if (req !== placesReq) return;
             placeHits = [];
+            periodHits = [];
             projectHits = [];
             layerHits = [];
             artefactHits = [];
@@ -2635,7 +2726,9 @@
                             {/if}
                         </p>
                     {:else}
-                        {#each menuItems as item, i (item.kind === "place"
+                        {#each menuItems as item, i (item.kind === "period"
+                            ? `period:${item.hit.uri}`
+                            : item.kind === "place"
                             ? `place:${item.place.id}`
                             : item.kind === "project"
                               ? `project:${item.project.slug}`
@@ -2716,6 +2809,20 @@
                                             >{item.kind === "slash"
                                                 ? `/${item.id} · ${item.hint}`
                                                 : item.hint}</span
+                                        >
+                                    </span>
+                                {:else if item.kind === "period"}
+                                    <CalendarRangeIcon
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium"
+                                            >{item.hit.label}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block truncate text-[11px] text-muted-foreground"
+                                            >{periodSubtitle(item.hit) ||
+                                                "Period"}</span
                                         >
                                     </span>
                                 {:else if item.kind === "place"}
