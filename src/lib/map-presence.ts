@@ -2,6 +2,10 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "$lib/supabase/client";
 import type { EditBufferEntry } from "$lib/geoDiff/types";
 import { asGeometry, compactGeometry } from "$lib/geoDiff/geometry";
+import {
+	cursorTickPayload,
+	shouldBroadcastPresence,
+} from "$lib/map-presence-send";
 
 const PRESENCE_TOPIC_PREFIX = "presence:";
 const CURSOR_EVENT = "cursor";
@@ -319,6 +323,7 @@ export async function connectMapPresence(opts: {
 	const peers = new Map<string, PresencePeer>();
 	let pageVisible = typeof document === "undefined" ? true : !document.hidden;
 	let lastSent: { lon: number; lat: number } | null = null;
+	let lastH: number | undefined;
 	let lastSentAt = 0;
 	let overlayTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingOverlay: PresenceOverlay | null = null;
@@ -337,6 +342,8 @@ export async function connectMapPresence(opts: {
 			presence: { key: userId },
 		},
 	});
+
+	let prevPeerCount = 0;
 
 	const applyPresence = () => {
 		const state = channel.presenceState() as Record<
@@ -360,7 +367,10 @@ export async function connectMapPresence(opts: {
 		for (const id of [...peers.keys()]) {
 			if (!seen.has(id)) peers.delete(id);
 		}
+		const gainedPeer = prevPeerCount === 0 && peers.size > 0;
+		prevPeerCount = peers.size;
 		emit();
+		if (gainedPeer) flushToNewPeers();
 	};
 
 	const applyOverlay = (overlay: {
@@ -391,6 +401,58 @@ export async function connectMapPresence(opts: {
 			existing.editing = overlay.editing;
 		}
 		emit();
+	};
+
+	const sendCursor = (force: boolean) => {
+		if (stopped || !pageVisible || !lastSent) return;
+		if (!shouldBroadcastPresence(peers.size)) return;
+		const now = Date.now();
+		if (!force && now - lastSentAt < THROTTLE_MS) return;
+		lastSentAt = now;
+		void channel.send({
+			type: "broadcast",
+			event: CURSOR_EVENT,
+			payload: cursorTickPayload(userId, lastSent.lon, lastSent.lat, lastH, now),
+		});
+	};
+
+	const flushOverlay = (overlay: PresenceOverlay) => {
+		if (stopped) return;
+		const now = Date.now();
+		const slim = slimOverlay(overlay);
+		lastSlimOverlay = slim;
+		if (!shouldBroadcastPresence(peers.size)) return;
+		const payload = {
+			user_id: userId,
+			t: now,
+			tracking_ref: slim.tracking_ref,
+			based_on: slim.based_on,
+			selection: slim.selection,
+			buffer: slim.buffer,
+			editing: slim.editing ?? null,
+		};
+		void channel
+			.send({
+				type: "broadcast",
+				event: OVERLAY_EVENT,
+				payload,
+			})
+			.then((status) => {
+				if (status !== "ok") {
+					console.warn(
+						"[presence] overlay send failed",
+						status,
+						JSON.stringify(payload).length,
+					);
+				}
+			});
+	};
+
+	const flushToNewPeers = () => {
+		sendCursor(true);
+		if (lastSlimOverlay && overlayHasContent(lastSlimOverlay)) {
+			flushOverlay(lastSlimOverlay);
+		}
 	};
 
 	channel
@@ -457,37 +519,6 @@ export async function connectMapPresence(opts: {
 		}
 	};
 
-	const flushOverlay = (overlay: PresenceOverlay) => {
-		if (stopped) return;
-		const now = Date.now();
-		const slim = slimOverlay(overlay);
-		lastSlimOverlay = slim;
-		const payload = {
-			user_id: userId,
-			t: now,
-			tracking_ref: slim.tracking_ref,
-			based_on: slim.based_on,
-			selection: slim.selection,
-			buffer: slim.buffer,
-			editing: slim.editing ?? null,
-		};
-		void channel
-			.send({
-				type: "broadcast",
-				event: OVERLAY_EVENT,
-				payload,
-			})
-			.then((status) => {
-				if (status !== "ok") {
-					console.warn(
-						"[presence] overlay send failed",
-						status,
-						JSON.stringify(payload).length,
-					);
-				}
-			});
-	};
-
 	const sendOverlay = (overlay: PresenceOverlay, force = false) => {
 		if (stopped) return;
 		pendingOverlay = overlay;
@@ -535,30 +566,10 @@ export async function connectMapPresence(opts: {
 		},
 		publishCursor: (lon, lat, h) => {
 			if (stopped || !pageVisible) return;
-			const now = Date.now();
-			if (now - lastSentAt < THROTTLE_MS) return;
 			if (!cursorMovedEnough(lastSent, lon, lat)) return;
-			lastSentAt = now;
 			lastSent = { lon, lat };
-			const payload: Record<string, unknown> = {
-				user_id: userId,
-				lon,
-				lat,
-				h,
-				t: now,
-			};
-			if (overlayHasContent(lastSlimOverlay) && lastSlimOverlay) {
-				payload.tracking_ref = lastSlimOverlay.tracking_ref;
-				payload.based_on = lastSlimOverlay.based_on;
-				payload.selection = lastSlimOverlay.selection;
-				payload.buffer = lastSlimOverlay.buffer;
-				payload.editing = lastSlimOverlay.editing ?? null;
-			}
-			void channel.send({
-				type: "broadcast",
-				event: CURSOR_EVENT,
-				payload,
-			});
+			lastH = h;
+			sendCursor(false);
 		},
 		publishOverlay: (overlay) => {
 			if (stopped || !pageVisible) return;

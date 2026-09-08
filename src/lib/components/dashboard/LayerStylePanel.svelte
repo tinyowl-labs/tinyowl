@@ -871,13 +871,26 @@
                             checked={Boolean(current.style.cluster)}
                             disabled={!canEdit}
                             onchange={(e) =>
-                                patchStyle((s) => ({
-                                    ...s,
-                                    cluster: (e.currentTarget as HTMLInputElement)
-                                        .checked
-                                        ? true
-                                        : undefined,
-                                }))}
+                                patchStyle((s) => {
+                                    const cluster = (
+                                        e.currentTarget as HTMLInputElement
+                                    ).checked;
+                                    if (!cluster) {
+                                        return {
+                                            ...s,
+                                            cluster: undefined,
+                                        };
+                                    }
+                                    return {
+                                        ...s,
+                                        cluster: true,
+                                        clusterPixelRange:
+                                            s.clusterPixelRange &&
+                                            s.clusterPixelRange > 0
+                                                ? s.clusterPixelRange
+                                                : DEFAULT_CLUSTER_PIXEL_RANGE,
+                                    };
+                                })}
                         />
                         Group nearby points
                     </label>

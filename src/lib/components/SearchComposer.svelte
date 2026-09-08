@@ -21,6 +21,7 @@
     import {
         searchHref,
         formatBBox,
+        formatDateSpan,
         formatLatLng,
         formatRadius,
         parseRadius,
@@ -169,6 +170,10 @@
         shortcutHint?: boolean;
         /** Gazetteer title restored from `?place=` */
         placeLabel?: string | null;
+        /** PeriodO ARK restored from `?term=` */
+        termUri?: string | null;
+        /** PeriodO prefLabel restored from `?period=` */
+        periodLabel?: string | null;
         /** Combobox listbox id (overlay vs page to avoid duplicate ids). */
         listboxId?: string;
         /**
@@ -206,6 +211,8 @@
         examples = [],
         shortcutHint = false,
         placeLabel = null,
+        termUri = null,
+        periodLabel = null,
         listboxId = "search-mention-list",
         palette = false,
         bare = false,
@@ -293,6 +300,9 @@
         lat?: number;
         lng?: number;
     } | null>(null);
+    const periodChip = $derived(
+        periodLabel ? { title: periodLabel, uri: termUri ?? "" } : null,
+    );
     let appliedPlaceLabel = $state<string | null>(null);
     let projectChipTitles = $state<Record<string, string>>({});
     /** Mentions chipped locally (e.g. `@slug `) before Enter navigates. */
@@ -367,12 +377,26 @@
     const hasChips = $derived(
         hasImageChip ||
             hasSpatialChip ||
+            Boolean(periodChip) ||
             activeTags.length > 0 ||
             activeVocabs.length > 0 ||
             activeLayers.length > 0 ||
             activeRows.length > 0 ||
             activeProjects.length > 0,
     );
+    const periodChipHint = $derived.by(() => {
+        if (!periodChip) return "Period filter";
+        const from =
+            dateFrom === "" || dateFrom == null ? null : Number(dateFrom);
+        const to = dateTo === "" || dateTo == null ? null : Number(dateTo);
+        const span = formatDateSpan(
+            from != null && Number.isFinite(from) ? from : null,
+            to != null && Number.isFinite(to) ? to : null,
+        );
+        const bits = [periodChip.title];
+        if (span) bits.push(span);
+        return bits.join(" · ");
+    });
     /** Chips use the same surface material as other chrome (glass / tinted / none). */
     const chipBtn =
         "surface inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-foreground shadow-sm hover:bg-accent";
@@ -961,6 +985,8 @@
         rows?: RowPredicate[];
         dateFrom?: number | null;
         dateTo?: number | null;
+        termUri?: string | null;
+        periodLabel?: string | null;
     }) {
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
@@ -972,7 +998,9 @@
         const nextDateTo = next.dateTo !== undefined ? next.dateTo : dateTo;
         const applyingDates =
             next.dateFrom !== undefined || next.dateTo !== undefined;
-        if (nextProjects.length === 1 && !applyingDates) {
+        const applyingPeriod =
+            next.termUri !== undefined || next.periodLabel !== undefined;
+        if (nextProjects.length === 1 && !applyingDates && !applyingPeriod) {
             const slug = nextProjects[0]!;
             const placeBBox = nextBBox;
             const placeLat = nextLat;
@@ -1035,6 +1063,14 @@
                         : placeChip?.title ?? null,
                 dateFrom: nextDateFrom,
                 dateTo: nextDateTo,
+                termUri:
+                    next.termUri !== undefined
+                        ? next.termUri
+                        : (periodChip?.uri || termUri || null),
+                periodLabel:
+                    next.periodLabel !== undefined
+                        ? next.periodLabel
+                        : (periodChip?.title ?? periodLabel ?? null),
                 semantic: semantic ? undefined : false,
                 mediaHash:
                     next.mediaHash !== undefined
@@ -1687,9 +1723,22 @@
                 radius: geom ? null : undefined,
                 bbox: geom ?? undefined,
                 placeName: geom && place ? place.label : undefined,
+                termUri: hit.uri,
+                periodLabel: hit.label,
             });
         }
         queueMicrotask(() => inputEl?.focus());
+    }
+
+    function removePeriod() {
+        if (atSearch) {
+            navigate({
+                dateFrom: null,
+                dateTo: null,
+                termUri: null,
+                periodLabel: null,
+            });
+        }
     }
 
     function applyProject(project: ProjectHit) {
@@ -2028,6 +2077,10 @@
             removeSpatial();
             return;
         }
+        if (periodChip) {
+            removePeriod();
+            return;
+        }
         if (activeVocabs.length > 0) {
             removeVocab(activeVocabs[activeVocabs.length - 1]!);
             return;
@@ -2057,6 +2110,7 @@
             !value &&
             !mentionOpen &&
             (hasSpatialChip ||
+                Boolean(periodChip) ||
                 activeTags.length > 0 ||
                 activeVocabs.length > 0 ||
                 activeLayers.length > 0 ||
@@ -2472,6 +2526,21 @@
                                 <CrosshairIcon class="size-3 shrink-0 text-muted-foreground" />
                             {/if}
                         </FilterChip>
+                    {/if}
+                    {#if periodChip}
+                        <button
+                            type="button"
+                            tabindex="-1"
+                            class="{chipBtn} max-w-[16rem]"
+                            onclick={removePeriod}
+                            title={periodChipHint}
+                        >
+                            <CalendarRangeIcon
+                                class="size-3 shrink-0 text-muted-foreground"
+                            />
+                            <span class="truncate">{periodChip.title}</span>
+                            <XIcon class="size-3 text-muted-foreground" />
+                        </button>
                     {/if}
                     {#each activeTags as tag (tag.toLowerCase())}
                         <FilterChip

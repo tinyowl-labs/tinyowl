@@ -51,6 +51,8 @@
         mediaHash?: string | null;
         imageQuery?: boolean;
         placeName?: string | null;
+        termUri?: string | null;
+        periodLabel?: string | null;
         results: DiscoveryProject[];
         /** When false, temporal + viewport filters stay client-side (home browse). */
         persistFilters?: boolean;
@@ -84,6 +86,8 @@
         mediaHash = null,
         imageQuery = false,
         placeName = null,
+        termUri = null,
+        periodLabel = null,
         results,
         persistFilters = false,
         onTemporalCommit,
@@ -309,6 +313,8 @@
                     {mediaHash}
                     {imageQuery}
                     placeLabel={placeName}
+                    {termUri}
+                    {periodLabel}
                     {accessToken}
                     {autofocus}
                     {examples}

@@ -58,6 +58,8 @@
         projects: SearchProject[];
         entityHits: Record<string, SearchEntityHit[]>;
         placeName: string | null;
+        termUri: string | null;
+        periodLabel: string | null;
         browse?: boolean;
     };
 
@@ -113,6 +115,8 @@
             mediaHash: data.mediaHash,
             imageQuery: data.imageQuery,
             placeName: data.placeName,
+            termUri: data.termUri,
+            periodLabel: data.periodLabel,
         } satisfies SearchParams),
     );
 
@@ -226,6 +230,8 @@
             mediaHash: string | null;
             imageQuery: boolean;
             placeName: string | null;
+            termUri: string | null;
+            periodLabel: string | null;
         }> = {},
         nav: { replaceState?: boolean } = {},
     ) {
@@ -278,6 +284,14 @@
                     overrides.placeName !== undefined
                         ? overrides.placeName
                         : data.placeName,
+                termUri:
+                    overrides.termUri !== undefined
+                        ? overrides.termUri
+                        : data.termUri,
+                periodLabel:
+                    overrides.periodLabel !== undefined
+                        ? overrides.periodLabel
+                        : data.periodLabel,
                 semantic: data.semantic ? undefined : false,
             }),
             { keepFocus: true, noScroll: true, ...nav },
@@ -318,7 +332,12 @@
     function onTemporalCommit(from: number | null, to: number | null) {
         dateFrom = from != null ? String(from) : "";
         dateTo = to != null ? String(to) : "";
-        navigateWith({ dateFrom, dateTo });
+        navigateWith({
+            dateFrom,
+            dateTo,
+            termUri: null,
+            periodLabel: null,
+        });
     }
 
     function onSpatialChange() {
@@ -437,6 +456,8 @@
     {mediaHash}
     {imageQuery}
     placeName={data.placeName}
+    termUri={data.termUri}
+    periodLabel={data.periodLabel}
     results={displayProjects}
     persistFilters={!data.browse}
     onTemporalCommit={data.browse ? undefined : onTemporalCommit}

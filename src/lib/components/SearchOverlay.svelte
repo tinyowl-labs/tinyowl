@@ -52,6 +52,20 @@
 		return Number.isFinite(n) ? n : DEFAULT_SEARCH_RADIUS;
 	});
 	const urlBBox = $derived(parseBBox($page.url.searchParams.get("bbox")));
+	const urlTerm = $derived(
+		($page.url.searchParams.get("term") ?? "").trim() || null,
+	);
+	const urlPeriod = $derived(
+		($page.url.searchParams.get("period") ?? "").trim() || null,
+	);
+	const urlDateFrom = $derived.by(() => {
+		const n = Number($page.url.searchParams.get("date_from"));
+		return Number.isFinite(n) ? n : null;
+	});
+	const urlDateTo = $derived.by(() => {
+		const n = Number($page.url.searchParams.get("date_to"));
+		return Number.isFinite(n) ? n : null;
+	});
 	const accessToken = $derived(
 		(($page.data as { accessToken?: string | null } | undefined)
 			?.accessToken ?? null) as string | null,
@@ -122,6 +136,10 @@
 					radius={urlRadius}
 					bbox={urlBBox}
 					placeLabel={urlPlace}
+					termUri={urlTerm}
+					periodLabel={urlPeriod}
+					dateFrom={urlDateFrom}
+					dateTo={urlDateTo}
 					placeholder={scopeSlug
 						? `Search in ${scopeTitle}…  /layer · /row · @ filters · # tag`
 						: "Search projects or places…  @ filters · # tag"}

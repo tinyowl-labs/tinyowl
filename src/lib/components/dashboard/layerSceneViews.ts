@@ -93,6 +93,95 @@ function applyEntityHeight(
     }
 }
 
+type ClusterApplied = {
+    range: number;
+    enabled: boolean;
+    color: string;
+};
+
+const clusterApplied = new WeakMap<object, ClusterApplied>();
+const clusterImages = new Map<string, string>();
+
+function rgbaKey(rgba: number[]): string {
+    return `${rgba[0] ?? 0},${rgba[1] ?? 0},${rgba[2] ?? 0}`;
+}
+
+function clusterCountImage(n: number, rgba: number[], size: number): string {
+    const key = `${n}:${size}:${rgbaKey(rgba)}`;
+    const hit = clusterImages.get(key);
+    if (hit) return hit;
+    const canvas = document.createElement("canvas");
+    const dim = Math.max(1, Math.round(size));
+    canvas.width = dim;
+    canvas.height = dim;
+    const g = canvas.getContext("2d");
+    if (!g) return "";
+    const r = dim / 2;
+    const cr = rgba[0] ?? 230;
+    const cg = rgba[1] ?? 80;
+    const cb = rgba[2] ?? 80;
+    g.beginPath();
+    g.arc(r, r, Math.max(1, r - 1.5), 0, Math.PI * 2);
+    g.fillStyle = `rgb(${cr},${cg},${cb})`;
+    g.fill();
+    g.lineWidth = 2;
+    g.strokeStyle = "rgba(255,255,255,0.92)";
+    g.stroke();
+    const text = String(n);
+    g.font = `600 ${n < 100 ? 12 : 10}px ui-sans-serif, system-ui, sans-serif`;
+    g.textAlign = "center";
+    g.textBaseline = "alphabetic";
+    const m = g.measureText(text);
+    const ascent = m.actualBoundingBoxAscent ?? 8;
+    const descent = m.actualBoundingBoxDescent ?? 2;
+    const ty = r + (ascent - descent) / 2;
+    g.lineJoin = "round";
+    g.lineWidth = 3;
+    g.strokeStyle = "rgba(0,0,0,0.7)";
+    g.strokeText(text, r, ty);
+    g.fillStyle = "#fff";
+    g.fillText(text, r, ty);
+    const url = canvas.toDataURL("image/png");
+    clusterImages.set(key, url);
+    return url;
+}
+
+function forceRecluster(ds: any, range: number) {
+    ds.clustering.pixelRange = 0;
+    ds.clustering.pixelRange = range;
+}
+
+function paintClusterPrimitive(
+    Cesium: any,
+    layers: LayerData[],
+    ds: any,
+    clusteredEntities: unknown[],
+    cluster: any,
+) {
+    const n = clusteredEntities?.length ?? 0;
+    const size = n < 10 ? 28 : n < 100 ? 36 : 44;
+    const live = layers.find((l) => l.name === ds.name);
+    const liveFill = layerLegendColor(live?.views, live?.activeViewId ?? "");
+    try {
+        if (cluster.point) cluster.point.show = false;
+        if (cluster.label) cluster.label.show = false;
+        if (cluster.billboard) {
+            cluster.billboard.show = true;
+            cluster.billboard.image = clusterCountImage(n, liveFill, size);
+            cluster.billboard.color = Cesium.Color.WHITE;
+            cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+            cluster.billboard.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
+            cluster.billboard.disableDepthTestDistance =
+                Number.POSITIVE_INFINITY;
+            if (cluster.label?.id != null) {
+                cluster.billboard.id = cluster.label.id;
+            }
+        }
+    } catch {
+        /* ignore */
+    }
+}
+
 function applyLayerClustering(
     ctx: LayerViewPaintCtx,
     ds: any,
@@ -107,58 +196,46 @@ function applyLayerClustering(
         view?.style.clusterPixelRange && view.style.clusterPixelRange > 0
             ? view.style.clusterPixelRange
             : DEFAULT_CLUSTER_PIXEL_RANGE;
-    ds.clustering.pixelRange = range;
+    const fill = layerLegendColor(layer?.views, layer?.activeViewId ?? "");
+    const color = rgbaKey(fill);
+
     ds.clustering.minimumClusterSize = 2;
     ds.clustering.clusterPoints = true;
     ds.clustering.clusterBillboards = true;
-    ds.clustering.clusterLabels = true;
+    ds.clustering.clusterLabels = false;
+    ds.__echidnaPaintCluster = (
+        clusteredEntities: unknown[],
+        cluster: any,
+    ) => paintClusterPrimitive(Cesium, layers, ds, clusteredEntities, cluster);
+
     if (!clusteredSources.has(ds)) {
         clusteredSources.add(ds);
         ds.clustering.clusterEvent.addEventListener(
             (clusteredEntities: unknown[], cluster: any) => {
-                const n = clusteredEntities?.length ?? 0;
-                const size = n < 10 ? 28 : n < 100 ? 36 : 44;
-                const live = layers.find((l) => l.name === ds.name);
-                const fill = layerLegendColor(
-                    live?.views,
-                    live?.activeViewId ?? "",
-                );
-                const color = colorFromRgba(Cesium, fill, 1);
-                try {
-                    if (cluster.billboard) cluster.billboard.show = false;
-                    if (cluster.point) {
-                        cluster.point.show = true;
-                        cluster.point.color = color;
-                        cluster.point.pixelSize = size;
-                        cluster.point.outlineColor =
-                            Cesium.Color.WHITE.withAlpha(0.9);
-                        cluster.point.outlineWidth = 2;
-                        cluster.point.disableDepthTestDistance =
-                            Number.POSITIVE_INFINITY;
-                    }
-                    if (cluster.label) {
-                        cluster.label.show = true;
-                        cluster.label.text = String(n);
-                        cluster.label.font =
-                            "650 12px ui-sans-serif, system-ui, sans-serif";
-                        cluster.label.fillColor = Cesium.Color.WHITE;
-                        cluster.label.outlineColor = Cesium.Color.BLACK;
-                        cluster.label.outlineWidth = 3;
-                        cluster.label.style =
-                            Cesium.LabelStyle?.FILL_AND_OUTLINE ??
-                            cluster.label.style;
-                        cluster.label.disableDepthTestDistance =
-                            Number.POSITIVE_INFINITY;
-                        cluster.label.pixelOffset = new Cesium.Cartesian2(0, 0);
-                    }
-                } catch {
-                    /* ignore */
-                }
+                ds.__echidnaPaintCluster?.(clusteredEntities, cluster);
             },
         );
     }
-    ds.clustering.enabled = false;
-    ds.clustering.enabled = on;
+
+    const prev = clusterApplied.get(ds);
+    if (!on) {
+        if (ds.clustering.enabled) ds.clustering.enabled = false;
+        clusterApplied.set(ds, { range, enabled: false, color });
+        return;
+    }
+
+    const needEnable = !ds.clustering.enabled;
+    const needBounce =
+        needEnable ||
+        !prev ||
+        !prev.enabled ||
+        prev.range !== range ||
+        prev.color !== color;
+
+    ds.clustering.pixelRange = range;
+    if (needEnable) ds.clustering.enabled = true;
+    if (needBounce) forceRecluster(ds, range);
+    clusterApplied.set(ds, { range, enabled: true, color });
 }
 
 /** Paint named-view fill / height / clustering onto CZML entities. */

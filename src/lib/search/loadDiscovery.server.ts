@@ -278,6 +278,8 @@ export async function loadDiscoverySearch(
     projects,
     entityHits,
     placeName: parsed.placeName,
+    termUri: parsed.termUri,
+    periodLabel: parsed.periodLabel,
     accessToken,
   };
 }
@@ -378,6 +380,8 @@ export async function loadHomeDiscovery(args: LoadArgs): Promise<DiscoveryPageDa
     projects,
     entityHits: {},
     placeName: null,
+    termUri: null,
+    periodLabel: null,
     accessToken,
   };
 }

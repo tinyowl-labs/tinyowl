@@ -34,6 +34,10 @@ export type SearchParams = {
   imageQuery: boolean;
   /** Gazetteer label for a point filter (`?place=`), display-only. */
   placeName: string | null;
+  /** PeriodO ARK for a named when-filter (`?term=`). */
+  termUri: string | null;
+  /** PeriodO prefLabel for the chip (`?period=`), display-only. */
+  periodLabel: string | null;
 };
 
 export const DEFAULT_SEARCH_RADIUS = 5000;
@@ -120,6 +124,8 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     mediaHash,
     imageQuery,
     placeName: (sp.get("place") ?? "").trim() || null,
+    termUri: (sp.get("term") ?? "").trim() || null,
+    periodLabel: (sp.get("period") ?? "").trim() || null,
   };
 }
 
@@ -139,6 +145,8 @@ export function buildSearchParams(input: {
   mediaHash?: string | null;
   imageQuery?: boolean | null;
   placeName?: string | null;
+  termUri?: string | null;
+  periodLabel?: string | null;
 }): URLSearchParams {
   const params = new URLSearchParams();
   const q = (input.q ?? "").trim();
@@ -222,6 +230,11 @@ export function buildSearchParams(input: {
     params.append("type", s);
   }
 
+  const term = (input.termUri ?? "").trim();
+  if (term) params.set("term", term);
+  const period = (input.periodLabel ?? "").trim();
+  if (period) params.set("period", period);
+
   return params;
 }
 
@@ -243,7 +256,9 @@ export function hasActiveSearch(p: SearchParams): boolean {
     p.tags.length > 0 ||
     p.vocabularies.length > 0 ||
     p.projects.length > 0 ||
-    p.types.length > 0
+    p.types.length > 0 ||
+    Boolean(p.termUri) ||
+    Boolean(p.periodLabel)
   );
 }
 

@@ -68,5 +68,9 @@ export type DiscoveryPageData = {
   projects: SearchProject[];
   entityHits: Record<string, SearchEntityHit[]>;
   placeName: string | null;
+  /** PeriodO ARK (`?term=`). */
+  termUri: string | null;
+  /** PeriodO prefLabel (`?period=`). */
+  periodLabel: string | null;
   accessToken: string | null;
 };
