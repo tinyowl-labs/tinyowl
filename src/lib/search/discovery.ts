@@ -1,6 +1,7 @@
 import {
 	bboxFromGeoJSON,
 	formatDateSpan,
+	formatYear,
 	type SearchBBox,
 } from "$lib/search/params";
 
@@ -51,12 +52,23 @@ export function projectTags(proj: DiscoveryProject, limit = 8): string[] {
 }
 
 export function projectDateLabel(proj: DiscoveryProject): string | null {
-	if (proj.date_start_label || proj.date_end_label) {
-		const a = proj.date_start_label ?? "";
-		const b = proj.date_end_label ?? "";
-		if (a && b && a !== b) return `${a} – ${b}`;
-		return a || b || null;
-	}
+	const startLabel = proj.date_start_label?.trim() || "";
+	const endLabel = proj.date_end_label?.trim() || "";
+
+	const fmt = (
+		label: string,
+		year: number | null | undefined,
+	): string | null => {
+		if (label && year != null) return `${label} (${formatYear(year)})`;
+		if (year != null) return formatYear(year);
+		if (label) return label;
+		return null;
+	};
+
+	const start = fmt(startLabel, proj.date_start ?? null);
+	const end = fmt(endLabel, proj.date_end ?? null);
+	if (start && end && start !== end) return `${start} – ${end}`;
+	if (start || end) return start || end;
 	return formatDateSpan(proj.date_start, proj.date_end);
 }
 

@@ -42,10 +42,10 @@
                         aria-current={isActive(item.id) ? "page" : undefined}
                         class={cn(
                             "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium no-underline ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                            "md:w-full md:justify-start md:px-2.5 md:shadow-none",
+                            "md:w-full md:justify-start md:px-3 md:hover:bg-accent",
                             isActive(item.id)
-                                ? "bg-background text-foreground shadow-sm md:bg-accent md:shadow-none"
-                                : "text-muted-foreground hover:text-foreground md:hover:bg-accent md:hover:text-foreground",
+                                ? "selected"
+                                : "text-muted-foreground hover:text-foreground",
                         )}
                     >
                         {item.label}

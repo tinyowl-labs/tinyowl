@@ -1,12 +1,9 @@
 <script lang="ts">
     import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
-    import BoxIcon from "@lucide/svelte/icons/box";
     import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
-    import {
-        projectDateLabel,
-        projectTags,
-        type DiscoveryProject,
-    } from "$lib/search/discovery";
+    import MapIcon from "@lucide/svelte/icons/map";
+    import { formatYear } from "$lib/search/params";
+    import { projectTags, type DiscoveryProject } from "$lib/search/discovery";
 
     type Props = {
         project: DiscoveryProject;
@@ -19,6 +16,7 @@
     let loading = $state(true);
     let entityCount = $state(0);
     let tableCount = $state(0);
+    let hasCover = $state(false);
 
     function authHeaders(): HeadersInit {
         return accessToken
@@ -32,16 +30,23 @@
         loading = true;
         entityCount = 0;
         tableCount = 0;
+        hasCover = false;
 
         void (async () => {
             try {
-                const res = await fetch(
+                const coverProbe = new Promise<boolean>((resolve) => {
+                    const img = new Image();
+                    img.onload = () => resolve(true);
+                    img.onerror = () => resolve(false);
+                    img.src = `/${encodeURIComponent(slug)}/cover`;
+                });
+                const tablesRes = await fetch(
                     `/api/v1/projects/${encodeURIComponent(slug)}/tables`,
                     { headers: authHeaders() },
                 );
                 if (cancelled) return;
-                if (res.ok) {
-                    const data = (await res.json()) as {
+                if (tablesRes.ok) {
+                    const data = (await tablesRes.json()) as {
                         tables?: Record<string, string[]>;
                         counts?: Record<string, number>;
                     };
@@ -57,6 +62,7 @@
                     entityCount = project.entity_count;
                     tableCount = project.table_count;
                 }
+                hasCover = await coverProbe;
             } catch {
                 if (cancelled) return;
                 entityCount = project.entity_count;
@@ -70,8 +76,26 @@
         };
     });
 
+    function datePoint(
+        year: number | null | undefined,
+        label: string | null | undefined,
+    ): string | null {
+        const l = label?.trim() || "";
+        if (l && year != null) return `${l} (${formatYear(year)})`;
+        if (l) return l;
+        if (year != null) return formatYear(year);
+        return null;
+    }
+
     const tags = $derived(projectTags(project, 12));
-    const dated = $derived(projectDateLabel(project));
+    const dateStartText = $derived(
+        datePoint(project.date_start, project.date_start_label),
+    );
+    const dateEndText = $derived(
+        datePoint(project.date_end, project.date_end_label),
+    );
+    const hasDates = $derived(Boolean(dateStartText || dateEndText));
+    const description = $derived((project.description ?? "").trim());
     const entityLabel = $derived(
         entityCount === 1 ? "entity" : "entities",
     );
@@ -81,61 +105,124 @@
         "flex min-h-10 w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium no-underline transition-colors";
 </script>
 
-<div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-2">
-        <button
-            type="button"
-            onclick={onBack}
-            class="inline-flex w-fit items-center gap-1 rounded-md text-xs text-muted-foreground hover:text-foreground"
-        >
-            <ArrowLeftIcon class="size-3.5" />
-            Back
-        </button>
-        <h2 class="text-base font-semibold leading-snug text-foreground">
-            {project.title}
-        </h2>
-        {#if project.description}
-            <p class="text-sm leading-relaxed text-muted-foreground">
-                {project.description}
-            </p>
-        {/if}
-        {#if dated}
-            <p class="text-xs text-muted-foreground">{dated}</p>
-        {/if}
-    </div>
-
-    {#if tags.length}
-        <div class="flex flex-wrap gap-1.5">
-            {#each tags as tag (tag)}
-                <span class="text-[11px] text-muted-foreground">#{tag}</span>
-            {/each}
+<div class="flex flex-col">
+    {#if hasCover}
+        <div class="relative">
+            <img
+                src="/{project.slug}/cover"
+                alt=""
+                class="aspect-[16/10] w-full object-cover"
+            />
+            <button
+                type="button"
+                onclick={onBack}
+                class="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-md bg-background/85 px-2 py-1 text-xs text-foreground shadow-sm backdrop-blur-sm hover:bg-background"
+            >
+                <ArrowLeftIcon class="size-3.5" />
+                Back
+            </button>
         </div>
     {/if}
 
-    <div class="flex flex-col gap-2">
-        <a
-            href="/{project.slug}"
-            class="{cta} border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
-        >
-            <FolderKanbanIcon class="size-4" />
-            View project
-        </a>
-        <a
-            href="/{project.slug}/layers"
-            class="{cta} bg-foreground text-background hover:bg-primary hover:text-primary-foreground"
-        >
-            <BoxIcon class="size-4" />
-            View 3D
-        </a>
-    </div>
+    <div class="flex flex-col gap-4 p-3">
+        {#if !hasCover}
+            <button
+                type="button"
+                onclick={onBack}
+                class="inline-flex w-fit items-center gap-1 rounded-md text-xs text-muted-foreground hover:text-foreground"
+            >
+                <ArrowLeftIcon class="size-3.5" />
+                Back
+            </button>
+        {/if}
 
-    {#if !loading}
-        <p class="text-xs text-muted-foreground">
-            {entityCount.toLocaleString()}
-            {entityLabel}
-            <span class="text-muted-foreground/50">·</span>
-            {tableCount.toLocaleString()}
-            {tableLabel}
-        </p>
-    {/if}
+        <div class="flex flex-col gap-1.5">
+            <h2 class="text-base font-semibold leading-snug text-foreground">
+                {project.title}
+            </h2>
+            {#if description}
+                <p class="text-sm leading-relaxed text-muted-foreground">
+                    {description}
+                </p>
+            {/if}
+        </div>
+
+        {#if hasDates}
+            <div class="relative pl-3.5 text-xs">
+                {#if dateStartText && dateEndText}
+                    <div
+                        class="absolute left-[4px] top-[10px] bottom-[10px] w-px bg-border"
+                        aria-hidden="true"
+                    ></div>
+                {/if}
+                {#if dateStartText}
+                    <div class="relative {dateEndText ? 'pb-4' : ''}">
+                        <span
+                            class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                            aria-hidden="true"
+                        ></span>
+                        <p
+                            class="text-[11px] tracking-wide text-muted-foreground/75"
+                        >
+                            From
+                        </p>
+                        <p class="text-[13px] leading-snug text-foreground/90">
+                            {dateStartText}
+                        </p>
+                    </div>
+                {/if}
+                {#if dateEndText}
+                    <div class="relative">
+                        <span
+                            class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                            aria-hidden="true"
+                        ></span>
+                        <p
+                            class="text-[11px] tracking-wide text-muted-foreground/75"
+                        >
+                            To
+                        </p>
+                        <p class="text-[13px] leading-snug text-foreground/90">
+                            {dateEndText}
+                        </p>
+                    </div>
+                {/if}
+            </div>
+        {/if}
+
+        {#if tags.length}
+            <div class="flex flex-wrap gap-x-2 gap-y-1">
+                {#each tags as tag (tag)}
+                    <span class="text-xs text-muted-foreground">#{tag}</span>
+                {/each}
+            </div>
+        {/if}
+
+        <div class="flex flex-col gap-2">
+            <a
+                href="/{project.slug}"
+                class="{cta} border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+                <FolderKanbanIcon class="size-4" />
+                Open project
+            </a>
+            <a
+                href="/{project.slug}/layers?view=map"
+                class="{cta} bg-foreground text-background hover:bg-primary hover:text-primary-foreground"
+            >
+                <MapIcon class="size-4" />
+                Open map
+            </a>
+        </div>
+
+        {#if !loading}
+            <p class="text-xs text-muted-foreground">
+                {entityCount.toLocaleString()}
+                {entityLabel}
+                <span class="text-muted-foreground/50">·</span>
+                {tableCount.toLocaleString()}
+                {tableLabel}
+            </p>
+        {/if}
+    </div>
 </div>

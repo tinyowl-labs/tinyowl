@@ -1,5 +1,6 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
+    import { invalidateAll } from "$app/navigation";
     import XIcon from "@lucide/svelte/icons/x";
     import { Button } from "$lib/components/ui/button/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
@@ -9,6 +10,10 @@
         FieldDescription,
         FieldGroup,
     } from "$lib/components/ui/field/index.js";
+    import CoverCropDialog from "$lib/components/ui/cover-crop-dialog.svelte";
+    import ProjectPreviewCard from "$lib/components/discovery/ProjectPreviewCard.svelte";
+    import { isAllowedAvatarType } from "$lib/avatar-crop";
+    import { createClient } from "$lib/supabase/client";
 
     let { data, form: rawForm } = $props();
     const form = $derived(rawForm as any);
@@ -17,9 +22,6 @@
     const projectTitle = $derived(project?.title ?? "Project");
     const slug = $derived(
         ((data as { slug?: string }).slug ?? (project?.slug as string) ?? ""),
-    );
-    const currentDescription = $derived(
-        ((project as any)?.description as string | null | undefined) ?? "",
     );
     const dateStart = $derived(
         (project as any)?.date_start as number | null | undefined,
@@ -33,13 +35,51 @@
     const dateEndLabel = $derived(
         ((project as any)?.date_end_label as string | null | undefined) ?? "",
     );
+    const hasCover = $derived(Boolean((project as any)?.has_cover));
 
-    let tags = $state<string[]>(
-        [
-            ...((((data as any)?.project)?.tags_manual as string[] | undefined) ??
-                []),
-        ],
-    );
+    let titleDraft = $state("");
+    let descriptionDraft = $state("");
+    let dateStartDraft = $state("");
+    let dateEndDraft = $state("");
+    let dateStartLabelDraft = $state("");
+    let dateEndLabelDraft = $state("");
+
+    $effect(() => {
+        titleDraft = project?.title ?? "";
+        descriptionDraft =
+            ((project as any)?.description as string | null | undefined) ?? "";
+        dateStartDraft = dateStart != null ? String(dateStart) : "";
+        dateEndDraft = dateEnd != null ? String(dateEnd) : "";
+        dateStartLabelDraft = dateStartLabel;
+        dateEndLabelDraft = dateEndLabel;
+    });
+
+    const previewDescription = $derived(descriptionDraft.trim());
+
+    let coverInput = $state<HTMLInputElement | null>(null);
+    let coverSaving = $state(false);
+    let coverBust = $state("");
+    let coverError = $state("");
+    let coverPresent = $state(false);
+    let coverCropOpen = $state(false);
+    let coverCropUrl = $state("");
+
+    $effect(() => {
+        coverPresent = hasCover;
+    });
+
+    $effect(() => {
+        if (coverCropOpen || !coverCropUrl.startsWith("blob:")) return;
+        const url = coverCropUrl;
+        coverCropUrl = "";
+        URL.revokeObjectURL(url);
+    });
+
+    let tags = $state<string[]>([
+        ...((((data as any)?.project)?.tags_manual as string[] | undefined) ??
+            []),
+    ]);
+    const previewTags = $derived(tags.slice(0, 8));
     let tagDraft = $state("");
     let suggestions = $state<string[]>([]);
 
@@ -101,74 +141,207 @@
             tags = tags.slice(0, -1);
         }
     }
+
+    async function onCoverFile(event: Event) {
+        const input = event.currentTarget as HTMLInputElement;
+        const file = input.files?.[0];
+        input.value = "";
+        if (!file) return;
+        if (!isAllowedAvatarType(file.type)) {
+            coverError = "Choose a JPG, PNG, WEBP, or GIF image.";
+            return;
+        }
+        if (coverCropUrl.startsWith("blob:")) URL.revokeObjectURL(coverCropUrl);
+        coverCropUrl = URL.createObjectURL(file);
+        coverCropOpen = true;
+        coverError = "";
+    }
+
+    async function saveCroppedCover(file: File) {
+        const supabase = createClient();
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) throw new Error("Not signed in.");
+        coverSaving = true;
+        coverError = "";
+        try {
+            const res = await fetch(
+                `/api/v1/projects/${encodeURIComponent(slug)}/cover`,
+                {
+                    method: "PUT",
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": file.type || "image/webp",
+                    },
+                    body: file,
+                },
+            );
+            if (!res.ok) throw new Error((await res.text()) || "Upload failed.");
+            coverPresent = true;
+            coverBust = String(Date.now());
+            await invalidateAll();
+        } catch (e) {
+            coverError = e instanceof Error ? e.message : "Upload failed.";
+            throw e;
+        } finally {
+            coverSaving = false;
+            if (coverCropUrl.startsWith("blob:")) URL.revokeObjectURL(coverCropUrl);
+            coverCropUrl = "";
+        }
+    }
+
+    async function removeCover() {
+        const supabase = createClient();
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) {
+            coverError = "Not signed in.";
+            return;
+        }
+        coverSaving = true;
+        coverError = "";
+        try {
+            const res = await fetch(
+                `/api/v1/projects/${encodeURIComponent(slug)}/cover`,
+                {
+                    method: "DELETE",
+                    headers: { Authorization: `Bearer ${token}` },
+                },
+            );
+            if (!res.ok) {
+                coverError = (await res.text()) || "Remove failed.";
+                return;
+            }
+            coverPresent = false;
+            coverBust = "";
+            await invalidateAll();
+        } catch (e: any) {
+            coverError = e?.message ?? "Remove failed.";
+        } finally {
+            coverSaving = false;
+        }
+    }
 </script>
 
 <svelte:head>
     <title>General — {projectTitle} — echidna</title>
 </svelte:head>
 
-<section>
-    <h2 class="text-sm font-medium text-foreground mb-1">General</h2>
-    <p class="text-sm text-muted-foreground mb-4">
-        Title, description, dates, and tags used on the project page and in
-        search.
-    </p>
-    {#if form?.error}
+<div class="space-y-6 w-full">
+    {#if form?.error || coverError}
         <p
-            class="mb-4 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+            class="rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
         >
-            {form.error}
+            {coverError || form.error}
         </p>
     {/if}
     {#if form?.success}
         <p
-            class="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+            class="rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
         >
             Saved.
         </p>
     {/if}
 
-    <form method="POST" action="?/updateGeneral" use:enhance class="space-y-4">
+    <section>
+        <h2 class="text-sm font-medium text-foreground mb-1">Preview</h2>
+        <p class="text-sm text-muted-foreground mb-4">
+            How this project appears in search and on the map.
+        </p>
+        <ProjectPreviewCard
+            {slug}
+            title={titleDraft}
+            description={previewDescription}
+            tags={previewTags}
+            hasCover={coverPresent}
+            {coverBust}
+            href="/{slug}"
+        />
+    </section>
+
+    <div class="flex flex-wrap gap-2">
+        <input
+            bind:this={coverInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            class="sr-only"
+            onchange={onCoverFile}
+        />
+        <button
+            type="button"
+            class="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+            disabled={coverSaving}
+            onclick={() => coverInput?.click()}
+        >
+            {coverPresent ? "Replace cover" : "Upload cover"}
+        </button>
+        {#if coverPresent}
+            <button
+                type="button"
+                class="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                disabled={coverSaving}
+                onclick={removeCover}
+            >
+                Remove cover
+            </button>
+        {/if}
+    </div>
+
+    <CoverCropDialog
+        bind:open={coverCropOpen}
+        imageUrl={coverCropUrl}
+        saving={coverSaving}
+        onSave={saveCroppedCover}
+    />
+
+    <form method="POST" action="?/updateGeneral" use:enhance class="space-y-6">
         {#each tags as tag}
             <input type="hidden" name="tag" value={tag} />
         {/each}
-        <FieldGroup>
-            <Field>
-                <FieldLabel for="title">Title</FieldLabel>
-                <Input
-                    id="title"
-                    name="title"
-                    required
-                    value={project?.title ?? ""}
-                    placeholder="Project title"
-                />
-            </Field>
-            <Field>
-                <FieldLabel for="slug">Slug</FieldLabel>
-                <Input
-                    id="slug"
-                    value={slug}
-                    readonly
-                    class="font-mono text-muted-foreground"
-                />
-                <FieldDescription>Used in URLs. Cannot be changed.</FieldDescription>
-            </Field>
-            <Field>
-                <FieldLabel for="description">Description</FieldLabel>
-                <textarea
-                    id="description"
-                    name="description"
-                    rows="4"
-                    class="dark:bg-input/30 border-input focus-visible:border-ring focus-visible:ring-ring/50 placeholder:text-muted-foreground h-auto min-h-[2.5rem] w-full rounded-md border bg-transparent px-2.5 py-2 text-sm shadow-xs outline-none focus-visible:ring-3"
-                    placeholder="Source, citation, short context…">{currentDescription}</textarea
-                >
-                <FieldDescription>
-                    Shown in search results. The README on the project page can
-                    hold longer notes.
-                </FieldDescription>
-            </Field>
-            <Field>
-                <FieldLabel>Dates</FieldLabel>
+
+        <section>
+            <h2 class="text-sm font-medium text-foreground mb-1">
+                Title & description
+            </h2>
+            <p class="text-sm text-muted-foreground mb-4">
+                Title appears on the project home and in search. Description is
+                the short blurb under the cover.
+            </p>
+            <FieldGroup>
+                <Field>
+                    <FieldLabel for="title">Title</FieldLabel>
+                    <Input
+                        id="title"
+                        name="title"
+                        required
+                        bind:value={titleDraft}
+                        placeholder="Project title"
+                    />
+                </Field>
+                <Field>
+                    <FieldLabel for="description">Description</FieldLabel>
+                    <textarea
+                        id="description"
+                        name="description"
+                        rows="4"
+                        bind:value={descriptionDraft}
+                        class="dark:bg-input/30 border-input focus-visible:border-ring focus-visible:ring-ring/50 placeholder:text-muted-foreground h-auto min-h-[2.5rem] w-full rounded-md border bg-transparent px-2.5 py-2 text-sm shadow-xs outline-none focus-visible:ring-3"
+                        placeholder="Source, citation, short context…"
+                    ></textarea>
+                    <FieldDescription>
+                        Longer notes belong in the project README.
+                    </FieldDescription>
+                </Field>
+            </FieldGroup>
+        </section>
+
+        <section>
+            <h2 class="text-sm font-medium text-foreground mb-1">Dates</h2>
+            <p class="text-sm text-muted-foreground mb-4">
+                Temporal extent for search and the project home rail. Negative
+                years are BCE.
+            </p>
+            <FieldGroup>
                 <div class="grid gap-4 sm:grid-cols-2">
                     <Field>
                         <FieldLabel for="date_start">Start year</FieldLabel>
@@ -177,7 +350,7 @@
                             name="date_start"
                             type="number"
                             step="1"
-                            value={dateStart ?? ""}
+                            bind:value={dateStartDraft}
                             placeholder="-800"
                         />
                     </Field>
@@ -188,7 +361,7 @@
                             name="date_end"
                             type="number"
                             step="1"
-                            value={dateEnd ?? ""}
+                            bind:value={dateEndDraft}
                             placeholder="400"
                         />
                     </Field>
@@ -197,7 +370,7 @@
                         <Input
                             id="date_start_label"
                             name="date_start_label"
-                            value={dateStartLabel}
+                            bind:value={dateStartLabelDraft}
                             placeholder="Iron Age"
                         />
                     </Field>
@@ -206,18 +379,21 @@
                         <Input
                             id="date_end_label"
                             name="date_end_label"
-                            value={dateEndLabel}
+                            bind:value={dateEndLabelDraft}
                             placeholder="Roman"
                         />
                     </Field>
                 </div>
-                <FieldDescription>
-                    Astronomical years — negative is BCE (−800 is 800 BCE).
-                    Labels are optional. Clear the years to remove the extent.
-                </FieldDescription>
-            </Field>
+            </FieldGroup>
+        </section>
+
+        <section>
+            <h2 class="text-sm font-medium text-foreground mb-1">Tags</h2>
+            <p class="text-sm text-muted-foreground mb-4">
+                Curator tags for search and similar projects. Press Enter or
+                comma to add.
+            </p>
             <Field>
-                <FieldLabel for="tag-input">Tags</FieldLabel>
                 <div
                     class="dark:bg-input/30 border-input focus-within:border-ring focus-within:ring-ring/50 flex min-h-9 w-full flex-wrap items-center gap-1.5 rounded-md border bg-transparent px-2 py-1.5 shadow-xs focus-within:ring-3"
                 >
@@ -243,12 +419,14 @@
                         onkeydown={onTagKey}
                         autocomplete="off"
                         class="min-w-[8rem] flex-1 bg-transparent py-0.5 text-sm outline-none placeholder:text-muted-foreground"
-                        placeholder={tags.length ? "Add tag" : "Place, period, topic…"}
+                        placeholder={tags.length
+                            ? "Add tag"
+                            : "Place, period, topic…"}
                     />
                 </div>
                 {#if suggestions.length > 0}
                     <ul
-                        class="surface rounded-md border border-border p-1 text-sm shadow-md"
+                        class="surface mt-2 rounded-md border border-border p-1 text-sm shadow-md"
                     >
                         {#each suggestions as s}
                             <li>
@@ -263,12 +441,16 @@
                         {/each}
                     </ul>
                 {/if}
-                <FieldDescription>
-                    Curator tags for search and similar projects. Press Enter or
-                    comma to add.
-                </FieldDescription>
             </Field>
-        </FieldGroup>
-        <Button type="submit">Save</Button>
+        </section>
+
+        <div class="flex items-center gap-3 border-t border-border pt-6">
+            <Button type="submit">Save changes</Button>
+            <a
+                href="/{slug}"
+                class="text-sm text-muted-foreground no-underline hover:text-foreground"
+                >View project</a
+            >
+        </div>
     </form>
-</section>
+</div>

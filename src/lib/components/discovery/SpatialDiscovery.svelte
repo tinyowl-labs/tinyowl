@@ -466,7 +466,7 @@
 
             {#if inspecting}
                 <div
-                    class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3"
+                    class="min-h-0 flex-1 overflow-y-auto overscroll-contain"
                     transition:fade={{ duration: motionOff ? 0 : 160 }}
                 >
                     <ProjectInspector

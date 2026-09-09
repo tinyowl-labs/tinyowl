@@ -12,6 +12,7 @@
     import BboxMap from "$lib/components/dashboard/BboxMap.svelte";
     import UserAvatar from "$lib/components/ui/user-avatar.svelte";
     import RequestJoinCta from "$lib/components/join/RequestJoinCta.svelte";
+    import { LICENCES, LOCATION_PRECISIONS } from "$lib/project/licences";
     import { searchHref } from "$lib/search/params";
 
     let { data, form } = $props();
@@ -80,7 +81,7 @@
     const dateEndLabel = $derived(
         ((project as any)?.date_end_label as string | null | undefined) ?? null,
     );
-    const dateRangeText = $derived.by(() => {
+    const dateStartText = $derived.by(() => {
         const fmt = (y: number | null | undefined, label: string | null) => {
             if (y == null && !label) return null;
             if (label && y != null) {
@@ -91,12 +92,22 @@
             if (y == null) return null;
             return y < 0 ? `${Math.abs(y)} BCE` : `${y} CE`;
         };
-        const a = fmt(dateStart, dateStartLabel);
-        const b = fmt(dateEnd, dateEndLabel);
-        if (!a && !b) return null;
-        if (a && b) return `${a} – ${b}`;
-        return a ?? b;
+        return fmt(dateStart, dateStartLabel);
     });
+    const dateEndText = $derived.by(() => {
+        const fmt = (y: number | null | undefined, label: string | null) => {
+            if (y == null && !label) return null;
+            if (label && y != null) {
+                const era = y < 0 ? `${Math.abs(y)} BCE` : `${y} CE`;
+                return `${label} (${era})`;
+            }
+            if (label) return label;
+            if (y == null) return null;
+            return y < 0 ? `${Math.abs(y)} BCE` : `${y} CE`;
+        };
+        return fmt(dateEnd, dateEndLabel);
+    });
+    const hasDates = $derived(Boolean(dateStartText || dateEndText));
 
     const displayTags = $derived(
         [...new Set(tagsManual.map((t) => t.trim()).filter(Boolean))],
@@ -121,6 +132,70 @@
         }
         return parts.join(" · ");
     });
+
+    const licenceKey = $derived(
+        String((project as any)?.licence ?? "").trim(),
+    );
+    const licenceInfo = $derived(
+        licenceKey
+            ? (LICENCES.find((l) => l.key === licenceKey) ?? {
+                  key: licenceKey,
+                  label: licenceKey,
+                  desc: "",
+                  url: "",
+              })
+            : null,
+    );
+
+    const hasCover = $derived(Boolean((project as any)?.has_cover));
+    const citationURI = $derived(
+        String((project as any)?.citation_uri ?? "").trim() || null,
+    );
+    const sourceURI = $derived(
+        String((project as any)?.source_uri ?? "").trim() || null,
+    );
+    const citationChip = $derived.by(() => {
+        const href = citationURI || sourceURI;
+        if (!href) return null;
+        const isDoi = /doi\.org\//i.test(href) || /^doi:/i.test(href);
+        return {
+            label: isDoi ? "DOI" : citationURI ? "Citation" : "Source",
+            href: href.replace(/^doi:/i, "https://doi.org/"),
+        };
+    });
+    const locationPrecision = $derived(
+        String((project as any)?.location_precision ?? "exact").trim() ||
+            "exact",
+    );
+    const precisionChip = $derived.by(() => {
+        if (locationPrecision === "exact") return null;
+        const opt = LOCATION_PRECISIONS.find(
+            (p) => p.key === locationPrecision,
+        );
+        return opt?.label ?? locationPrecision;
+    });
+    const embargoActive = $derived.by(() => {
+        const raw = (project as any)?.embargo_until as string | null | undefined;
+        if (!raw) return false;
+        const t = Date.parse(raw);
+        return Number.isFinite(t) && t > Date.now();
+    });
+    const humanRemains = $derived(
+        Boolean((project as any)?.human_remains),
+    );
+    const careRestricted = $derived(
+        Boolean((project as any)?.care_restricted_media),
+    );
+    const hasProvenanceChips = $derived(
+        Boolean(
+            citationChip ||
+                embargoActive ||
+                precisionChip ||
+                humanRemains ||
+                careRestricted ||
+                displayTags.length > 0,
+        ),
+    );
 
     function tagHref(tag: string) {
         return searchHref({ tags: [tag] });
@@ -297,58 +372,18 @@
                 formError={form?.error}
             />
         </div>
-        {#if dateRangeText || statsText || updated}
-            <div
-                class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
-            >
-                {#if dateRangeText}
-                    <span>{dateRangeText}</span>
-                {/if}
-                {#if statsText}
-                    {#if dateRangeText}<span class="text-muted-foreground/40">·</span>{/if}
-                    <span>{statsText}</span>
-                {/if}
-                {#if updated}
-                    {#if dateRangeText || statsText}<span class="text-muted-foreground/40">·</span>{/if}
-                    <span class="inline-flex items-center gap-1">
-                        <ClockIcon class="size-3.5" />
-                        Updated {updated}
-                    </span>
-                {/if}
-            </div>
-        {/if}
     </div>
 
-    <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-start">
+    <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
         <div class="min-w-0">
-            {#if (project as any)?.bbox}
-                <section class="mb-6">
-                    <BboxMap
-                        bbox={(project as any).bbox}
-                        href={`/${project?.slug}/layers?view=map`}
-                        class="h-48"
+            {#if hasCover}
+                <section class="mb-8">
+                    <img
+                        src="/{project?.slug}/cover"
+                        alt=""
+                        class="h-48 w-full rounded-lg border border-border object-cover"
                     />
                 </section>
-            {/if}
-
-            {#if description}
-                <p
-                    class="mb-5 max-w-2xl text-base leading-relaxed text-muted-foreground whitespace-pre-wrap"
-                >
-                    {description}
-                </p>
-            {/if}
-
-            {#if displayTags.length > 0}
-                <div class="mb-6 flex flex-wrap items-center gap-2">
-                    {#each displayTags as tag}
-                        <a
-                            href={tagHref(tag)}
-                            class="rounded-md bg-secondary px-2 py-1 text-[12px] text-foreground/85 no-underline hover:bg-secondary/80 hover:text-foreground"
-                            >{tag}</a
-                        >
-                    {/each}
-                </div>
             {/if}
 
             <section>
@@ -417,6 +452,151 @@
         </div>
 
         <aside class="flex flex-col gap-3 lg:sticky lg:top-6">
+            {#if (project as any)?.bbox}
+                <BboxMap
+                    bbox={(project as any).bbox}
+                    href={`/${project?.slug}/layers?view=map`}
+                    class="h-36 w-full"
+                />
+            {/if}
+
+            {#if description || hasDates || statsText || updated || licenceInfo || hasProvenanceChips}
+                <div class="rounded-lg border border-border px-4 py-3 space-y-3">
+                    {#if description}
+                        <p
+                            class="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap"
+                        >
+                            {description}
+                        </p>
+                    {/if}
+                    {#if hasDates}
+                        <div class="relative pl-3.5 text-xs">
+                            {#if dateStartText && dateEndText}
+                                <div
+                                    class="absolute left-[4px] top-[10px] bottom-[10px] w-px bg-border"
+                                    aria-hidden="true"
+                                ></div>
+                            {/if}
+                            {#if dateStartText}
+                                <div class="relative {dateEndText ? 'pb-4' : ''}">
+                                    <span
+                                        class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                                        aria-hidden="true"
+                                    ></span>
+                                    <p
+                                        class="text-[11px] tracking-wide text-muted-foreground/75"
+                                    >
+                                        From
+                                    </p>
+                                    <p class="text-[13px] text-foreground/90 leading-snug"
+                                        >{dateStartText}</p
+                                    >
+                                </div>
+                            {/if}
+                            {#if dateEndText}
+                                <div class="relative">
+                                    <span
+                                        class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                                        aria-hidden="true"
+                                    ></span>
+                                    <p
+                                        class="text-[11px] tracking-wide text-muted-foreground/75"
+                                    >
+                                        To
+                                    </p>
+                                    <p class="text-[13px] text-foreground/90 leading-snug"
+                                        >{dateEndText}</p
+                                    >
+                                </div>
+                            {/if}
+                        </div>
+                    {/if}
+                    {#if statsText || updated}
+                        <div
+                            class="flex flex-col gap-1 text-xs text-muted-foreground"
+                        >
+                            {#if statsText}
+                                <span>{statsText}</span>
+                            {/if}
+                            {#if updated}
+                                <span class="inline-flex items-center gap-1">
+                                    <ClockIcon class="size-3" />
+                                    Updated {updated}
+                                </span>
+                            {/if}
+                        </div>
+                    {/if}
+                    {#if licenceInfo}
+                        <p class="text-xs text-muted-foreground">
+                            Licence
+                            {#if licenceInfo.url}
+                                <a
+                                    href={licenceInfo.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="ml-1 text-foreground/85 underline-offset-2 hover:underline"
+                                    title={licenceInfo.desc || licenceInfo.label}
+                                    >{licenceInfo.label}</a
+                                >
+                            {:else}
+                                <span class="ml-1 text-foreground/85"
+                                    >{licenceInfo.label}</span
+                                >
+                            {/if}
+                            {#if licenceInfo.desc}
+                                <span class="text-muted-foreground/70">
+                                    — {licenceInfo.desc}</span
+                                >
+                            {/if}
+                        </p>
+                    {/if}
+                    {#if hasProvenanceChips}
+                        <div class="flex flex-wrap items-center gap-1.5 gap-y-2">
+                            {#if citationChip}
+                                <a
+                                    href={citationChip.href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="rounded-md bg-secondary px-2 py-0.5 text-[11px] leading-5 text-foreground/85 no-underline hover:bg-secondary/80 hover:text-foreground"
+                                    >{citationChip.label}</a
+                                >
+                            {/if}
+                            {#if embargoActive}
+                                <span
+                                    class="rounded-md bg-secondary px-2 py-0.5 text-[11px] leading-5 text-foreground/85"
+                                    title={(project as any)?.embargo_note ||
+                                        "Embargo active"}
+                                    >Embargoed</span
+                                >
+                            {/if}
+                            {#if precisionChip}
+                                <span
+                                    class="rounded-md bg-secondary px-2 py-0.5 text-[11px] leading-5 text-foreground/85"
+                                    title="Location precision"
+                                    >{precisionChip}</span
+                                >
+                            {/if}
+                            {#if careRestricted || humanRemains}
+                                <span
+                                    class="rounded-md bg-secondary px-2 py-0.5 text-[11px] leading-5 text-foreground/85"
+                                    title={humanRemains
+                                        ? "Human remains flagged"
+                                        : "Some media are CARE-restricted"}
+                                    >CARE</span
+                                >
+                            {/if}
+                            {#each displayTags as tag}
+                                <a
+                                    href={tagHref(tag)}
+                                    class="rounded-md bg-secondary px-2 py-0.5 text-[11px] leading-5 text-foreground/85 no-underline hover:bg-secondary/80 hover:text-foreground"
+                                    >{tag}</a
+                                >
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+            {/if}
+
             <div class="rounded-lg border border-border overflow-hidden">
                 <div class="px-4 py-3">
                     <p class="text-sm font-medium text-foreground">Owner</p>
