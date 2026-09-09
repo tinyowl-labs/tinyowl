@@ -20,6 +20,7 @@ type Invite = {
     id: string;
     role: string;
     email?: string | null;
+    invitee_user_id?: string | null;
     expired?: boolean;
     expires_at?: string;
 };

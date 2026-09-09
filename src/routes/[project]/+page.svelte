@@ -300,6 +300,7 @@
                 {pending}
                 loginHref="/auth/login?next={encodeURIComponent(`/${project?.slug ?? ""}`)}"
                 formError={form?.error}
+                leaveAction="?/leaveProject"
             />
         </div>
         {#if description}

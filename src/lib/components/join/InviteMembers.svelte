@@ -10,6 +10,7 @@
         id: string;
         role: string;
         email?: string | null;
+        invitee_user_id?: string | null;
         url?: string;
         expires_at?: string;
         expired?: boolean;
@@ -298,7 +299,10 @@
                 <div class="flex items-center justify-between gap-3 px-4 py-2">
                     <div class="min-w-0 text-sm">
                         <p class="truncate text-foreground">
-                            {inv.email || "Anyone with the link"}
+                            {inv.email ||
+                                (inv.invitee_user_id
+                                    ? "Waiting for response"
+                                    : "Anyone with the link")}
                         </p>
                         <p class="text-xs text-muted-foreground">
                             {inv.role}{#if inv.expired} · expired{/if}

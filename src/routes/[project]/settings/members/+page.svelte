@@ -1,5 +1,7 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
+    import { goto } from "$app/navigation";
+    import LogOutIcon from "@lucide/svelte/icons/log-out";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import XIcon from "@lucide/svelte/icons/x";
     import Trash2Icon from "@lucide/svelte/icons/trash-2";
@@ -204,6 +206,42 @@
                                 </Button>
                             </form>
                         </div>
+                    {:else if member.user_id === currentUserId}
+                        <form
+                            method="POST"
+                            action="?/removeMember"
+                            use:enhance={() => {
+                                return async ({ result, update }) => {
+                                    await update();
+                                    if (result.type === "success") {
+                                        await goto("/");
+                                    }
+                                };
+                            }}
+                        >
+                            <input
+                                type="hidden"
+                                name="userId"
+                                value={member.user_id}
+                            />
+                            <Button
+                                type="submit"
+                                variant="ghost"
+                                size="sm"
+                                class="shrink-0 gap-1.5 text-muted-foreground hover:text-destructive"
+                                onclick={(e) => {
+                                    if (
+                                        !confirm(
+                                            "Leave this project? You will lose access until someone re-invites you.",
+                                        )
+                                    )
+                                        e.preventDefault();
+                                }}
+                            >
+                                <LogOutIcon class="size-3.5" />
+                                Leave
+                            </Button>
+                        </form>
                     {/if}
                 </div>
             {/each}

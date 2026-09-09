@@ -45,12 +45,19 @@
 		const data = $page.data as {
 			project?: { title?: string };
 			org?: { name?: string };
-			profile?: { display_name?: string };
+			profile?: {
+				display_name?: string;
+				first_name?: string;
+				last_name?: string;
+			};
 		};
 		if (projectSlug) return data.project?.title ?? projectSlug;
 		if (orgSlug) return data.org?.name ?? orgSlug;
-		if (path.startsWith("/users/") && data.profile?.display_name) {
-			return data.profile.display_name;
+		if (path.startsWith("/users/") && data.profile) {
+			const first = data.profile.first_name?.trim() ?? "";
+			const last = data.profile.last_name?.trim() ?? "";
+			const full = `${first} ${last}`.trim();
+			return full || data.profile.display_name || "";
 		}
 		if (path === "/settings" || path.startsWith("/settings/")) {
 			return "Settings";

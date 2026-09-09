@@ -13,17 +13,21 @@ export type InboxJoinRequest = {
 };
 
 export type InboxNotification = {
-	id: string;
-	kind: string;
-	title: string;
-	read_at?: string | null;
-	created_at: string;
-	join_request?: InboxJoinRequest | null;
-	invite?: {
-		kind: string;
-		org_slug?: string;
-		project_slug?: string;
-	} | null;
+    id: string;
+    kind: string;
+    title: string;
+    read_at?: string | null;
+    created_at: string;
+    join_request?: InboxJoinRequest | null;
+    invite?: {
+        id: string;
+        kind: string;
+        org_slug?: string;
+        project_slug?: string;
+        accepted_at?: string | null;
+        declined_at?: string | null;
+        revoked_at?: string | null;
+    } | null;
 };
 
 function safeHref(raw: string): string | null {
@@ -73,16 +77,64 @@ export const actions: Actions = {
 		throw redirect(303, href);
 	},
 
-	readAll: async ({ locals, fetch }) => {
-		const { user } = await locals.getSession();
-		if (!user) throw redirect(303, "/auth/login?next=/inbox");
-		const token = await locals.getAccessToken();
-		if (token) {
-			await fetch(`${TINYOWL_CORE_URL}/api/v1/notifications/read-all`, {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}` },
-			});
-		}
-		return { success: true };
-	},
+    readAll: async ({ locals, fetch }) => {
+        const { user } = await locals.getSession();
+        if (!user) throw redirect(303, "/auth/login?next=/inbox");
+        const token = await locals.getAccessToken();
+        if (token) {
+            await fetch(`${TINYOWL_CORE_URL}/api/v1/notifications/read-all`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+        }
+        return { success: true };
+    },
+
+    acceptInvite: async ({ request, locals, fetch }) => {
+        const { user } = await locals.getSession();
+        if (!user) throw redirect(303, "/auth/login?next=/inbox");
+        const data = await request.formData();
+        const id = String(data.get("id") ?? "").trim();
+        if (!id) return { error: "Invite id required." };
+        const token = await locals.getAccessToken();
+        const res = await fetch(
+            `${TINYOWL_CORE_URL}/api/v1/invites/${encodeURIComponent(id)}/accept`,
+            {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+            },
+        );
+        if (!res.ok) {
+            try {
+                return { error: (await res.json()).error ?? "Failed." };
+            } catch (_) {
+                return { error: await res.text() };
+            }
+        }
+        return { success: true, inboxAction: "accepted" };
+    },
+
+    declineInvite: async ({ request, locals, fetch }) => {
+        const { user } = await locals.getSession();
+        if (!user) throw redirect(303, "/auth/login?next=/inbox");
+        const data = await request.formData();
+        const id = String(data.get("id") ?? "").trim();
+        if (!id) return { error: "Invite id required." };
+        const token = await locals.getAccessToken();
+        const res = await fetch(
+            `${TINYOWL_CORE_URL}/api/v1/invites/${encodeURIComponent(id)}/decline`,
+            {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+            },
+        );
+        if (!res.ok) {
+            try {
+                return { error: (await res.json()).error ?? "Failed." };
+            } catch (_) {
+                return { error: await res.text() };
+            }
+        }
+        return { success: true, inboxAction: "declined" };
+    },
 };

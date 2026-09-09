@@ -4,9 +4,18 @@
     import { Button } from "$lib/components/ui/button/index.js";
     import type { InboxNotification } from "./+page.server";
 
-    let { data } = $props();
+    let { data, form: rawForm } = $props();
+    const form = $derived(rawForm as any);
     const items = $derived(data.items ?? []);
     const unread = $derived(data.unread ?? 0);
+
+    function actionableInvite(n: InboxNotification) {
+        if (n.kind !== "invite_received" || !n.invite) return null;
+        if (n.invite.accepted_at || n.invite.declined_at || n.invite.revoked_at) {
+            return null;
+        }
+        return n.invite;
+    }
 
     function targetHref(n: InboxNotification): string {
         const jr = n.join_request;
@@ -62,6 +71,14 @@
                 {/if}
             </div>
 
+            {#if form?.error}
+                <p
+                    class="mb-4 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                >
+                    {form.error}
+                </p>
+            {/if}
+
             {#if items.length === 0}
                 <div
                     class="rounded-lg border border-dashed border-border px-4 py-12 text-center"
@@ -78,37 +95,82 @@
                     class="divide-y divide-border rounded-lg border border-border"
                 >
                     {#each items as n (n.id)}
-                        <form method="POST" action="?/open" use:enhance>
-                            <input type="hidden" name="id" value={n.id} />
-                            <input
-                                type="hidden"
-                                name="href"
-                                value={targetHref(n)}
-                            />
-                            <button
-                                type="submit"
-                                class="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-accent/60"
+                        {@const invite = actionableInvite(n)}
+                        <div class="flex items-start gap-3 px-4 py-3">
+                            <form
+                                method="POST"
+                                action="?/open"
+                                use:enhance
+                                class="min-w-0 flex-1"
                             >
-                                <span
-                                    class="mt-1.5 size-2 shrink-0 rounded-full {n.read_at
-                                        ? "bg-transparent"
-                                        : "bg-primary"}"
-                                    aria-hidden="true"
-                                ></span>
-                                <span class="min-w-0 flex-1">
+                                <input type="hidden" name="id" value={n.id} />
+                                <input
+                                    type="hidden"
+                                    name="href"
+                                    value={targetHref(n)}
+                                />
+                                <button
+                                    type="submit"
+                                    class="flex w-full items-start gap-3 text-left hover:bg-accent/60"
+                                >
                                     <span
-                                        class="block text-sm {n.read_at
-                                            ? "font-normal text-foreground"
-                                            : "font-medium text-foreground"}"
-                                        >{n.title}</span
+                                        class="mt-1.5 size-2 shrink-0 rounded-full {n.read_at
+                                            ? "bg-transparent"
+                                            : "bg-primary"}"
+                                        aria-hidden="true"
+                                    ></span>
+                                    <span class="min-w-0 flex-1">
+                                        <span
+                                            class="block text-sm {n.read_at
+                                                ? "font-normal text-foreground"
+                                                : "font-medium text-foreground"}"
+                                            >{n.title}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block text-xs text-muted-foreground"
+                                            >{when(n.created_at)}</span
+                                        >
+                                    </span>
+                                </button>
+                            </form>
+                            {#if invite}
+                                <div class="flex shrink-0 items-center gap-1.5">
+                                    <form
+                                        method="POST"
+                                        action="?/declineInvite"
+                                        use:enhance
                                     >
-                                    <span
-                                        class="mt-0.5 block text-xs text-muted-foreground"
-                                        >{when(n.created_at)}</span
+                                        <input
+                                            type="hidden"
+                                            name="id"
+                                            value={invite.id}
+                                        />
+                                        <Button
+                                            type="submit"
+                                            size="sm"
+                                            variant="ghost"
+                                            class="text-muted-foreground"
+                                        >
+                                            Decline
+                                        </Button>
+                                    </form>
+                                    <form
+                                        method="POST"
+                                        action="?/acceptInvite"
+                                        use:enhance
                                     >
-                                </span>
-                            </button>
-                        </form>
+                                        <input
+                                            type="hidden"
+                                            name="id"
+                                            value={invite.id}
+                                        />
+                                        <Button type="submit" size="sm">
+                                            Accept
+                                        </Button>
+                                    </form>
+                                </div>
+                            {/if}
+                        </div>
                     {/each}
                 </div>
             {/if}
