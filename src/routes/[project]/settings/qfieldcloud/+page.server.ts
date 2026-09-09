@@ -63,7 +63,7 @@ export const actions: Actions = {
 		const name = String(data.get("name") ?? "").trim();
 		if (!accountId) {
 			return {
-				error: "Choose the Echidna QFieldCloud account to use.",
+				error: "Choose a field Cloud account to use.",
 				qfieldAction: "provision",
 			};
 		}

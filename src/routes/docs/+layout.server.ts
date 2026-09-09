@@ -41,6 +41,7 @@ export const load: LayoutServerLoad = () => ({
       items: [
         { href: "/docs/guides/import-csv", label: "Import CSV" },
         { href: "/docs/guides/import-geojson", label: "Import GeoJSON" },
+        { href: "/docs/guides/field-sync", label: "Field sync" },
         { href: "/docs/guides/ogc-qgis", label: "OGC / QGIS" },
         { href: "/docs/guides/migration", label: "Migration" },
       ],
