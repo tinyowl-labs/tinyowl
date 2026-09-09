@@ -38,10 +38,9 @@ export type MapCursor = {
 
 export function projectTags(proj: DiscoveryProject, limit = 8): string[] {
 	const manual = proj.tags_manual ?? [];
-	const auto = proj.tags_auto ?? [];
 	const seen = new Set<string>();
 	const out: string[] = [];
-	for (const t of [...manual, ...auto]) {
+	for (const t of manual) {
 		const key = t.toLowerCase();
 		if (seen.has(key)) continue;
 		seen.add(key);

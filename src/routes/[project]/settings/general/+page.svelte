@@ -21,9 +21,6 @@
     const currentDescription = $derived(
         ((project as any)?.description as string | null | undefined) ?? "",
     );
-    const tagsAuto = $derived(
-        ((project as any)?.tags_auto as string[] | undefined) ?? [],
-    );
     const dateStart = $derived(
         (project as any)?.date_start as number | null | undefined,
     );
@@ -270,12 +267,6 @@
                     Curator tags for search and similar projects. Press Enter or
                     comma to add.
                 </FieldDescription>
-                {#if tagsAuto.length > 0}
-                    <p class="text-xs text-muted-foreground">
-                        Auto-derived:
-                        {tagsAuto.join(" · ")}
-                    </p>
-                {/if}
             </Field>
         </FieldGroup>
         <Button type="submit">Save</Button>

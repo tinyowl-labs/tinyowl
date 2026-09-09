@@ -67,9 +67,6 @@
     const tagsManual = $derived(
         ((project as any)?.tags_manual as string[] | undefined) ?? [],
     );
-    const tagsAuto = $derived(
-        ((project as any)?.tags_auto as string[] | undefined) ?? [],
-    );
     const dateStart = $derived(
         (project as any)?.date_start as number | null | undefined,
     );
@@ -101,30 +98,28 @@
         return a ?? b;
     });
 
-    // Quieter tag display: prefer manual, de-dupe, drop noisy auto heading crumbs.
-    const noisyAuto = new Set([
-        "details",
-        "project-details",
-        "overview",
-        "introduction",
-        "excavations",
-        "project",
-    ]);
-    const displayTags = $derived.by(() => {
-        const manual = [...new Set(tagsManual.map((t) => t.trim()).filter(Boolean))];
-        const manualSet = new Set(manual.map((t) => t.toLowerCase()));
-        const auto = [
-            ...new Set(
-                tagsAuto
-                    .map((t) => t.trim())
-                    .filter(Boolean)
-                    .filter((t) => !manualSet.has(t.toLowerCase()))
-                    .filter((t) => !noisyAuto.has(t.toLowerCase()))
-                    .filter((t) => !t.includes("-excavations"))
-                    .filter((t) => t.length >= 3 && t.length <= 32),
-            ),
-        ].slice(0, 8);
-        return { manual, auto };
+    const displayTags = $derived(
+        [...new Set(tagsManual.map((t) => t.trim()).filter(Boolean))],
+    );
+
+    const entityCount = $derived(
+        Number((project as any)?.entity_count ?? 0) || 0,
+    );
+    const tableCount = $derived(
+        Number((project as any)?.table_count ?? 0) || 0,
+    );
+
+    const statsText = $derived.by(() => {
+        const parts: string[] = [];
+        if (tableCount > 0) {
+            parts.push(`${tableCount.toLocaleString()} ${tableCount === 1 ? "table" : "tables"}`);
+        }
+        if (entityCount > 0) {
+            parts.push(
+                `${entityCount.toLocaleString()} ${entityCount === 1 ? "entity" : "entities"}`,
+            );
+        }
+        return parts.join(" · ");
     });
 
     function tagHref(tag: string) {
@@ -201,7 +196,7 @@
                     "present",
                     "survey",
                 ]);
-                const tagBits = [...tagsManual, ...tagsAuto]
+                const tagBits = [...tagsManual]
                     .map((t) => t.trim().toLowerCase())
                     .filter((t) => t && !drop.has(t))
                     .map((t) => t.replace(/-/g, " "))
@@ -300,36 +295,34 @@
                 {pending}
                 loginHref="/auth/login?next={encodeURIComponent(`/${project?.slug ?? ""}`)}"
                 formError={form?.error}
-                leaveAction="?/leaveProject"
             />
         </div>
-        {#if description}
-            <p
-                class="mt-3 max-w-2xl text-base leading-relaxed text-muted-foreground whitespace-pre-wrap"
+        {#if dateRangeText || statsText || updated}
+            <div
+                class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
             >
-                {description}
-            </p>
+                {#if dateRangeText}
+                    <span>{dateRangeText}</span>
+                {/if}
+                {#if statsText}
+                    {#if dateRangeText}<span class="text-muted-foreground/40">·</span>{/if}
+                    <span>{statsText}</span>
+                {/if}
+                {#if updated}
+                    {#if dateRangeText || statsText}<span class="text-muted-foreground/40">·</span>{/if}
+                    <span class="inline-flex items-center gap-1">
+                        <ClockIcon class="size-3.5" />
+                        Updated {updated}
+                    </span>
+                {/if}
+            </div>
         {/if}
-        <div
-            class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
-        >
-            {#if updated}
-                <span class="inline-flex items-center gap-1">
-                    <ClockIcon class="size-3.5" />
-                    Updated {updated}
-                </span>
-            {/if}
-            {#if dateRangeText}
-                {#if updated}<span class="text-muted-foreground/40">·</span>{/if}
-                <span>{dateRangeText}</span>
-            {/if}
-        </div>
     </div>
 
     <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-start">
         <div class="min-w-0">
             {#if (project as any)?.bbox}
-                <section class="mb-8">
+                <section class="mb-6">
                     <BboxMap
                         bbox={(project as any).bbox}
                         href={`/${project?.slug}/layers?view=map`}
@@ -338,32 +331,27 @@
                 </section>
             {/if}
 
-            <section>
-                {#if displayTags.manual.length > 0 || displayTags.auto.length > 0}
-                    <div class="mb-5 flex flex-wrap items-center gap-2">
-                        {#each displayTags.manual as tag}
-                            <a
-                                href={tagHref(tag)}
-                                class="rounded-md bg-secondary px-2 py-1 text-[12px] text-foreground/85 no-underline hover:bg-secondary/80 hover:text-foreground"
-                                >{tag}</a
-                            >
-                        {/each}
-                        {#if displayTags.manual.length > 0 && displayTags.auto.length > 0}
-                            <span class="text-muted-foreground/30 mx-0.5">·</span>
-                        {/if}
-                        {#each displayTags.auto as tag, i}
-                            <a
-                                href={tagHref(tag)}
-                                class="text-[12px] text-muted-foreground/65 no-underline hover:text-foreground hover:underline"
-                                title="Auto-derived">{tag}</a
-                            >
-                            {#if i < displayTags.auto.length - 1}
-                                <span class="text-muted-foreground/25">·</span>
-                            {/if}
-                        {/each}
-                    </div>
-                {/if}
+            {#if description}
+                <p
+                    class="mb-5 max-w-2xl text-base leading-relaxed text-muted-foreground whitespace-pre-wrap"
+                >
+                    {description}
+                </p>
+            {/if}
 
+            {#if displayTags.length > 0}
+                <div class="mb-6 flex flex-wrap items-center gap-2">
+                    {#each displayTags as tag}
+                        <a
+                            href={tagHref(tag)}
+                            class="rounded-md bg-secondary px-2 py-1 text-[12px] text-foreground/85 no-underline hover:bg-secondary/80 hover:text-foreground"
+                            >{tag}</a
+                        >
+                    {/each}
+                </div>
+            {/if}
+
+            <section>
                 {#if editing}
                     <form
                         method="POST"
@@ -473,9 +461,9 @@
                         {/if}
                     </div>
                 </div>
-                <div class="border-t border-border px-4 py-3">
-                    <p class="text-sm font-medium text-foreground">Members</p>
-                    {#if memberPeople.length > 0}
+                {#if memberPeople.length > 0}
+                    <div class="border-t border-border px-4 py-3">
+                        <p class="text-sm font-medium text-foreground">Members</p>
                         <div class="mt-2.5 flex items-center">
                             <div class="flex -space-x-2">
                                 {#each memberStack as person, i (person.user_id)}
@@ -501,10 +489,8 @@
                                 {/if}
                             </div>
                         </div>
-                    {:else}
-                        <p class="mt-2.5 text-xs text-muted-foreground">—</p>
-                    {/if}
-                </div>
+                    </div>
+                {/if}
             </div>
 
             <div class="rounded-lg border border-border overflow-hidden">
