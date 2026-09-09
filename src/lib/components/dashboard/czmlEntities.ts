@@ -1,11 +1,18 @@
 /**
  * Build entities from CZML the injalak way:
  * wait for real terrain → sampleTerrainMostDetailed → absolute Z → HeightReference.NONE.
+ *
+ * Ground polygons use the same path (not ClassificationType): classification
+ * paints opaque and shards on steep DEM. Sampled vertex heights + a small
+ * epsilon keep translucency and reduce z-fighting.
  */
 
 import { entityIdFromPacket } from "./czmlLoad";
 
 type CesiumNS = typeof import("cesium");
+
+/** Metres above sampled terrain so translucent polygon fills clear the DEM. */
+const GROUND_POLY_EPS_M = 0.75;
 
 function rgbaToColor(Cesium: any, rgba: unknown, fallback: any) {
     if (!Array.isArray(rgba) || rgba.length < 3) return fallback;
@@ -44,32 +51,6 @@ function ringHasZ(flat: number[]): boolean {
     return false;
 }
 
-/** Ground polygons: clamp unless a 3D tileset is visible, then classify terrain+tiles. */
-function polygonGroundMode(
-    useHeights: boolean,
-    classifyTiles: boolean,
-): "absolute" | "classify" | "clamp" {
-    if (useHeights) return "absolute";
-    if (classifyTiles) return "classify";
-    return "clamp";
-}
-
-function polygonGroundProps(
-    Cesium: any,
-    useHeights: boolean,
-    classifyTiles: boolean,
-): Record<string, unknown> {
-    const mode = polygonGroundMode(useHeights, classifyTiles);
-    if (mode === "absolute") return { perPositionHeight: true };
-    if (mode === "classify") {
-        return { classificationType: Cesium.ClassificationType.BOTH };
-    }
-    return {
-        height: 0,
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-    };
-}
-
 function polygonIsExtruded(entity: any): boolean {
     try {
         const h = entity?.polygon?.extrudedHeight;
@@ -81,36 +62,23 @@ function polygonIsExtruded(entity: any): boolean {
     }
 }
 
-function polygonHasZ(entity: any): boolean {
-    try {
-        const p = entity?.polygon?.perPositionHeight;
-        if (p == null) return false;
-        return Boolean(typeof p.getValue === "function" ? p.getValue() : p);
-    } catch {
-        return false;
-    }
-}
-
-/** Switch 2D polygons between clamp-to-ground and 3D-tile classification. */
+/**
+ * Kept for LayerScene tileset toggles. Classification is opaque/sharded on
+ * steep terrain — clear it so sampled absolute polygons stay translucent.
+ */
 export function applyPolygonClassification(
-    Cesium: any,
+    _Cesium: any,
     ds: any,
-    classifyTiles: boolean,
+    _classifyTiles: boolean,
 ): void {
-    if (!Cesium || !ds?.entities) return;
+    if (!ds?.entities) return;
     for (const entity of ds.entities.values) {
-        if (!entity?.polygon || polygonHasZ(entity) || polygonIsExtruded(entity)) {
-            continue;
-        }
-        if (classifyTiles) {
+        if (!entity?.polygon || polygonIsExtruded(entity)) continue;
+        entity.polygon.classificationType = undefined;
+        // Extrusion / view-height paint may set these; leave extruded alone.
+        if (entity.polygon.extrudedHeight == null) {
             entity.polygon.height = undefined;
             entity.polygon.heightReference = undefined;
-            entity.polygon.classificationType = Cesium.ClassificationType.BOTH;
-        } else {
-            entity.polygon.classificationType = undefined;
-            entity.polygon.height = 0;
-            entity.polygon.heightReference =
-                Cesium.HeightReference.CLAMP_TO_GROUND;
         }
     }
 }
@@ -119,7 +87,61 @@ function coordKey(lng: number, lat: number): string {
     return `${lng},${lat}`;
 }
 
-async function samplePointHeights(
+function pushSampleNeed(
+    Cesium: any,
+    lng: number,
+    lat: number,
+    seen: Set<string>,
+    cartographics: any[],
+    keys: string[],
+): void {
+    const key = coordKey(lng, lat);
+    if (seen.has(key)) return;
+    seen.add(key);
+    cartographics.push(Cesium.Cartographic.fromDegrees(lng, lat));
+    keys.push(key);
+}
+
+function collectFlatSamples(
+    Cesium: any,
+    flat: number[] | undefined,
+    seen: Set<string>,
+    cartographics: any[],
+    keys: string[],
+): void {
+    if (!flat) return;
+    for (let i = 0; i + 1 < flat.length; i += 3) {
+        const lng = flat[i]!;
+        const lat = flat[i + 1]!;
+        const h = flat[i + 2] ?? 0;
+        if (Math.abs(h) > 1e-6) continue;
+        pushSampleNeed(Cesium, lng, lat, seen, cartographics, keys);
+    }
+}
+
+function applyHeightMapToFlat(
+    flat: number[],
+    heightMap: Map<string, number>,
+    epsM: number,
+): number[] {
+    const out: number[] = [];
+    for (let i = 0; i + 1 < flat.length; i += 3) {
+        const lng = flat[i]!;
+        const lat = flat[i + 1]!;
+        const packetH = flat[i + 2] ?? 0;
+        const sampled = heightMap.get(coordKey(lng, lat));
+        const h =
+            sampled != null
+                ? sampled + epsM
+                : Math.abs(packetH) > 1e-6
+                  ? packetH
+                  : epsM;
+        out.push(lng, lat, h);
+    }
+    return out;
+}
+
+async function sampleGroundHeights(
     Cesium: CesiumNS | any,
     viewer: any,
     packets: Record<string, unknown>[],
@@ -132,17 +154,43 @@ async function samplePointHeights(
     for (const pkt of packets) {
         const point = pkt.point as Record<string, unknown> | undefined;
         const position = pkt.position as
-            | { cartographicDegrees?: number[] }
-            | undefined;
-        if (!point || !position?.cartographicDegrees) continue;
-        const [lng, lat, h = 0] = position.cartographicDegrees;
-        if (lng == null || lat == null) continue;
-        if (Math.abs(h) > 1e-6) continue;
-        const key = coordKey(lng, lat);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        cartographics.push(Cesium.Cartographic.fromDegrees(lng, lat));
-        keys.push(key);
+            { cartographicDegrees?: number[] } | undefined;
+        if (point && position?.cartographicDegrees) {
+            const [lng, lat, h = 0] = position.cartographicDegrees;
+            if (lng != null && lat != null && Math.abs(h) <= 1e-6) {
+                pushSampleNeed(Cesium, lng, lat, seen, cartographics, keys);
+            }
+        }
+
+        const polyline = pkt.polyline as Record<string, unknown> | undefined;
+        if (polyline) {
+            collectFlatSamples(
+                Cesium,
+                (polyline.positions as { cartographicDegrees?: number[] })
+                    ?.cartographicDegrees,
+                seen,
+                cartographics,
+                keys,
+            );
+        }
+
+        const polygon = pkt.polygon as Record<string, unknown> | undefined;
+        if (polygon) {
+            collectFlatSamples(
+                Cesium,
+                (polygon.positions as { cartographicDegrees?: number[] })
+                    ?.cartographicDegrees,
+                seen,
+                cartographics,
+                keys,
+            );
+            const holes = (
+                polygon.holes as { cartographicDegrees?: number[][] }
+            )?.cartographicDegrees;
+            for (const ring of holes ?? []) {
+                collectFlatSamples(Cesium, ring, seen, cartographics, keys);
+            }
+        }
     }
 
     if (cartographics.length === 0) return heightMap;
@@ -154,7 +202,7 @@ async function samplePointHeights(
         typeof Cesium.sampleTerrainMostDetailed !== "function"
     ) {
         console.warn(
-            "[czmlEntities] no World Terrain yet — points would sit at ellipsoid",
+            "[czmlEntities] no World Terrain yet — ground features sit near ellipsoid",
         );
         return heightMap;
     }
@@ -169,6 +217,19 @@ async function samplePointHeights(
     return heightMap;
 }
 
+async function yieldEntityBuild(): Promise<void> {
+    const scheduler = (
+        globalThis as typeof globalThis & {
+            scheduler?: { yield?: () => Promise<void> };
+        }
+    ).scheduler;
+    if (typeof scheduler?.yield === "function") {
+        await scheduler.yield();
+        return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 export async function customDataSourceFromCzml(
     Cesium: CesiumNS | any,
     viewer: any,
@@ -176,126 +237,212 @@ export async function customDataSourceFromCzml(
     layerName: string,
     opts?: { classifyTiles?: boolean },
 ): Promise<any> {
+    void opts; // tileset classify path removed — opaque / sharded on steep DEM
     const ds = new Cesium.CustomDataSource(layerName);
-    const heightMap = await samplePointHeights(Cesium, viewer, packets);
+    const terrainPoints: Array<{ entity: any; lng: number; lat: number }> = [];
+    const terrainPolygons: Array<{
+        entity: any;
+        flat: number[];
+        holesRaw: number[][] | undefined;
+    }> = [];
 
-    for (const pkt of packets) {
-        const id = pkt.id;
-        if (typeof id !== "string" || id === "document") continue;
-        const entityId = entityIdFromPacket(pkt, layerName);
-        if (!entityId) continue;
+    // Emit one collectionChanged notification after the bulk feed. Cesium's
+    // visualizers can then build their static batches without per-entity churn.
+    ds.entities.suspendEvents();
+    try {
+        for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+            const pkt = packets[packetIndex]!;
+            const id = pkt.id;
+            if (typeof id !== "string" || id === "document") continue;
+            const entityId = entityIdFromPacket(pkt, layerName);
+            if (!entityId) continue;
 
-        const props = pkt.properties;
-        const point = pkt.point as Record<string, unknown> | undefined;
-        const polyline = pkt.polyline as Record<string, unknown> | undefined;
-        const polygon = pkt.polygon as Record<string, unknown> | undefined;
-        const position = pkt.position as
-            | { cartographicDegrees?: number[] }
-            | undefined;
+            const props = pkt.properties;
+            const point = pkt.point as Record<string, unknown> | undefined;
+            const polyline = pkt.polyline as
+                Record<string, unknown> | undefined;
+            const polygon = pkt.polygon as Record<string, unknown> | undefined;
+            const position = pkt.position as
+                { cartographicDegrees?: number[] } | undefined;
 
-        if (point && position?.cartographicDegrees) {
-            const [lng, lat, h = 0] = position.cartographicDegrees;
-            if (lng == null || lat == null) continue;
-            const height =
-                Math.abs(h) > 1e-6
-                    ? h
-                    : (heightMap.get(coordKey(lng, lat)) ?? 0);
-            const color = czmlColor(
-                Cesium,
-                point.color,
-                Cesium.Color.DODGERBLUE,
-            );
-            const outline = czmlColor(
-                Cesium,
-                point.outlineColor,
-                Cesium.Color.WHITE.withAlpha(0.85),
-            );
-            ds.entities.add({
-                id,
-                position: Cesium.Cartesian3.fromDegrees(lng, lat, height),
-                point: {
-                    pixelSize: Number(point.pixelSize) || 8,
-                    color,
-                    outlineColor: outline,
-                    outlineWidth: Number(point.outlineWidth) || 1,
-                    heightReference: Cesium.HeightReference.NONE,
-                },
-                properties: props,
-            });
-            continue;
-        }
+            if (point && position?.cartographicDegrees) {
+                const [lng, lat, h = 0] = position.cartographicDegrees;
+                if (lng == null || lat == null) continue;
+                const height = h;
+                const color = czmlColor(
+                    Cesium,
+                    point.color,
+                    Cesium.Color.DODGERBLUE,
+                );
+                const outline = czmlColor(
+                    Cesium,
+                    point.outlineColor,
+                    Cesium.Color.WHITE.withAlpha(0.85),
+                );
+                const entity = ds.entities.add({
+                    id,
+                    position: Cesium.Cartesian3.fromDegrees(lng, lat, height),
+                    point: {
+                        pixelSize: Number(point.pixelSize) || 8,
+                        color,
+                        outlineColor: outline,
+                        outlineWidth: Number(point.outlineWidth) || 1,
+                        heightReference: Cesium.HeightReference.NONE,
+                    },
+                    properties: props,
+                });
+                if (Math.abs(h) <= 1e-6) {
+                    terrainPoints.push({ entity, lng, lat });
+                }
+                continue;
+            }
 
-        if (polyline) {
-            const flat = (
-                polyline.positions as { cartographicDegrees?: number[] }
-            )?.cartographicDegrees;
-            if (!flat || flat.length < 6) continue;
-            const useHeights = ringHasZ(flat);
-            const color = czmlColor(
-                Cesium,
-                polyline.material,
-                Cesium.Color.fromBytes(51, 128, 204, 255),
-            );
-            ds.entities.add({
-                id,
-                polyline: {
-                    positions: degreesToCartesians(Cesium, flat),
-                    width: Number(polyline.width) || 2,
-                    material: color,
-                    ...(useHeights ? {} : { clampToGround: true }),
-                },
-                properties: props,
-            });
-            continue;
-        }
+            if (polyline) {
+                const flat = (
+                    polyline.positions as { cartographicDegrees?: number[] }
+                )?.cartographicDegrees;
+                if (!flat || flat.length < 6) continue;
+                const useHeights = ringHasZ(flat);
+                const color = czmlColor(
+                    Cesium,
+                    polyline.material,
+                    Cesium.Color.fromBytes(51, 128, 204, 255),
+                );
+                ds.entities.add({
+                    id,
+                    polyline: {
+                        positions: degreesToCartesians(Cesium, flat),
+                        width: Number(polyline.width) || 2,
+                        material: color,
+                        ...(useHeights ? {} : { clampToGround: true }),
+                    },
+                    properties: props,
+                });
+                continue;
+            }
 
-        if (polygon) {
-            const flat = (
-                polygon.positions as { cartographicDegrees?: number[] }
-            )?.cartographicDegrees;
-            if (!flat || flat.length < 9) continue;
-            const useHeights = ringHasZ(flat);
-            const fill = czmlColor(
-                Cesium,
-                polygon.material,
-                Cesium.Color.fromBytes(51, 153, 204, 89),
-            );
-            const holesRaw = (
-                polygon.holes as { cartographicDegrees?: number[][] }
-            )?.cartographicDegrees;
-            const holes = (holesRaw ?? []).map(
-                (ring) =>
-                    new Cesium.PolygonHierarchy(
-                        degreesToCartesians(Cesium, ring),
-                    ),
-            );
-            const hierarchy = new Cesium.PolygonHierarchy(
-                degreesToCartesians(Cesium, flat),
-                holes,
-            );
-            const outline = czmlColor(
-                Cesium,
-                polygon.outlineColor,
-                Cesium.Color.fromBytes(30, 100, 160, 255),
-            );
-            ds.entities.add({
-                id,
+            if (polygon) {
+                const flat = (
+                    polygon.positions as { cartographicDegrees?: number[] }
+                )?.cartographicDegrees;
+                if (!flat || flat.length < 9) continue;
+                const useHeights = ringHasZ(flat);
+                const fill = czmlColor(
+                    Cesium,
+                    polygon.material,
+                    Cesium.Color.fromBytes(51, 153, 204, 89),
+                );
+                const holesRaw = (
+                    polygon.holes as { cartographicDegrees?: number[][] }
+                )?.cartographicDegrees;
+                const holes = (holesRaw ?? []).map(
+                    (ring) =>
+                        new Cesium.PolygonHierarchy(
+                            degreesToCartesians(Cesium, ring),
+                        ),
+                );
+                const hierarchy = new Cesium.PolygonHierarchy(
+                    degreesToCartesians(Cesium, flat),
+                    holes,
+                );
+                const outline = czmlColor(
+                    Cesium,
+                    polygon.outlineColor,
+                    Cesium.Color.fromBytes(30, 100, 160, 255),
+                );
+                const outlineWidth = Number(polygon.outlineWidth) || 2;
+                const wantOutline = polygon.outline !== false;
+                const entity = ds.entities.add({
+                    id,
                 polygon: {
                     hierarchy,
                     material: fill,
-                    outline: polygon.outline !== false,
+                    outline: wantOutline,
                     outlineColor: outline,
-                    outlineWidth: Number(polygon.outlineWidth) || 2,
-                    ...polygonGroundProps(
-                        Cesium,
-                        useHeights,
-                        Boolean(opts?.classifyTiles),
-                    ),
-                },
-                properties: props,
-            });
+                    outlineWidth,
+                    // Heightless polygons can paint immediately while the
+                    // accurate per-vertex terrain samples run in the background.
+                    ...(useHeights
+                        ? { perPositionHeight: true }
+                        : {
+                              height: 0,
+                              heightReference:
+                                  Cesium.HeightReference.CLAMP_TO_GROUND,
+                          }),
+                    },
+                    properties: props,
+                });
+                if (!useHeights) {
+                    terrainPolygons.push({
+                        entity,
+                        flat,
+                        holesRaw: holesRaw ?? undefined,
+                    });
+                }
+            }
+
+            // Cesium's Entity visualizers already batch static ground geometry;
+            // yield while feeding them so large layers do not become one long task.
+            if (packetIndex > 0 && packetIndex % 100 === 0) {
+                await yieldEntityBuild();
+            }
         }
+    } finally {
+        ds.entities.resumeEvents();
     }
+
+    // Terrain sampling is an enhancement, not a prerequisite for showing the
+    // layer. Let this data source return first, then correct zero-height
+    // features in a later task when the most-detailed samples arrive.
+    void yieldEntityBuild()
+        .then(() => sampleGroundHeights(Cesium, viewer, packets))
+        .catch(() => new Map<string, number>())
+        .then(async (heightMap) => {
+            if (ds.__echidnaDisposed || heightMap.size === 0) return;
+            for (const { entity, lng, lat } of terrainPoints) {
+                const height = heightMap.get(coordKey(lng, lat));
+                if (height == null) continue;
+                entity.position = Cesium.Cartesian3.fromDegrees(
+                    lng,
+                    lat,
+                    height,
+                );
+            }
+            for (let i = 0; i < terrainPolygons.length; i++) {
+                const { entity, flat, holesRaw } = terrainPolygons[i]!;
+                if (!entity?.polygon) continue;
+                const outer = applyHeightMapToFlat(
+                    flat,
+                    heightMap,
+                    GROUND_POLY_EPS_M,
+                );
+                const holeHierarchies = (holesRaw ?? []).map(
+                    (ring) =>
+                        new Cesium.PolygonHierarchy(
+                            degreesToCartesians(
+                                Cesium,
+                                applyHeightMapToFlat(
+                                    ring,
+                                    heightMap,
+                                    GROUND_POLY_EPS_M,
+                                ),
+                            ),
+                        ),
+                );
+                entity.polygon.hierarchy = new Cesium.PolygonHierarchy(
+                    degreesToCartesians(Cesium, outer),
+                    holeHierarchies,
+                );
+                entity.polygon.perPositionHeight = true;
+                entity.polygon.classificationType = undefined;
+                entity.polygon.height = undefined;
+                entity.polygon.heightReference = undefined;
+                if (i > 0 && i % 100 === 0) await yieldEntityBuild();
+            }
+            ds.__echidnaTerrainHeightsReady = true;
+            ds.__echidnaOnTerrainHeights?.();
+            viewer?.scene?.requestRender?.();
+        });
 
     return ds;
 }

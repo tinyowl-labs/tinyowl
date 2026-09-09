@@ -441,9 +441,16 @@ export function flyHomeOnce(ctx: LayerSceneCameraCtx) {
     if (computeHomeSphere(ctx)) {
         session.homeFlyStarted = true;
         ctx.setLastFlownKey(selectionFlyKey(ctx.selectionKeys()));
-        void flyHome(ctx, 1.0).then(() => {
-            ctx.setHasFramed(true);
-        });
+        // First paint should not wait for a decorative camera animation.
+        // User-triggered Home and later refocus operations still animate.
+        void flyHome(ctx, 0).then(
+            () => {
+                ctx.setHasFramed(true);
+            },
+            () => {
+                ctx.setHasFramed(true);
+            },
+        );
         return;
     }
     const expect =
@@ -451,5 +458,11 @@ export function flyHomeOnce(ctx: LayerSceneCameraCtx) {
     if (!expect) {
         session.homeFlyStarted = true;
         ctx.setHasFramed(true);
+        return;
     }
+    // Data is expected but no frameable extent is computable yet (tilesets
+    // still loading with show==false, hidden layers, 2D mode). Release the
+    // loading gate so the globe stays interactive, but leave homeFlyStarted
+    // false so a later sync (tileset prim ready, layer visible) still frames.
+    ctx.setHasFramed(true);
 }

@@ -5,6 +5,7 @@ export const SETTINGS_PAGES = [
     { id: "embargo", label: "Embargo" },
     { id: "qfieldcloud", label: "QField", separatorBefore: true },
     { id: "members", label: "Members" },
+    { id: "storage", label: "Storage" },
 ] as const;
 
 export type SettingsPageId = (typeof SETTINGS_PAGES)[number]["id"];
@@ -17,6 +18,7 @@ export const LEGACY_TAB_TO_PAGE: Record<string, SettingsPageId> = {
     embargo: "embargo",
     qfieldcloud: "qfieldcloud",
     members: "members",
+    storage: "storage",
 };
 
 export const SELECT_CLASS =

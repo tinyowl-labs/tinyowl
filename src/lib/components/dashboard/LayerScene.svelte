@@ -29,6 +29,7 @@
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
     import LayerStylePanel from "./LayerStylePanel.svelte";
+    import TilesetOffsetPanel from "./TilesetOffsetPanel.svelte";
     import LayerSeriesBar from "./LayerSeriesBar.svelte";
     import PickPager from "./PickPager.svelte";
     import { readInfoboxDocked } from "./infoboxDock";
@@ -132,8 +133,13 @@
         resolveSeriesKind,
         SERIES_ALL,
         seriesSteps,
+        styleRenderer,
         type LayerView,
     } from "./layerViews";
+    import {
+        fkEdgeForColumn,
+        loadFkLookups,
+    } from "$lib/project/schemaFields";
     import type { ProjectTileset } from "./tilesetTypes";
     import { isLocalTileset } from "./tilesetTypes";
     import type { ProjectCoverage } from "./coverageTypes";
@@ -270,6 +276,11 @@
         /** Scene mode: 2d = SCENE2D, 3d = SCENE3D. Does not reload CZML. */
         dim?: "2d" | "3d";
         onSelectTileset?: (hash: string) => void;
+        /** Member-only tileset height-offset save (metres, null = clear). */
+        onUpdateModelOffset?: (
+            hash: string,
+            offset: number | null,
+        ) => Promise<boolean | void> | boolean | void;
         fullscreen?: boolean;
         onToggleFullscreen?: () => void;
         onDimChange?: (dim: "2d" | "3d") => void;
@@ -286,6 +297,12 @@
         joinedKeys?: string[];
         /** owner / admin / collaborator — edit mode chrome. */
         canWrite?: boolean;
+        /**
+         * Role-based member flag for the tileset height-offset editor.
+         * Unlike canWrite this is not gated on viewingRef: the offset lives
+         * in media metadata, not on a data ref.
+         */
+        canEditModelOffset?: boolean;
         /** Table name → column names (create form). */
         tables?: Record<string, string[]>;
         /** Value search from `/layers?q=` — map isolate only, not the scene tree. */
@@ -339,6 +356,7 @@
         rows = {},
         dim = "3d",
         onSelectTileset,
+        onUpdateModelOffset,
         fullscreen = false,
         onToggleFullscreen,
         onDimChange,
@@ -348,6 +366,7 @@
         diffFeatures = [],
         joinedKeys = [],
         canWrite = false,
+        canEditModelOffset = false,
         tables = {},
         searchQ = "",
         onClearSearchQ,
@@ -634,6 +653,8 @@
     let lastFlownKey = "";
     let filterToView = $state(false);
     let styleLayerIdx = $state<number | null>(null);
+    /** Tileset hash with the height-offset panel open (null = closed). */
+    let styleModelHash = $state<string | null>(null);
     let focusedLayerName = $state("");
     let seriesStepByLayer = $state<Record<string, string>>({});
     let inViewEntityKeys = $state<string[]>([]);
@@ -674,20 +695,31 @@
     const coverageRows = $derived(
         coverages.filter((c) => c.role !== "tileset"),
     );
-    const selected = $derived(
-        models.find((t) => t.hash === selectedHash) ?? models[0] ?? null,
-    );
     const pending = $derived(
         tilesets.filter((t) => t.ingest_status === "pending").length,
     );
     const failed = $derived(
         tilesets.find((t) => t.ingest_status === "failed"),
     );
+    /**
+     * Anything worth showing scene chrome for: geometry, coverages,
+     * attribute-only tables, or tilesets still ingesting. Empty projects
+     * get a dismissible hint — never a full-map block.
+     */
+    const hasSceneData = $derived(
+        models.length > 0 ||
+            layers.length > 0 ||
+            coverageRows.length > 0 ||
+            schemaTables.length > 0 ||
+            pending > 0,
+    );
+    /** User-dismissed the empty-project hint (per mount). */
+    let emptyHintDismissed = $state(false);
     const palette = $derived(mapLayerPalette(8));
 
     function isModelVisible(hash: string) {
         if (hash in modelVis) return modelVis[hash]!;
-        return selected?.hash === hash;
+        return true;
     }
 
     function isCoverageVisible(hash: string) {
@@ -919,6 +951,7 @@
     function destroyLayerSource(name: string) {
         const ds = layerSources.get(name);
         if (!ds) return;
+        ds.__echidnaDisposed = true;
         unindexDataSource(ds);
         layerSources.delete(name);
         try {
@@ -3069,11 +3102,23 @@
                         layer.name,
                         { classifyTiles: classifyTilesActive() },
                     );
-                    if (gen !== layerLoadGen) return;
+                    if (gen !== layerLoadGen) {
+                        ds.__echidnaDisposed = true;
+                        ds.entities.removeAll();
+                        return;
+                    }
                     ds.__packetCount = packetCount;
                     ds.__epoch = dataEpoch;
                     ds.show = layer.visible;
                     indexCzmlEntities(ds, layer.name);
+                    ds.__echidnaOnTerrainHeights = () => {
+                        if (ds.__echidnaDisposed) return;
+                        indexCzmlEntities(ds, layer.name);
+                        applyLayerViews();
+                    };
+                    if (ds.__echidnaTerrainHeightsReady) {
+                        ds.__echidnaOnTerrainHeights();
+                    }
                     await viewer.dataSources.add(ds);
                     layerSources.set(layer.name, ds);
                 } catch (e) {
@@ -3168,8 +3213,38 @@
 
     function openLayerStyle(idx: number) {
         styleLayerIdx = styleLayerIdx === idx ? null : idx;
+        if (styleLayerIdx !== null) styleModelHash = null;
         const name = layers[idx]?.name;
         if (name) focusSeriesLayer(name);
+    }
+
+    function openModelStyle(hash: string) {
+        styleModelHash = styleModelHash === hash ? null : hash;
+        if (styleModelHash !== null) {
+            styleLayerIdx = null;
+            const prim = tilesetPrims.get(hash);
+            if (prim) {
+                const m = models.find((t) => t.hash === hash);
+                applyTilesetHeightOffset(prim, m?.height_offset_m);
+            }
+        }
+    }
+
+    function closeModelStyle() {
+        if (styleModelHash !== null) {
+            const prim = tilesetPrims.get(styleModelHash);
+            if (prim) {
+                const m = models.find((t) => t.hash === styleModelHash);
+                applyTilesetHeightOffset(prim, m?.height_offset_m);
+            }
+        }
+        styleModelHash = null;
+    }
+
+    /** Live offset preview — shifts the primitive only, no persist. */
+    function previewModelOffset(hash: string, offset: number | null) {
+        const prim = tilesetPrims.get(hash);
+        if (prim) applyTilesetHeightOffset(prim, offset);
     }
 
     onMount(() => {
@@ -3182,7 +3257,9 @@
     });
 
     let modelKey = $derived(
-        models.map((m) => m.hash).join("|") + "|" + accessToken,
+        models.map((m) => `${m.hash}:${m.height_offset_m ?? ""}`).join("|") +
+            "|" +
+            accessToken,
     );
     let coverageKey = $derived(
         rasters.map((c) => c.hash).join("|") +
@@ -3208,6 +3285,86 @@
             editBuffer.targetLayer ||
             layerSelection.primaryLayer,
     );
+
+    /**
+     * FK id → lookup label maps per `layer\0field`, shared by the SCENE
+     * legend and the style panel's category list. Keys elsewhere stay raw —
+     * only display labels are resolved. Fetched lazily per layer+field.
+     */
+    let fkLabelMaps = $state<Record<string, Record<string, string>>>({});
+    const fkInflight = new Map<string, Promise<Record<string, string>>>();
+
+    function ensureFkLabels(layerName: string, field: string) {
+        if (!layerName || !field) return;
+        const key = `${layerName}\0${field}`;
+        const done = untrack(() => key in fkLabelMaps);
+        if (done || fkInflight.has(key)) return;
+        if (!fkEdgeForColumn(schemaEdges, layerName, field)?.target) return;
+        const slug = projectSlug;
+        if (!slug) return;
+        const token = accessToken;
+        const p = loadFkLookups({
+            slug,
+            table: layerName,
+            columns: [field],
+            accessToken: token,
+        })
+            .then((byCol) => {
+                const map: Record<string, string> = {};
+                for (const o of byCol[field] ?? []) {
+                    map[o.id] = o.label;
+                    const trimmed = o.id.trim();
+                    if (!(trimmed in map)) map[trimmed] = o.label;
+                }
+                return map;
+            })
+            .catch(() => ({}) as Record<string, string>);
+        fkInflight.set(key, p);
+        void p.then((map) => {
+            fkInflight.delete(key);
+            fkLabelMaps = { ...fkLabelMaps, [key]: map };
+        });
+    }
+
+    function fkLabelFor(
+        layerName: string,
+        field: string,
+        value: string,
+    ): string | undefined {
+        if (!field) return undefined;
+        const map = fkLabelMaps[`${layerName}\0${field}`];
+        return map?.[value] ?? map?.[value.trim()] ?? undefined;
+    }
+    const legendFkFocus = $derived.by(() => {
+        const layer = layers.find((l) => l.name === seriesFocusName);
+        const view = layer
+            ? activeView(layer.views, layer.activeViewId ?? "")
+            : undefined;
+        const field = view?.style.categoryField ?? "";
+        if (
+            !layer ||
+            !view ||
+            !field ||
+            styleRenderer(view.style) !== "categorized"
+        ) {
+            return null;
+        }
+        const edge = fkEdgeForColumn(schemaEdges, layer.name, field);
+        if (!edge?.target) return null;
+        return { layer: layer.name, field };
+    });
+    $effect(() => {
+        const focus = legendFkFocus;
+        if (focus) ensureFkLabels(focus.layer, focus.field);
+    });
+
+    function resolveLegendLabel(
+        layerName: string,
+        field: string,
+        value: string,
+    ): string | undefined {
+        return fkLabelFor(layerName, field, value);
+    }
     let seriesControls = $derived(
         layers.flatMap((layer) => {
             if (layer.name !== seriesFocusName) return [];
@@ -3241,6 +3398,13 @@
     $effect(() => {
         if (styleLayerIdx === null) return;
         if (!layers[styleLayerIdx]) styleLayerIdx = null;
+    });
+
+    $effect(() => {
+        if (styleModelHash === null) return;
+        if (!models.some((m) => m.hash === styleModelHash)) {
+            styleModelHash = null;
+        }
     });
 
     $effect(() => {
@@ -4178,7 +4342,8 @@
             createFormOpen,
             ctxOpen,
             pickOpen,
-            stylePanelOpen: styleLayerIdx !== null,
+            stylePanelOpen:
+                styleLayerIdx !== null || styleModelHash !== null,
             isolating: layerSelection.isIsolating,
             commentSketchCount,
             pendingComment: Boolean(pendingComment),
@@ -4211,6 +4376,7 @@
             closePickPager,
             closeStylePanel: () => {
                 styleLayerIdx = null;
+                closeModelStyle();
             },
             exitIsolateUi,
             clearSelection,
@@ -4934,7 +5100,7 @@
         <CesiumLoading />
     {/if}
 
-    {#if hasFramed && ready && !loading && (models.length > 0 || layers.length > 0 || coverageRows.length > 0)}
+    {#if hasFramed && ready && !loading && hasSceneData}
         <div
             class="pointer-events-none absolute top-[5.25rem] bottom-2 z-10 flex items-start gap-2 {graphFullscreen
                 ? 'hidden'
@@ -4956,13 +5122,30 @@
                             changeLayerViews(styleLayerIdx!, views, activeId)}
                         onSetOpacity={(v) =>
                             setLayerOpacity(styleLayerIdx!, v)}
+                        fkLabelMaps={fkLabelMaps}
+                        ensureFkLabels={ensureFkLabels}
+                    />
+                    </div>
+                {/key}
+            {/if}
+            {#if styleModelHash !== null && models.some((m) => m.hash === styleModelHash)}
+                {@const styleModel = models.find((m) => m.hash === styleModelHash)!}
+                {#key styleModel.hash}
+                    <div class="pointer-events-auto">
+                    <TilesetOffsetPanel
+                        label={styleModel.label || styleModel.hash.slice(0, 12)}
+                        savedOffset={styleModel.height_offset_m ?? null}
+                        canEdit={canEditModelOffset}
+                        onClose={closeModelStyle}
+                        onPreview={(v) => previewModelOffset(styleModel.hash, v)}
+                        onApply={(v) => onUpdateModelOffset?.(styleModel.hash, v)}
                     />
                     </div>
                 {/key}
             {/if}
             <div
                 class="pointer-events-auto flex max-h-full min-h-0 flex-col gap-2 {styleLayerIdx !==
-                null
+                    null || styleModelHash !== null
                     ? 'w-52'
                     : 'w-60'}"
             >
@@ -4977,11 +5160,12 @@
                 coverageVisible={isCoverageVisible}
                 onToggleModel={toggleModel}
                 onSetModelsVisible={setAllModelsVisible}
+                onOpenModelStyle={openModelStyle}
                 onToggleCoverage={toggleCoverage}
                 onToggleLayer={toggleLayer}
                 onOpenStyle={openLayerStyle}
                 onSelectLayer={(name) => focusSeriesLayer(name)}
-                compact={styleLayerIdx !== null}
+                compact={styleLayerIdx !== null || styleModelHash !== null}
                 focusLayerName={seriesFocusName}
                 styleLayerName={styleLayerIdx !== null
                     ? (layers[styleLayerIdx]?.name ?? "")
@@ -4998,10 +5182,12 @@
                 onFlyToModel={flyToModel}
                 {joinedKeys}
                 seriesStepByLayer={seriesStepByLayer}
+                resolveLegendLabel={resolveLegendLabel}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
                     {canWrite}
+                    canEditModelOffset={canEditModelOffset}
                     {schemaTables}
                     {onOpenTable}
                     class="min-h-0 flex-1"
@@ -5197,23 +5383,37 @@
         </div>
     {/if}
 
-    {#if ready && !loading && models.length === 0 && layers.length === 0 && coverageRows.length === 0}
+    {#if ready && !loading && !hasSceneData && !emptyHintDismissed}
         <div
-            class="absolute inset-0 z-5 flex flex-col items-center justify-center gap-2 bg-background/70 px-6 text-center"
+            class="pointer-events-none absolute inset-x-0 bottom-16 z-5 flex justify-center px-6"
         >
-            <BoxIcon class="size-10 text-muted-foreground/30" />
-            <p class="text-sm">No layers or 3D models</p>
-            <p class="max-w-sm text-xs text-muted-foreground">
-                Add entities to this project, or upload a georeferenced
-                <code class="font-mono">.3tz</code> from Artefacts.
-            </p>
-            {#if failed}
-                <p class="max-w-sm text-xs text-destructive">{failed.ingest_error}</p>
-            {/if}
-            <a
-                href="/{projectSlug}/artefacts"
-                class="text-xs text-primary hover:underline">Open Artefacts</a
+            <div
+                class="surface pointer-events-auto flex max-w-sm flex-col items-center gap-1.5 rounded-lg border border-border px-4 py-3 text-center shadow-lg"
             >
+                <BoxIcon class="size-8 text-muted-foreground/30" />
+                <p class="text-sm">No layers or 3D models</p>
+                <p class="max-w-sm text-xs text-muted-foreground">
+                    Add entities to this project, or upload a georeferenced
+                    <code class="font-mono">.3tz</code> from Artefacts.
+                </p>
+                {#if failed}
+                    <p class="max-w-sm text-xs text-destructive">{failed.ingest_error}</p>
+                {/if}
+                <div class="flex items-center gap-3">
+                    <a
+                        href="/{projectSlug}/artefacts"
+                        class="text-xs text-primary hover:underline">Open Artefacts</a
+                    >
+                    <button
+                        type="button"
+                        class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                        onclick={() => (emptyHintDismissed = true)}
+                    >
+                        <XIcon class="size-3" />
+                        Dismiss
+                    </button>
+                </div>
+            </div>
         </div>
     {/if}
 

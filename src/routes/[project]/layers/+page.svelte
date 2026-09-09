@@ -19,7 +19,7 @@
     } from "$lib/components/dashboard/layerViews";
     import {
         entityIdsFromPackets,
-        parseNdjsonCzml,
+        parseNdjsonCzmlAsync,
         rowsFromPackets,
     } from "$lib/components/dashboard/czmlLoad";
     import type {
@@ -764,10 +764,11 @@
 
     $effect(() => {
         if (!browser) return;
+        const tablesMode = inTables;
         const slug = $page.params.project;
         const token = accessToken;
         const tbls = tables;
-        if (!slug || Object.keys(tbls).length === 0) return;
+        if (!tablesMode || !slug || Object.keys(tbls).length === 0) return;
         let cancelled = false;
         void loadProjectFkLookups({
             slug,
@@ -836,7 +837,13 @@
     let mapDim = $state<MapDim>(
         untrack(() => (dimParam === "2d" ? "2d" : "3d")),
     );
+    const tilesetParam = $derived(
+        String((data as { tileset?: string })?.tileset ?? "").trim(),
+    );
     let selectedTilesetHash = $state("");
+    const activeTilesetHash = $derived(
+        selectedTilesetHash || tilesetParam,
+    );
     let tilesets = $state<ProjectTileset[]>([]);
     let tilesetsLoading = $state(false);
     let coverages = $state<ProjectCoverage[]>([]);
@@ -880,6 +887,48 @@
 
     function selectTileset(hash: string) {
         selectedTilesetHash = hash;
+    }
+
+    /** Member-only tileset height-offset save with optimistic re-apply. */
+    async function updateTilesetOffset(
+        hash: string,
+        offset: number | null,
+    ): Promise<boolean> {
+        if (!canWrite) return false;
+        const slug = $page.params.project;
+        if (!slug || !hash) return false;
+        const prev = tilesets;
+        tilesets = tilesets.map((t) =>
+            t.hash === hash ? { ...t, height_offset_m: offset } : t,
+        );
+        try {
+            const res = await fetch(
+                `/api/v1/projects/${slug}/tilesets/${hash}`,
+                {
+                    method: "PATCH",
+                    headers: {
+                        ...authHeaders(),
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ height_offset_m: offset }),
+                },
+            );
+            if (!res.ok) {
+                tilesets = prev;
+                return false;
+            }
+            const body = (await res.json()) as {
+                height_offset_m?: number | null;
+            };
+            const saved = body.height_offset_m ?? null;
+            tilesets = tilesets.map((t) =>
+                t.hash === hash ? { ...t, height_offset_m: saved } : t,
+            );
+            return true;
+        } catch {
+            tilesets = prev;
+            return false;
+        }
     }
 
     /** Keep table tab on the primary selected layer. */
@@ -997,31 +1046,45 @@
         const results: LayerData[] = [];
         const persistQueue: { name: string; views: LayerView[] }[] = [];
 
-        let viewsByLayer: Record<string, LayerView[]> = {};
-        try {
-            const vr = await fetch(
-                withViewingRef(`/api/v1/projects/${slug}/layer-views`),
-                { headers: authHeaders() },
-            );
-            if (vr.ok) {
-                const doc = (await vr.json()) as { layers?: Record<string, LayerView[]> };
-                viewsByLayer = doc.layers ?? {};
+        const viewsPromise = (async () => {
+            try {
+                const vr = await fetch(
+                    withViewingRef(`/api/v1/projects/${slug}/layer-views`),
+                    { headers: authHeaders() },
+                );
+                if (!vr.ok) return {} as Record<string, LayerView[]>;
+                const doc = (await vr.json()) as {
+                    layers?: Record<string, LayerView[]>;
+                };
+                return doc.layers ?? {};
+            } catch {
+                return {} as Record<string, LayerView[]>;
             }
-        } catch {
-            /* seed later if CZML succeeds */
-        }
+        })();
+
+        // Start every request together, but parse/publish in stable layer
+        // order. This removes an RTT per table without making result ordering
+        // or default colours nondeterministic.
+        const downloads = new Map(
+            spatial.map((name) => [
+                name,
+                fetch(
+                    withViewingRef(
+                        `/api/v1/projects/${slug}/layers/${encodeURIComponent(name)}/czml`,
+                    ),
+                    { headers: authHeaders() },
+                ).catch(() => null),
+            ]),
+        );
+        const viewsByLayer = await viewsPromise;
+        let publishedFirstLayer = false;
 
         for (const name of spatial) {
             if (gen !== czmlLoadGen) return;
             try {
-                const res = await fetch(
-                    withViewingRef(
-                        `/api/v1/projects/${slug}/layers/${name}/czml`,
-                    ),
-                    { headers: authHeaders() },
-                );
-                if (res.ok) {
-                    const packets = parseNdjsonCzml(await res.text());
+                const res = await downloads.get(name);
+                if (res?.ok) {
+                    const packets = await parseNdjsonCzmlAsync(await res.text());
                     const entityIds = entityIdsFromPackets(packets, name);
                     if (entityIds.length > 0) {
                         const prev = prevByName.get(name);
@@ -1031,7 +1094,7 @@
                             stored,
                         );
                         if (persist) persistQueue.push({ name, views });
-                        results.push({
+                        const loadedLayer: LayerData = {
                             name,
                             packets,
                             entityIds,
@@ -1045,7 +1108,13 @@
                                 views.some((v) => v.id === prev.activeViewId)
                                     ? prev.activeViewId
                                     : (views[0]?.id ?? ""),
-                        });
+                        };
+                        results.push(loadedLayer);
+                        if (initial && !publishedFirstLayer) {
+                            publishedFirstLayer = true;
+                            mapLayers = [loadedLayer];
+                            mapLoading = false;
+                        }
                     }
                 }
             } catch (_) {}
@@ -1193,7 +1262,7 @@
                     selectedTilesetHash = "";
                 }
                 if (
-                    !selectedTilesetHash &&
+                    !activeTilesetHash &&
                     tilesets.some((t) => t.ingest_status === "ready")
                 ) {
                     selectedTilesetHash =
@@ -1314,7 +1383,7 @@
                         {accessToken}
                         {tilesets}
                         {coverages}
-                        selectedHash={selectedTilesetHash}
+                        selectedHash={activeTilesetHash}
                         loading={mapLoading}
                         layers={mapLayers}
                         {rows}
@@ -1322,6 +1391,8 @@
                         active={viewMode === "map"}
                         fullscreen={mapFullscreen}
                         onSelectTileset={selectTileset}
+                        onUpdateModelOffset={updateTilesetOffset}
+                        canEditModelOffset={canWrite}
                         onToggleFullscreen={toggleMapFullscreen}
                         onDimChange={setMapDim}
                         canEditViews={canMutate}
@@ -1860,4 +1931,3 @@
         {/if}
     </div>
 </div>
-

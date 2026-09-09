@@ -88,6 +88,7 @@
     let qfcProjectsError = $state("");
     let selectedQfcProjectId = $state("");
     let qfcGpkgName = $state("");
+    let qfcLinkMode = $state("live");
 
     $effect(() => {
         if (qfieldAccounts.length > 0 && !qfcAccountId) {
@@ -156,12 +157,20 @@
             {#if form.qfieldAction === "linked"}
                 Linked to QFieldCloud.
             {:else if form.qfieldAction === "sync_requested"}
-                Sync requested. The bridge will force re-pull the Cloud package
-                on its next pass.
+                {#if displayQfield?.mode === "owned"}
+                    Round trip requested. The bridge will land Cloud edits and
+                    refresh its package from develop on the next pass.
+                {:else}
+                    Sync requested. The bridge will force re-pull the Cloud
+                    package on its next pass.
+                {/if}
             {:else if form.qfieldAction === "field_pushed"}
                 Field package landed on develop{#if form.develop}
                     {" "}({String(form.develop).slice(0, 12)}){/if}. Public main
                 is unchanged until promote.
+			{:else if form.qfieldAction === "provisioned"}
+				Created an Echidna-owned QFieldCloud project. The bridge will publish
+				develop to it before it accepts field changes.
             {:else}
                 Unlinked from QFieldCloud.
             {/if}
@@ -251,8 +260,8 @@
 
     <h3 class="text-sm font-medium text-foreground mb-3">QFieldCloud link</h3>
     <p class="mb-4 text-sm text-muted-foreground">
-        Optional. Keep field sync on Cloud; TinyOwl ingests after delta apply
-        via the bridge.
+        Optional. Keep field sync on Cloud; use a pull-only foreign link or an
+        owned self-hosted projection that round-trips develop via the bridge.
     </p>
 
     {#if displayQfield}
@@ -275,6 +284,12 @@
                     {#if displayQfield.source_owner}
                         Original owner: {displayQfield.source_owner}.
                     {/if}
+                </p>
+            {:else if displayQfield.mode === "owned"}
+                <p class="text-xs text-muted-foreground">
+                    Owned projection — the bridge publishes develop to this
+                    self-hosted Cloud project, then lands field deltas back on
+                    develop and refreshes the Cloud package.
                 </p>
             {/if}
             {#if displayQfield.job_log || displayQfield.import_status === "pending" || displayQfield.import_status === "running" || displayQfield.sync_pending || displayQfield.sync_requested_at}
@@ -367,12 +382,61 @@
             >
         </div>
     {:else if canLinkQField}
-        <form
-            method="POST"
-            action="?/linkQFieldCloud"
-            use:enhance
-            class="rounded-lg border border-border p-4 space-y-3"
-        >
+        <div class="space-y-4">
+            <form
+                method="POST"
+                action="?/provisionQFieldCloud"
+                use:enhance
+                class="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3"
+            >
+                <div>
+                    <h4 class="text-sm font-medium text-foreground">
+                        Create an Echidna QFieldCloud project
+                    </h4>
+                    <p class="mt-1 text-sm text-muted-foreground">
+                        Creates a private, owned field façade on the selected
+                        self-hosted Cloud. QField syncs normally; Echidna keeps
+                        the develop ref as the source of truth.
+                    </p>
+                </div>
+                <Field>
+                    <FieldLabel for="owned-qfc-account">Cloud account</FieldLabel>
+                    <select
+                        id="owned-qfc-account"
+                        name="account_id"
+                        class={SELECT_CLASS}
+                        bind:value={qfcAccountId}
+                    >
+                        {#each qfieldAccounts as acct}
+                            <option value={acct.id}
+                                >{acct.label || acct.base_url} ({acct.username})</option
+                            >
+                        {/each}
+                    </select>
+                </Field>
+                <Field>
+                    <FieldLabel for="owned-qfc-name">Cloud project name</FieldLabel>
+                    <Input
+                        id="owned-qfc-name"
+                        name="name"
+                        placeholder={projectTitle}
+                    />
+                    <FieldDescription>
+                        Leave blank to use this project’s slug.
+                    </FieldDescription>
+                </Field>
+                <Button type="submit" size="sm">Create owned project</Button>
+            </form>
+
+            <form
+                method="POST"
+                action="?/linkQFieldCloud"
+                use:enhance
+                class="rounded-lg border border-border p-4 space-y-3"
+            >
+                <h4 class="text-sm font-medium text-foreground">
+                    Link an existing QFieldCloud project
+                </h4>
             <input type="hidden" name="account_id" value={qfcAccountId} />
             <input
                 type="hidden"
@@ -385,6 +449,7 @@
                 value={qfcProjects.find((p) => p.id === selectedQfcProjectId)
                     ?.name ?? ""}
             />
+            <input type="hidden" name="mode" value={qfcLinkMode} />
             <Field>
                 <FieldLabel for="qfc-account">Cloud account</FieldLabel>
                 <select
@@ -411,6 +476,21 @@
                 <FieldDescription>
                     Optional. Defaults to env BRIDGE_GPKG_NAME on the bridge
                     host.
+                </FieldDescription>
+            </Field>
+            <Field>
+                <FieldLabel for="qfc-link-mode">Sync direction</FieldLabel>
+                <select
+                    id="qfc-link-mode"
+                    class={SELECT_CLASS}
+                    bind:value={qfcLinkMode}
+                >
+                    <option value="live">Cloud → Echidna</option>
+                    <option value="owned">Owned self-hosted round trip</option>
+                </select>
+                <FieldDescription>
+                    Owned mode replaces the selected Cloud project files with
+                    the develop field package before accepting phone edits.
                 </FieldDescription>
             </Field>
 
@@ -467,7 +547,8 @@
                     Link selected project
                 </Button>
             {/if}
-        </form>
+            </form>
+        </div>
     {:else}
         <p class="text-sm text-muted-foreground">
             Collaborator role or higher is required to link QFieldCloud.

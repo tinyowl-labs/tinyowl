@@ -1,6 +1,6 @@
 # Media API
 
-Endpoints for listing, uploading, and serving media files attached to project entities.
+Endpoints for listing, uploading, deleting, and serving media files attached to project entities.
 
 ## List Project Media
 
@@ -22,9 +22,15 @@ List media associated with a project, grouped by content hash. Each item may ref
       "media_type": "image/jpeg",
       "file_size": 245760,
       "url": "/media/a1b2c3…",
+      "profile": "attachment",
       "entities": [
         { "entity_type": "contexts", "entity_id": "CTX-0001" }
-      ]
+      ],
+      "care_allow_public_view": true,
+      "care_allow_embed": true,
+      "ingest_status": "ready",
+      "ingest_error": "",
+      "ingest_started_at": "2026-09-09T06:00:00Z"
     }
   ],
   "counts": {
@@ -37,6 +43,7 @@ List media associated with a project, grouped by content hash. Each item may ref
 
 - `Content-Range: items 0-49/123`
 - `counts.pdf` is the distinct `application/pdf` count (grey literature / reports)
+- Tileset rows may include `ingest_status` (`pending` | `processing` | `ready` | `failed` | `awaiting_blob`), `ingest_error`, and `ingest_started_at` from `media_index.meta`
 
 ## Upload Media (by slug)
 
@@ -58,7 +65,7 @@ Max size: **500 MB** for attachments (images, PDFs); **10 GiB** for GLB/glTF
 | `Content-Encoding` | no | `gzip` for compressible types (GeoTIFF ≥ 32 MiB). Stored object is uncompressed. |
 | `X-TinyOwl-Raw-Size` | no | Uncompressed byte length (required when gzipping / omitting `Content-Length`) |
 
-Also available as `POST /api/v1/{org}/{project}/media` (`tinyowl media push`). Same land/staging path as the Artefacts UI. GPKG `tinyowl push` does not upload blobs.
+Also available as `POST /api/v1/{org}/{project}/media` (`tinyowl media push`). Same land/staging path as **Import → Media**. GPKG `tinyowl push` does not upload blobs.
 
 ### Response
 
@@ -70,6 +77,29 @@ Also available as `POST /api/v1/{org}/{project}/media` (`tinyowl media push`). S
 - `queued` — GLB/glTF, `.3tz`, or coverage GeoTIFF staged in `upload` until a worker finishes
 
 Upload-only index rows **survive** subsequent GPKG push reindexes (only GPKG `_media` hashes are replaced). Pending ingest `meta` (`ingest_status`, `upload_key`) is preserved. GPKG refs without a blob stay `awaiting_blob` until `media push`.
+
+## Delete Media
+
+```
+DELETE /api/v1/projects/{slug}/media/{hash}
+```
+
+Requires collaborator+. Unlists a hash from the project catalogue (Artefacts **Remove**).
+
+| Header | Required | Meaning |
+|--------|----------|---------|
+| `Authorization` | yes | Bearer JWT/PAT |
+| `X-TinyOwl-Message` | if on develop `_media` | Commit message (same gate as other GPKG writes). Also accepted as JSON `{ "message": "…" }`. |
+
+- **In-flight** (in `media_index`, not on develop `_media`): drop the index row, delete staging/canonical/local blob and web derivatives. No message.
+- **On develop `_media`**: required message, unlink rows, land on `develop`, then drop the index so the hash does not become in-flight. Blob is **kept** while still referenced on public `main` (until promote).
+- `404` if the hash is neither indexed nor on develop.
+
+```json
+{ "status": "removed" | "committed", "media_hash": "…", "blob_deleted": true, "unlinked": 0, "kept_on_main": false }
+```
+
+`status` is `committed` when a develop changeset landed (`commit_id` included).
 
 ## Media Integrity
 

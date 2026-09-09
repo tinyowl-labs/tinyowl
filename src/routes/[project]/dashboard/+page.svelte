@@ -212,10 +212,10 @@
             <FileUpIcon class="size-4 mt-0.5 text-primary shrink-0" />
             <span>
                 <span class="block text-sm font-medium text-foreground"
-                    >Import table</span
+                    >Import</span
                 >
                 <span class="block text-xs text-muted-foreground"
-                    >CSV or GeoJSON</span
+                    >Table, photos, PDF, ortho, 3tz</span
                 >
             </span>
         </a>
@@ -318,7 +318,8 @@
         >
             <p class="text-sm text-foreground font-medium">No tables yet</p>
             <p class="text-xs text-muted-foreground mt-1 mb-4">
-                Import a CSV or GeoJSON to create this project’s schema.
+                Import a CSV or GeoJSON, or land photos, a PDF, an ortho, or a
+                3D tileset without a table.
             </p>
             <a
                 href={`/${slug}/import`}

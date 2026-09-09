@@ -13,6 +13,8 @@
         isTileset,
         isTiff,
         shortHash,
+        tilesetIngestFailed,
+        tilesetNeedsIngest,
         type ArtefactMediaItem,
     } from "$lib/components/artefacts/artefactMedia";
 
@@ -45,9 +47,15 @@
     const isAudio = $derived(item.media_type.startsWith("audio/"));
     const tileset = $derived(isTileset(item));
     const pdf = $derived(isPdf(item));
+    const ingestBusy = $derived(tileset && tilesetNeedsIngest(item));
+    const ingestFailed = $derived(tileset && tilesetIngestFailed(item));
     const title = $derived(
         tileset
-            ? `3D model · ${shortHash(item.hash)}`
+            ? ingestFailed
+                ? `3D model · ingest failed · ${shortHash(item.hash)}`
+                : ingestBusy
+                  ? `3D model · processing · ${shortHash(item.hash)}`
+                  : `3D model · ${shortHash(item.hash)}`
             : item.entities[0]
               ? `${entityLabel(item.entities[0].entity_type)} · ${item.entities[0].entity_id}`
               : item.media_type,
@@ -89,6 +97,19 @@
             <BoxIcon class="size-6 opacity-70" />
             <span class="text-[10px] uppercase tracking-wide opacity-70">3D</span>
         </div>
+        {#if ingestBusy}
+            <span
+                class="pointer-events-none absolute top-1 right-1 z-20 rounded bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground"
+            >
+                processing
+            </span>
+        {:else if ingestFailed}
+            <span
+                class="pointer-events-none absolute top-1 right-1 z-20 rounded bg-destructive/90 px-1 py-0.5 text-[10px] text-destructive-foreground"
+            >
+                failed
+            </span>
+        {/if}
     {:else}
         <div
             class="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground"

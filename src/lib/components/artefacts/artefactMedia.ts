@@ -10,6 +10,10 @@ export interface ArtefactMediaItem {
     care_allow_public_view?: boolean;
     care_allow_embed?: boolean;
     care_note?: string | null;
+    /** Tileset extract queue — pending | processing | ready | failed | awaiting_blob */
+    ingest_status?: string;
+    ingest_error?: string;
+    ingest_started_at?: string;
 }
 
 export type ArtefactSimilarHit = {
@@ -51,6 +55,33 @@ export function isTileset(item: ArtefactMediaItem): boolean {
 
 export function isModel3D(item: ArtefactMediaItem): boolean {
     return isTileset(item) || isGltf(item);
+}
+
+export function tilesetIngestStatus(item: ArtefactMediaItem): string {
+    return (item.ingest_status || "").trim().toLowerCase();
+}
+
+/** True while the extract worker has not finished (or not started). */
+export function tilesetNeedsIngest(item: ArtefactMediaItem): boolean {
+    if (!isTileset(item)) return false;
+    const s = tilesetIngestStatus(item);
+    return (
+        s === "pending" ||
+        s === "processing" ||
+        s === "awaiting_blob" ||
+        s === "queued"
+    );
+}
+
+export function tilesetIngestFailed(item: ArtefactMediaItem): boolean {
+    return isTileset(item) && tilesetIngestStatus(item) === "failed";
+}
+
+export function tilesetPreviewReady(item: ArtefactMediaItem): boolean {
+    if (!isTileset(item)) return isGltf(item);
+    const s = tilesetIngestStatus(item);
+    // Legacy rows with no status are treated as ready (same as coverage loaders).
+    return !s || s === "ready";
 }
 
 export function isCoverage(item: ArtefactMediaItem): boolean {
@@ -96,6 +127,9 @@ export function modelPreviewSource(
 ): { kind: "tileset" | "gltf"; url: string } | null {
     if (isGltf(item) && !isTileset(item)) {
         return { kind: "gltf", url: item.url };
+    }
+    if (isTileset(item) && !tilesetPreviewReady(item)) {
+        return null;
     }
     if (isTileset(item) || isGltf(item)) {
         return { kind: "tileset", url: tilesetRootUrl(projectSlug, item.hash) };

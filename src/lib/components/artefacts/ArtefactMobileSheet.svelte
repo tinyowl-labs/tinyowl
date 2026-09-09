@@ -10,17 +10,22 @@
         type ArtefactMediaItem,
     } from "$lib/components/artefacts/artefactMedia";
     import { entityLayersHref } from "$lib/project/entityLink";
+    import MediaDeleteControls from "$lib/components/artefacts/MediaDeleteControls.svelte";
 
     let {
         item,
         accessToken,
         projectSlug,
+        canUpload,
         onclose,
+        onRemoved,
     }: {
         item: ArtefactMediaItem;
         accessToken: string;
         projectSlug: string;
+        canUpload: boolean;
         onclose: () => void;
+        onRemoved: () => void;
     } = $props();
 
     const pdf = $derived(isPdf(item));
@@ -92,5 +97,16 @@
         </ul>
     {:else}
         <p class="text-xs text-muted-foreground">Not linked to an entity</p>
+    {/if}
+    {#if canUpload}
+        <div class="mt-3">
+            <MediaDeleteControls
+                {accessToken}
+                {projectSlug}
+                hash={item.hash}
+                linked={links.length > 0}
+                {onRemoved}
+            />
+        </div>
     {/if}
 </div>

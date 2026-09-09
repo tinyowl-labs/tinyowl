@@ -1,9 +1,6 @@
 <script lang="ts">
-    import { enhance } from "$app/forms";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import { Button } from "$lib/components/ui/button/index.js";
-    import { Input } from "$lib/components/ui/input/index.js";
-    import { Field, FieldLabel } from "$lib/components/ui/field/index.js";
     import RequestJoinCta from "$lib/components/join/RequestJoinCta.svelte";
 
     let { data, form } = $props();
@@ -11,7 +8,6 @@
     const isMember = $derived(Boolean(data.isMember));
     const signedIn = $derived(Boolean(data.user));
     const pending = $derived(data.joinRequest?.status === "pending");
-    let showCreate = $state(false);
 
     function projectHref(slug: string) {
         return "/" + encodeURIComponent(slug);
@@ -66,35 +62,15 @@
             <h2 class="text-sm font-medium text-foreground">Projects</h2>
             {#if isMember}
                 <Button
-                    type="button"
+                    href="/projects/new?org={encodeURIComponent(org.slug)}"
                     size="sm"
                     variant="outline"
-                    onclick={() => (showCreate = !showCreate)}
                 >
                     <PlusIcon class="size-3.5" />
                     New project
                 </Button>
             {/if}
         </div>
-        {#if showCreate && isMember}
-            <form
-                method="POST"
-                action="?/createProject"
-                class="mb-4 space-y-3 rounded-lg border border-border p-4"
-                use:enhance
-            >
-                <Field>
-                    <FieldLabel for="proj_name">Project name</FieldLabel>
-                    <Input
-                        id="proj_name"
-                        name="name"
-                        required
-                        placeholder="Trench A"
-                    />
-                </Field>
-                <Button type="submit" size="sm">Create</Button>
-            </form>
-        {/if}
         {#if (org.projects ?? []).length === 0}
             <p class="text-sm text-muted-foreground">
                 No projects you can open yet.

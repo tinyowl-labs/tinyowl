@@ -63,6 +63,43 @@ export function parseNdjsonCzml(text: string): Record<string, unknown>[] {
     return packets;
 }
 
+/**
+ * Parse large layer payloads without monopolising the main thread.  A single
+ * polygon packet can still be sizeable, but yielding between roughly 1 MiB
+ * slices keeps map chrome and Cesium's loader responsive on dense projects.
+ */
+export async function parseNdjsonCzmlAsync(
+    text: string,
+    yieldAfterBytes = 1_000_000,
+): Promise<Record<string, unknown>[]> {
+    const packets: Record<string, unknown>[] = [];
+    let bytesSinceYield = 0;
+    let lineStart = 0;
+    while (lineStart < text.length) {
+        const newline = text.indexOf("\n", lineStart);
+        const lineEnd = newline < 0 ? text.length : newline;
+        const line = text.slice(lineStart, lineEnd);
+        lineStart = lineEnd + 1;
+        const t = line.trim();
+        if (!t) continue;
+        packets.push(JSON.parse(t) as Record<string, unknown>);
+        bytesSinceYield += line.length;
+        if (bytesSinceYield < yieldAfterBytes) continue;
+        bytesSinceYield = 0;
+        const scheduler = (
+            globalThis as typeof globalThis & {
+                scheduler?: { yield?: () => Promise<void> };
+            }
+        ).scheduler;
+        if (typeof scheduler?.yield === "function") {
+            await scheduler.yield();
+        } else {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+    }
+    return packets;
+}
+
 /** Strip `{layer}:` prefix and trailing `:{part}` multi-geom suffix. */
 export function entityIdFromPacketId(
     packetId: string,

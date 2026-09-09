@@ -14,6 +14,7 @@
         isModel3D,
         isPdf,
         isTileset,
+        tilesetNeedsIngest,
         type ArtefactMediaItem,
         type ArtefactSimilarHit,
     } from "$lib/components/artefacts/artefactMedia";
@@ -236,7 +237,7 @@
         } catch {
             /* ignore */
         }
-        goto(`/${slug}/layers?view=3d`);
+        goto(`/${slug}/layers?view=3d&tileset=${encodeURIComponent(hash)}`);
     }
 
     async function copyHash(hash: string) {
@@ -258,6 +259,69 @@
             : null,
     );
     const asideOpen = $derived(Boolean(selected) && !sidebarHeldClosed);
+
+    /** Poll tileset ingest while the selected artefact is not ready. */
+    $effect(() => {
+        const item = selected;
+        const slug = projectSlug;
+        const token = accessToken;
+        if (!item || !slug || !tilesetNeedsIngest(item)) return;
+        const hash = item.hash;
+        let cancelled = false;
+
+        const tick = async () => {
+            try {
+                const headers: Record<string, string> = {};
+                if (token) headers.Authorization = `Bearer ${token}`;
+                const res = await fetch(
+                    `/api/v1/projects/${slug}/tilesets/${hash}`,
+                    { headers },
+                );
+                if (!res.ok || cancelled) return;
+                const body = (await res.json()) as {
+                    ingest_status?: string;
+                    ingest_error?: string;
+                    ingest_started_at?: string;
+                };
+                if (cancelled) return;
+                const nextStatus = body.ingest_status;
+                const nextError = body.ingest_error;
+                const nextStarted = body.ingest_started_at;
+                let changed = false;
+                const next = items.map((it) => {
+                    if (it.hash !== hash) return it;
+                    const ingest_status = nextStatus ?? it.ingest_status;
+                    const ingest_error = nextError ?? it.ingest_error;
+                    const ingest_started_at =
+                        nextStarted ?? it.ingest_started_at;
+                    if (
+                        ingest_status === it.ingest_status &&
+                        ingest_error === it.ingest_error &&
+                        ingest_started_at === it.ingest_started_at
+                    ) {
+                        return it;
+                    }
+                    changed = true;
+                    return {
+                        ...it,
+                        ingest_status,
+                        ingest_error,
+                        ingest_started_at,
+                    };
+                });
+                if (changed) items = next;
+            } catch {
+                /* ignore transient poll errors */
+            }
+        };
+
+        void tick();
+        const id = setInterval(() => void tick(), 2500);
+        return () => {
+            cancelled = true;
+            clearInterval(id);
+        };
+    });
 
     function toggleAside() {
         if (asideOpen) sidebarHeldClosed = true;
@@ -294,6 +358,18 @@
         }
         selectedHash = item.hash;
         hashCopied = false;
+        similarItems = [];
+        similarStatus = "";
+        similarFetched = false;
+    }
+
+    function removeSelected() {
+        const hash = selectedHash;
+        if (!hash) return;
+        items = items.filter((it) => it.hash !== hash);
+        totalItems = Math.max(0, totalItems - 1);
+        selectedHash = null;
+        viewerOpen = false;
         similarItems = [];
         similarStatus = "";
         similarFetched = false;
@@ -640,13 +716,21 @@
                                 </h2>
                                 <p class="text-sm text-muted-foreground">
                                     {typeFilter === "all"
-                                        ? "Push data with photos or grey literature PDFs to see them here, linked to the entities they document."
+                                        ? "Land photos or PDFs from Import → Media, or push a GPKG that already has them."
                                         : typeFilter === "model"
-                                          ? "Upload a .3tz or .glb (collaborator+) — preview here, or open georeferenced models in Layers → 3D."
+                                          ? "Import a .3tz or .glb (collaborator+) — preview here, or open georeferenced models in Layers → 3D."
                                           : typeFilter === "coverage"
-                                            ? "Register GeoTIFF or tileset media with profile=coverage (entity_type coverage or tileset)."
-                                            : "Try another filter, or upload files that match this type."}
+                                            ? "Import a GeoTIFF or .3tz from Import → Media. No table required."
+                                            : "Try another filter, or import files that match this type."}
                                 </p>
+                                {#if canUpload}
+                                    <a
+                                        href="/{projectSlug}/import?kind=media"
+                                        class="mt-4 inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground no-underline"
+                                    >
+                                        Import media
+                                    </a>
+                                {/if}
                             </div>
                         </div>
                     {:else}
@@ -739,6 +823,7 @@
                         {setSameRegion}
                         {copyHash}
                         {onSelectSimilar}
+                        onRemoved={removeSelected}
                     />
                 {/key}
             </aside>
@@ -750,7 +835,9 @@
             item={selected}
             accessToken={accessToken}
             {projectSlug}
+            canUpload={canUpload}
             onclose={() => (selectedHash = null)}
+            onRemoved={removeSelected}
         />
     {/if}
 

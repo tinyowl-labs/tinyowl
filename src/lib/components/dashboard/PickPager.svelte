@@ -182,12 +182,17 @@
         const c = current;
         if (!c) return [];
         const token = accessToken;
-        return (mediaByEntity[`${c.layerName}:${c.entityId}`] ?? []).map(
-            (m) => ({
+        // Info-box carousel is visual only — skip audio/octet stubs (e.g. QField
+        // Audio cells with no extension → application/octet-stream → "application").
+        return (mediaByEntity[`${c.layerName}:${c.entityId}`] ?? [])
+            .filter((m) => {
+                const t = (m.media_type ?? "").toLowerCase();
+                return t.startsWith("image/") || t.startsWith("video/");
+            })
+            .map((m) => ({
                 url: browserMediaUrl(m.url, { accessToken: token }),
                 media_type: m.media_type,
-            }),
-        );
+            }));
     });
 
     let expanded = $state<EntityMedia | null>(null);

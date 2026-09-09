@@ -184,11 +184,15 @@ export type LayerLegend = {
 	ramp?: { css: string; min: string; max: string; field: string };
 };
 
-/** Compact read-only legend for the focused scene-graph layer. */
+/** Compact read-only legend for the focused scene-graph layer.
+ * `labelFor` optionally maps a raw categorized value to a display label
+ * (e.g. an FK id to its lookup label). Category keys — and therefore
+ * feature matching — always stay on the raw values. */
 export function layerLegend(
 	view: LayerView | undefined,
 	rows?: Record<string, unknown>[],
 	cap = LEGEND_CLASS_CAP,
+	labelFor?: (value: string) => string | undefined,
 ): LayerLegend | null {
 	if (!view) return null;
 	const renderer = styleRenderer(view.style);
@@ -224,8 +228,8 @@ export function layerLegend(
 			continue;
 		}
 		const prefix = field ? `${field}=` : "";
-		const label = prefix && key.startsWith(prefix) ? key.slice(prefix.length) : key;
-		items.push({ label, color: [...color], none: false });
+		const raw = prefix && key.startsWith(prefix) ? key.slice(prefix.length) : key;
+		items.push({ label: labelFor?.(raw) ?? raw, color: [...color], none: false });
 	}
 	items.sort((a, b) => {
 		if (a.none !== b.none) return a.none ? 1 : -1;

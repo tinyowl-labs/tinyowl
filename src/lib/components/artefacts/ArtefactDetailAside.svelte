@@ -1,7 +1,6 @@
 <script lang="ts">
     import Maximize2Icon from "@lucide/svelte/icons/maximize-2";
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
-    import BoxIcon from "@lucide/svelte/icons/box";
     import MusicIcon from "@lucide/svelte/icons/music";
     import FileWarningIcon from "@lucide/svelte/icons/file-warning";
     import SparklesIcon from "@lucide/svelte/icons/sparkles";
@@ -10,6 +9,7 @@
     import CheckIcon from "@lucide/svelte/icons/check";
     import CopyIcon from "@lucide/svelte/icons/copy";
     import ArtefactMicroViewer from "$lib/components/artefacts/ArtefactMicroViewer.svelte";
+    import ArtefactTilesetProgress from "$lib/components/artefacts/ArtefactTilesetProgress.svelte";
     import {
         artefactMediaUrl,
         entityLabel,
@@ -21,6 +21,8 @@
         linkedEntities,
         modelPreviewSource,
         shortHash,
+        tilesetIngestFailed,
+        tilesetNeedsIngest,
         type ArtefactMediaItem,
         type ArtefactSimilarHit,
     } from "$lib/components/artefacts/artefactMedia";
@@ -31,6 +33,7 @@
     } from "$lib/search/params";
     import { browserThumbUrl } from "$lib/project/mediaUrl";
     import { entityLayersHref } from "$lib/project/entityLink";
+    import MediaDeleteControls from "$lib/components/artefacts/MediaDeleteControls.svelte";
 
     type Period = { dateFrom: number | null; dateTo: number | null } | null;
 
@@ -52,13 +55,14 @@
         projectRegion,
         thumbSrc,
         openViewer,
-        openIn3D,
+        openIn3D: _openIn3D,
         patchCare,
         findSimilar,
         setSamePeriod,
         setSameRegion,
         copyHash,
         onSelectSimilar,
+        onRemoved,
     }: {
         item: ArtefactMediaItem;
         accessToken: string;
@@ -90,6 +94,7 @@
         setSameRegion: (on: boolean) => void;
         copyHash: (hash: string) => void;
         onSelectSimilar: (hit: ArtefactSimilarHit) => void;
+        onRemoved: () => void;
     } = $props();
 
     const isImage = $derived(item.media_type.startsWith("image/"));
@@ -98,8 +103,12 @@
     const pdf = $derived(isPdf(item));
     const tileset = $derived(isTileset(item));
     const model3d = $derived(isModel3D(item));
+    const ingestBusy = $derived(tileset && tilesetNeedsIngest(item));
+    const ingestFailed = $derived(tileset && tilesetIngestFailed(item));
     const modelSrc = $derived(
-        model3d ? modelPreviewSource(item, projectSlug) : null,
+        model3d && !ingestBusy && !ingestFailed
+            ? modelPreviewSource(item, projectSlug)
+            : null,
     );
     const links = $derived(linkedEntities(item));
     const kindLabel = $derived(
@@ -148,17 +157,6 @@
                 >· {formatBytes(item.file_size)}</span
             >
         </p>
-        {#if model3d && tileset}
-            <button
-                type="button"
-                onclick={() => openIn3D(item.hash)}
-                class="rounded-md p-1 text-muted-foreground hover:text-foreground"
-                title="Open in Layers"
-                aria-label="Open in Layers"
-            >
-                <BoxIcon class="size-3.5" />
-            </button>
-        {/if}
         {#if pdf}
             <a
                 href={mediaUrl()}
@@ -200,6 +198,10 @@
                 <Maximize2Icon class="size-3" />
             </span>
         </button>
+    {:else if model3d && (ingestBusy || ingestFailed)}
+        <div class="aspect-[4/3] w-full shrink-0">
+            <ArtefactTilesetProgress {item} />
+        </div>
     {:else if model3d && modelSrc}
         <div class="group/preview relative aspect-[4/3] w-full shrink-0">
             {#if !viewerOpen}
@@ -207,6 +209,7 @@
                     url={modelSrc.url}
                     kind={modelSrc.kind}
                     {accessToken}
+                    chrome={false}
                     class="absolute inset-0"
                 />
                 <button
@@ -219,11 +222,7 @@
                     <Maximize2Icon class="size-3" />
                 </button>
             {:else}
-                <div
-                    class="flex h-full items-center justify-center text-xs text-muted-foreground"
-                >
-                    Expanded preview
-                </div>
+                <div class="h-full w-full bg-neutral-950" aria-hidden="true"></div>
             {/if}
         </div>
     {:else if isVideo}
@@ -414,5 +413,14 @@
                 </div>
             {/if}
         </div>
+        {#if canUpload}
+            <MediaDeleteControls
+                {accessToken}
+                {projectSlug}
+                hash={item.hash}
+                linked={links.length > 0}
+                {onRemoved}
+            />
+        {/if}
     </div>
 </div>

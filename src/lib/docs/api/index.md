@@ -30,7 +30,7 @@ Public endpoints do not require authentication. Authenticated endpoints verify p
 |---|---|
 | `owner` | Full control |
 | `admin` | Full control |
-| `collaborator` | Read/write (push, mappings, media upload) |
+| `collaborator` | Read/write (push, mappings, media upload/delete) |
 | `viewer` | Read-only |
 
 ## Response Format
@@ -79,6 +79,7 @@ No authentication required.
 | `GET` | `/api/v1/projects/{slug}/media/integrity` | Missing blob / orphan file report |
 | `GET` | `/api/v1/projects/{slug}/tilesets` | List documentary tileset media rows |
 | `GET` | `/api/v1/projects/{slug}/tilesets/{hash}` | Get one tileset detail |
+| `PATCH` | `/api/v1/projects/{slug}/tilesets/{hash}` | Set tileset height offset (collaborator+); body: `{height_offset_m: number\|null}` |
 | `GET` | `/api/v1/projects/{slug}/tilesets/{hash}/*` | Serve extracted 3D Tiles assets; supports `?token=` |
 | `GET` | `/api/v1/projects/{slug}/gpkg` | Download canonical GPKG (respects licence/embargo); supports `?token=` |
 | `GET` | `/api/v1/projects/{slug}/layers/{table}/geojson` | GeoJSON export of a table layer |
@@ -125,6 +126,7 @@ Require a valid Bearer token.
 |---|---|---|
 | `POST` | `/api/v1/projects/{slug}/media` | Upload media (collaborator+). Headers: `X-TinyOwl-Media-Hash`, `X-TinyOwl-Entity-Type`, `X-TinyOwl-Entity-Id`, `X-TinyOwl-Media-Type` |
 | `PATCH` | `/api/v1/projects/{slug}/media/{hash}/care` | Update CARE/consent flags; body: `{care_allow_public_view, care_allow_embed, care_note}` |
+| `DELETE` | `/api/v1/projects/{slug}/media/{hash}` | Unlist media (collaborator+). Message required if the hash is on develop `_media` (`X-TinyOwl-Message`) |
 
 ### Sync (Push/Pull)
 
@@ -208,7 +210,7 @@ Device-code flow for CLI authentication:
 | [Mappings](/docs/api/column-mappings/) | Value mappings + column annotations (vocab / CRM) |
 | [Search](/docs/api/search/) | Spatial, temporal, and semantic search |
 | [Readme](/docs/api/readme/) | Project README (Markdown) |
-| [Media](/docs/api/media/) | List, upload, and serve project media files |
+| [Media](/docs/api/media/) | List, upload, delete, and serve project media files |
 | [Push & Pull](/docs/api/push-pull/) | Diff-based sync for GeoPackage data |
 | [Diff & Clone](/docs/api/diff-clone/) | Download canonical, pull diffs, stubs |
 

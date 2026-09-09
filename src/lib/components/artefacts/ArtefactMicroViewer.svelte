@@ -32,6 +32,8 @@
         kind?: "tileset" | "gltf";
         class?: string;
         interactive?: boolean;
+        /** Orbit hint + Reset button. Off for Artefacts aside/lightbox chrome. */
+        chrome?: boolean;
     };
 
     let {
@@ -40,6 +42,7 @@
         kind = "tileset",
         class: klass = "",
         interactive = true,
+        chrome = true,
     }: Props = $props();
 
     let host = $state<HTMLDivElement | undefined>();
@@ -773,7 +776,7 @@
         >
             <p class="text-xs text-muted-foreground">{error}</p>
         </div>
-    {:else if interactive && !loading}
+    {:else if chrome && interactive && !loading}
         <div
             class="pointer-events-none absolute bottom-2 left-2 right-2 z-20 flex items-end justify-between gap-2"
         >

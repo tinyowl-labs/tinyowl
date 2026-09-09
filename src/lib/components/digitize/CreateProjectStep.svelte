@@ -1,18 +1,42 @@
 <script lang="ts">
+    import { untrack } from "svelte";
     import CheckIcon from "@lucide/svelte/icons/check";
     import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
     import SearchIcon from "@lucide/svelte/icons/search";
+    import CloudIcon from "@lucide/svelte/icons/cloud";
     import {
         LICENCES,
         LOCATION_PRECISIONS,
     } from "$lib/project/licences";
 
-    type Props = {
-        accessToken: string;
-        onCreated: (info: { slug: string; title: string }) => void;
+    type QFieldAccount = {
+        id: string;
+        base_url: string;
+        username: string;
+        label?: string | null;
     };
 
-    let { accessToken, onCreated }: Props = $props();
+    type Props = {
+        accessToken: string;
+        onCreated: (info: {
+            slug: string;
+            title: string;
+            fieldSync: boolean;
+        }) => void;
+        source?: "template" | "import";
+        template?: string;
+        org?: string;
+        qfieldAccounts?: QFieldAccount[];
+    };
+
+    let {
+        accessToken,
+        onCreated,
+        source = "import",
+        template = "",
+        org = "",
+        qfieldAccounts = [],
+    }: Props = $props();
 
     let title = $state("");
     let slug = $state("");
@@ -24,7 +48,12 @@
     let locationPrecision = $state("exact");
     let busy = $state(false);
     let error = $state("");
+    let createdSlug = $state("");
     let slugTouched = $state(false);
+    let enableFieldSync = $state(false);
+    let qfieldAccountID = $state(
+        untrack(() => qfieldAccounts[0]?.id ?? ""),
+    );
 
     const filteredLicences = $derived.by(() => {
         const q = licenceQuery.trim().toLowerCase();
@@ -75,6 +104,8 @@
                 licence: licence || "CC_BY_4",
                 location_precision: locationPrecision || "exact",
             };
+            if (org) body.org = org;
+            if (template) body.template = template;
             if (embargoNote.trim()) body.embargo_note = embargoNote.trim();
             const until = embargoUntilISO(embargoUntil);
             if (until) body.embargo_until = until;
@@ -95,7 +126,38 @@
                     `Create failed (${res.status})`;
                 return;
             }
-            onCreated({ slug: data.slug ?? slug.trim(), title: title.trim() });
+            createdSlug = data.slug ?? slug.trim();
+            if (enableFieldSync) {
+                if (!qfieldAccountID) {
+                    error = "Choose a connected QFieldCloud account";
+                    return;
+                }
+                const cloudRes = await fetch(
+                    `/api/v1/projects/${encodeURIComponent(createdSlug)}/qfieldcloud-provision`,
+                    {
+                        method: "POST",
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                            account_id: qfieldAccountID,
+                            name: createdSlug.replaceAll("/", "-"),
+                            description: description.trim(),
+                        }),
+                    },
+                );
+                const cloudData = await cloudRes.json().catch(() => ({}));
+                if (!cloudRes.ok) {
+                    error = `Project created, but field sync setup failed: ${cloudData.error || cloudData.message || cloudRes.status}`;
+                    return;
+                }
+            }
+            onCreated({
+                slug: createdSlug,
+                title: title.trim(),
+                fieldSync: enableFieldSync,
+            });
         } catch (err) {
             error = err instanceof Error ? err.message : "Create failed";
         } finally {
@@ -108,8 +170,9 @@
     <div>
         <h2 class="text-base font-semibold text-foreground">New project</h2>
         <p class="text-sm text-muted-foreground mt-0.5 max-w-lg">
-            Same licence and embargo controls as Settings. Schema still comes
-            from your files next — not a shared template.
+            {source === "template"
+                ? "Set the project details before the recording schema is created."
+                : "Set the project details now; the schema will come from your first import."}
         </p>
     </div>
 
@@ -270,8 +333,72 @@
         </div>
     </section>
 
+    <section class="flex flex-col gap-3">
+        <div>
+            <h3 class="text-sm font-medium text-foreground">Field sync</h3>
+            <p class="text-xs text-muted-foreground mt-0.5 max-w-lg">
+                Optional. Creates a private project on your self-hosted
+                QFieldCloud and keeps its field package projected from develop.
+            </p>
+        </div>
+        <div class="rounded-lg border border-border px-3 py-3">
+            <label class="flex items-start gap-3">
+                <input
+                    type="checkbox"
+                    class="mt-1"
+                    bind:checked={enableFieldSync}
+                    disabled={qfieldAccounts.length === 0}
+                />
+                <span class="min-w-0 flex-1">
+                    <span class="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                        <CloudIcon class="size-4" />
+                        Enable QField sync
+                    </span>
+                    <span class="block text-xs text-muted-foreground mt-0.5">
+                        {#if qfieldAccounts.length === 0}
+                            Connect a QFieldCloud account in Settings first.
+                        {:else if source === "import"}
+                            Cloud projection waits for the first table import.
+                        {:else}
+                            The template dataset is queued for Cloud immediately.
+                        {/if}
+                    </span>
+                </span>
+            </label>
+            {#if enableFieldSync && qfieldAccounts.length > 0}
+                <label class="mt-3 flex flex-col gap-1.5 text-sm">
+                    <span class="text-muted-foreground">QFieldCloud account</span>
+                    <select
+                        class="rounded-md border border-input bg-background px-3 py-2 text-foreground"
+                        bind:value={qfieldAccountID}
+                    >
+                        {#each qfieldAccounts as account (account.id)}
+                            <option value={account.id}>
+                                {account.label || account.base_url} — {account.username}
+                            </option>
+                        {/each}
+                    </select>
+                </label>
+            {/if}
+        </div>
+        {#if qfieldAccounts.length === 0}
+            <a
+                href="/settings"
+                class="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+            >Connect QFieldCloud in Settings</a>
+        {/if}
+    </section>
+
     {#if error}
-        <p class="text-sm text-destructive">{error}</p>
+        <div class="text-sm text-destructive">
+            <p>{error}</p>
+            {#if createdSlug}
+                <a
+                    href="/{encodeURIComponent(createdSlug)}/settings/qfieldcloud"
+                    class="mt-1 inline-block underline underline-offset-4"
+                >Open the created project</a>
+            {/if}
+        </div>
     {/if}
 
     <button
@@ -279,6 +406,10 @@
         disabled={busy}
         class="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
     >
-        {busy ? "Creating…" : "Create project"}
+        {busy
+            ? "Creating…"
+            : source === "template"
+              ? "Create from template"
+              : "Create and import"}
     </button>
 </form>

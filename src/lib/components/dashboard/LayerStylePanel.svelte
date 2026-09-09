@@ -50,6 +50,10 @@
         onClose?: () => void;
         applyViews?: (views: LayerView[], activeId: string) => void;
         onSetOpacity?: (value: number) => void;
+        /** Shared FK id → label maps per `layer\0field` (see LayerScene). */
+        fkLabelMaps?: Record<string, Record<string, string>>;
+        /** Fetch labels for an FK column if not cached. */
+        ensureFkLabels?: (layerName: string, field: string) => void;
     };
 
     type StyleSection =
@@ -66,6 +70,8 @@
         onClose,
         applyViews,
         onSetOpacity,
+        fkLabelMaps = {},
+        ensureFkLabels,
     }: Props = $props();
 
     let draftViews = $state<LayerView[]>([]);
@@ -149,6 +155,22 @@
             ? distinctValues(rows, current.style.categoryField)
             : [],
     );
+    /** FK lookup labels for the draft category column, if it is one. */
+    const catLabels = $derived(
+        current?.style.categoryField
+            ? (fkLabelMaps[
+                  `${layer.name}\0${current.style.categoryField}`
+              ] ?? null)
+            : null,
+    );
+    $effect(() => {
+        if (renderer === "categorized" && current?.style.categoryField) {
+            ensureFkLabels?.(layer.name, current.style.categoryField);
+        }
+    });
+    function catLabel(val: string): string {
+        return catLabels?.[val] ?? catLabels?.[val.trim()] ?? val;
+    }
     const colorRange = $derived(
         current?.style.colorField
             ? numericRange(rows, current.style.colorField)
@@ -712,14 +734,19 @@
                     </div>
                     {#each catValues as val (val)}
                         {@const key = `${current.style.categoryField}=${val}`}
+                        {@const label = catLabel(val)}
                         <div class="flex min-w-0 items-center gap-1.5 px-0.5 py-0.5">
                             {@render colorDot(
                                 rgbaToHex(current.style.categories?.[key]),
                                 !canEdit,
                                 (hex) => setCatColor(key, hex),
-                                val,
+                                label,
                             )}
-                            <span class="truncate">{val}</span>
+                            <span
+                                class="truncate"
+                                title={label === val ? val : `${label} (${val})`}
+                                >{label}</span
+                            >
                         </div>
                     {:else}
                         <p class="px-0.5 text-[10px] text-muted-foreground">No values</p>

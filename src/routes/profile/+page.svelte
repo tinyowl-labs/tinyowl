@@ -1,7 +1,5 @@
 <script lang="ts">
-    import { goto } from "$app/navigation";
     import { browser } from "$app/environment";
-    import { enhance } from "$app/forms";
     import UsersIcon from "@lucide/svelte/icons/users";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import GitCommit from "@lucide/svelte/icons/git-commit";
@@ -16,7 +14,6 @@
 
     const RECENT_LIMIT = 6;
 
-    let showCreate = $state(false);
     let query = $state("");
     let accountOpen = $state(false);
     let accountMenuEl: HTMLDivElement | undefined = $state();
@@ -91,13 +88,6 @@
         if (diffDays < 7) return `${diffDays}d ago`;
         return date.toLocaleDateString();
     }
-
-    $effect(() => {
-        if (form?.success && form?.slug) {
-            showCreate = false;
-            goto(`/${form.slug}`);
-        }
-    });
 
     $effect(() => {
         if (!browser || !accountOpen) return;
@@ -287,14 +277,13 @@
                             {searching ? "Projects" : "Recent projects"}
                         </h1>
                         <div class="flex items-center gap-1">
-                            <button
-                                type="button"
-                                onclick={() => (showCreate = true)}
+                            <a
+                                href="/projects/new"
                                 class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             >
                                 <PlusIcon class="size-3.5" />
                                 New
-                            </button>
+                            </a>
                             <a
                                 href="/settings?qfield_publish=1"
                                 class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
@@ -331,11 +320,7 @@
                                     No projects yet
                                 </p>
                                 <div class="flex flex-wrap justify-center gap-2">
-                                    <Button
-                                        type="button"
-                                        size="sm"
-                                        onclick={() => (showCreate = true)}
-                                    >
+                                    <Button href="/projects/new" size="sm">
                                         Create project
                                     </Button>
                                     <Button
@@ -426,41 +411,3 @@
         </div>
     {/if}
 </div>
-
-{#if showCreate}
-    <button
-        class="fixed inset-0 z-50 bg-black/20"
-        onclick={() => (showCreate = false)}
-        aria-label="Close"
-    ></button>
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div class="w-full max-w-sm rounded-xl border bg-card p-6 shadow-xl">
-            <h2 class="text-base font-semibold mb-4">New project</h2>
-            <form method="POST" action="?/create" use:enhance>
-                <label class="block mb-4">
-                    <span class="text-xs text-muted-foreground"
-                        >Project name</span
-                    >
-                    <input
-                        type="text"
-                        name="name"
-                        required
-                        placeholder="My Excavation"
-                        class="mt-1 block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                </label>
-                {#if form?.error}
-                    <p class="text-xs text-destructive mb-4">{form.error}</p>
-                {/if}
-                <div class="flex gap-2">
-                    <Button type="submit" class="flex-1">Create</Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onclick={() => (showCreate = false)}>Cancel</Button
-                    >
-                </div>
-            </form>
-        </div>
-    </div>
-{/if}

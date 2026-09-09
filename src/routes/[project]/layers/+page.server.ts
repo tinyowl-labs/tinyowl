@@ -68,7 +68,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
       }
       try {
         const res = await fetch(
-          `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${name}/rows${refQS}`,
+          `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${encodeURIComponent(name)}/rows${refQS}`,
           { headers },
         );
         allRows[name] = res.ok ? ((await res.json()).rows ?? []) : [];
@@ -78,14 +78,18 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     }),
   );
 
-  // Fetch media and build entity lookup
+  // Fetch media and build entity lookup. API caps at 200/page (default 50) —
+  // page through so map/table thumbs are not limited to the newest slice.
   let mediaByEntity: Record<string, { url: string; media_type: string }[]> = {};
   try {
-    const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/media`,
-      { headers },
-    );
-    if (res.ok) {
+    const pageSize = 200;
+    let offset = 0;
+    for (;;) {
+      const res = await fetch(
+        `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/media?limit=${pageSize}&offset=${offset}`,
+        { headers },
+      );
+      if (!res.ok) break;
       const body = await res.json();
       const mediaList: MediaItem[] = Array.isArray(body)
         ? body
@@ -100,14 +104,24 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
         for (const link of links) {
           const key = `${link.entity_type}:${link.entity_id}`;
           if (!mediaByEntity[key]) mediaByEntity[key] = [];
-          mediaByEntity[key].push({
+          const entry = {
             url: m.url?.startsWith("/")
               ? m.url
               : `/media/${m.hash}`,
             media_type: m.media_type,
-          });
+          };
+          // Prefer images first so table/map chrome isn't an audio octet stub.
+          if (m.media_type?.startsWith("image/")) {
+            mediaByEntity[key].unshift(entry);
+          } else {
+            mediaByEntity[key].push(entry);
+          }
         }
       }
+      offset += mediaList.length;
+      if (mediaList.length < pageSize) break;
+      // Distinct-hash pagination: empty page or runaway offset → stop.
+      if (mediaList.length === 0 || offset > 100_000) break;
     }
   } catch (_) {}
 

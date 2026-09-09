@@ -55,6 +55,39 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 };
 
 export const actions: Actions = {
+	provisionQFieldCloud: async ({ request, locals, params, fetch }) => {
+		const { user } = await locals.getSession();
+		if (!user) return { error: "Not signed in", qfieldAction: "provision" };
+		const data = await request.formData();
+		const accountId = String(data.get("account_id") ?? "").trim();
+		const name = String(data.get("name") ?? "").trim();
+		if (!accountId) {
+			return {
+				error: "Choose the Echidna QFieldCloud account to use.",
+				qfieldAction: "provision",
+			};
+		}
+		const token = await locals.getAccessToken();
+		const res = await fetch(
+			`${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/qfieldcloud-provision`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ account_id: accountId, name }),
+			},
+		);
+		if (!res.ok) {
+			return {
+				error: `Failed: ${await res.text()}`,
+				qfieldAction: "provision",
+			};
+		}
+		return { success: true, qfieldAction: "provisioned" };
+	},
+
     linkQFieldCloud: async ({ request, locals, params, fetch }) => {
         const { user } = await locals.getSession();
         if (!user) return { error: "Not signed in", qfieldAction: "link" };
@@ -64,6 +97,7 @@ export const actions: Actions = {
         const qfcProjectId = String(data.get("qfc_project_id") ?? "").trim();
         const qfcProjectName = String(data.get("qfc_project_name") ?? "").trim();
         const gpkgName = String(data.get("gpkg_name") ?? "").trim();
+        const mode = String(data.get("mode") ?? "live").trim();
         if (!accountId || !qfcProjectId) {
             return {
                 error: "Account and Cloud project required.",
@@ -86,6 +120,7 @@ export const actions: Actions = {
                     qfc_project_id: qfcProjectId,
                     qfc_project_name: qfcProjectName || undefined,
                     gpkg_name: gpkgName || undefined,
+                    mode: mode === "owned" ? "owned" : "live",
                 }),
             },
         );

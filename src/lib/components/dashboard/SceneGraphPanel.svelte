@@ -12,6 +12,7 @@
     import LinkIcon from "@lucide/svelte/icons/link";
     import ListIcon from "@lucide/svelte/icons/list";
     import MousePointerSquareDashedIcon from "@lucide/svelte/icons/mouse-pointer-square-dashed";
+    import MoveVerticalIcon from "@lucide/svelte/icons/move-vertical";
     import PaletteIcon from "@lucide/svelte/icons/palette";
     import TableIcon from "@lucide/svelte/icons/table";
     import {
@@ -48,6 +49,8 @@
         coverageVisible?: (hash: string) => boolean;
         onToggleModel?: (hash: string) => void;
         onSetModelsVisible?: (visible: boolean) => void;
+        /** Open the height-offset side panel for a tileset. */
+        onOpenModelStyle?: (hash: string) => void;
         onToggleCoverage?: (hash: string) => void;
         onToggleLayer?: (idx: number) => void;
         onOpenStyle?: (idx: number) => void;
@@ -75,6 +78,17 @@
         seriesStepByLayer?: Record<string, string>;
         /** Writers see layer-select + Tab hint for Cesium edit mode. */
         canWrite?: boolean;
+        /**
+         * Map a raw categorized value to a legend display label
+         * (e.g. FK id → lookup label). Keys and matching stay raw.
+         */
+        resolveLegendLabel?: (
+            layerName: string,
+            field: string,
+            value: string,
+        ) => string | undefined;
+        /** Role-based member flag for the tileset height-offset editor (not ref-gated). */
+        canEditModelOffset?: boolean;
         /** Non-geometry schema tables (lookup / junction / attribute). */
         schemaTables?: SchemaTableKind[];
         onOpenTable?: (name: string) => void;
@@ -90,6 +104,7 @@
         coverageVisible = () => true,
         onToggleModel,
         onSetModelsVisible,
+        onOpenModelStyle,
         onToggleCoverage,
         onToggleLayer,
         onOpenStyle,
@@ -110,6 +125,8 @@
         joinedKeys = [],
         seriesStepByLayer = {},
         canWrite = false,
+        resolveLegendLabel,
+        canEditModelOffset = false,
         schemaTables = [],
         onOpenTable,
         class: klass = "",
@@ -358,6 +375,13 @@
         tilesetMenu = { hash, label, x: ev.clientX, y: ev.clientY, visible };
     }
 
+    function formatOffsetM(v: number | null | undefined): string {
+        if (v == null || !Number.isFinite(v)) return "";
+        const r = Math.round(v * 100) / 100;
+        if (r === 0) return "0 m";
+        return `${r > 0 ? "+" : ""}${r} m`;
+    }
+
     function closeTilesetMenu() {
         tilesetMenu = null;
     }
@@ -589,6 +613,13 @@
                                 >
                                     {m.label || m.hash.slice(0, 12)}
                                 </span>
+                                {#if m.height_offset_m != null}
+                                    <span
+                                        class="shrink-0 rounded bg-secondary px-1 text-[9px] font-normal normal-case tracking-normal tabular-nums text-muted-foreground"
+                                        title="Height offset applied along the ellipsoid normal"
+                                        >{formatOffsetM(m.height_offset_m)}</span
+                                    >
+                                {/if}
                                 {#if local}
                                     <span
                                         class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
@@ -735,14 +766,17 @@
             {@const allEnts = entitiesForLayerSorted(layer)}
             {@const ents = filterEntities(layer, allEnts)}
             {@const orderedKeys = ents.map((e) => e.key)}
-            {@const readLegend =
-                layer.name === focusLayerName
-                    ? layerLegend(
-                          activeView(layer.views, layer.activeViewId ?? "") ??
-                              undefined,
-                          rows[layer.name],
-                      )
-                    : null}
+            {@const readLegend = (() => {
+                if (layer.name !== focusLayerName) return null;
+                const view =
+                    activeView(layer.views, layer.activeViewId ?? "") ??
+                    undefined;
+                if (!view) return null;
+                const field = view.style.categoryField ?? "";
+                return layerLegend(view, rows[layer.name], undefined, (v) =>
+                    resolveLegendLabel?.(layer.name, field, v),
+                );
+            })()}
             {#if ents.length > 0 || !filterToView}
                 <div
                     class="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {editBuffer.targetLayer ===
@@ -1170,5 +1204,21 @@
                 Show
             {/if}
         </button>
+        {#if canEditModelOffset && onOpenModelStyle}
+            <button
+                type="button"
+                class={menuItem}
+                role="menuitem"
+                onclick={() => {
+                    onOpenModelStyle?.(tilesetMenu!.hash);
+                    closeTilesetMenu();
+                }}
+            >
+                <MoveVerticalIcon
+                    class="size-3.5 shrink-0 text-muted-foreground"
+                />
+                Adjust height…
+            </button>
+        {/if}
     </div>
 {/if}

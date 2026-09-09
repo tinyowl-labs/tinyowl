@@ -112,22 +112,27 @@ export async function loadProjectFkLookups(opts: {
 	if (!res.ok) return {};
 	const json = (await res.json()) as { edges?: SchemaFieldEdge[] };
 	const edges = json.edges ?? [];
-	const targetCache = new Map<string, LookupOpt[]>();
+	// Cache the in-flight promise, not only the completed value. Several FK
+	// columns commonly target the same table and are resolved concurrently.
+	const targetCache = new Map<string, Promise<LookupOpt[]>>();
 	const loadTarget = async (target: string) => {
 		const hit = targetCache.get(target);
 		if (hit) return hit;
-		const rowsRes = await fetch(
-			`/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(target)}/rows`,
-			{ headers },
-		);
-		const optsList = rowsRes.ok
-			? optsFromRows(
-					((await rowsRes.json()) as { rows?: Record<string, unknown>[] })
-						.rows,
-				)
-			: [];
-		targetCache.set(target, optsList);
-		return optsList;
+		const pending = (async () => {
+			const rowsRes = await fetch(
+				`/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(target)}/rows`,
+				{ headers },
+			);
+			return rowsRes.ok
+				? optsFromRows(
+						((await rowsRes.json()) as {
+							rows?: Record<string, unknown>[];
+						}).rows,
+				  )
+				: [];
+		})();
+		targetCache.set(target, pending);
+		return pending;
 	};
 	const out: Record<string, Record<string, LookupOpt[]>> = {};
 	await Promise.all(

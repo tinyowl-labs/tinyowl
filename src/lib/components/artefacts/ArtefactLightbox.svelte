@@ -6,6 +6,7 @@
     import BoxIcon from "@lucide/svelte/icons/box";
     import MapPinIcon from "@lucide/svelte/icons/map-pin";
     import ArtefactMicroViewer from "$lib/components/artefacts/ArtefactMicroViewer.svelte";
+    import ArtefactTilesetProgress from "$lib/components/artefacts/ArtefactTilesetProgress.svelte";
     import ImageDetailStage from "$lib/components/media/ImageDetailStage.svelte";
     import { imageDetailSrcs } from "$lib/project/imageDetailSrcs";
     import {
@@ -13,10 +14,12 @@
         entityLabel,
         formatBytes,
         isPdf,
-        isTiff,
         isTileset,
+        isTiff,
         linkedEntities,
         modelPreviewSource,
+        tilesetIngestFailed,
+        tilesetNeedsIngest,
         type ArtefactMediaItem,
     } from "$lib/components/artefacts/artefactMedia";
     import { entityLayersHref } from "$lib/project/entityLink";
@@ -44,7 +47,14 @@
     } = $props();
 
     const pdf = $derived(isPdf(item));
-    const modelSrc = $derived(modelPreviewSource(item, projectSlug));
+    const tileset = $derived(isTileset(item));
+    const ingestBusy = $derived(tileset && tilesetNeedsIngest(item));
+    const ingestFailed = $derived(tileset && tilesetIngestFailed(item));
+    const modelSrc = $derived(
+        !ingestBusy && !ingestFailed
+            ? modelPreviewSource(item, projectSlug)
+            : null,
+    );
     const links = $derived(linkedEntities(item));
     const imageSrcs = $derived(
         imageDetailSrcs(item.url, {
@@ -68,7 +78,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-{#if pdf || modelSrc}
+{#if pdf}
     <div
         class="fixed top-11 inset-x-0 bottom-0 z-[60] surface flex flex-col"
         onclick={closeViewer}
@@ -80,38 +90,19 @@
             onclick={(e) => e.stopPropagation()}
         >
             <p class="text-sm text-muted-foreground tabular-nums">
-                {#if pdf}
-                    Report · {formatBytes(item.file_size)}
-                {:else}
-                    3D preview · {formatBytes(item.file_size)}
-                {/if}
+                Report · {formatBytes(item.file_size)}
             </p>
             <div class="flex items-center gap-1">
-                {#if pdf}
-                    <a
-                        href={mediaUrl()}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs no-underline text-foreground hover:bg-secondary transition-colors"
-                        onclick={(e) => e.stopPropagation()}
-                    >
-                        <ExternalLinkIcon class="size-3.5" />
-                        Open
-                    </a>
-                {/if}
-                {#if isTileset(item)}
-                    <button
-                        type="button"
-                        class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-foreground hover:bg-secondary transition-colors"
-                        onclick={(e) => {
-                            e.stopPropagation();
-                            openIn3D(item.hash);
-                        }}
-                    >
-                        <BoxIcon class="size-3.5" />
-                        Open in Layers
-                    </button>
-                {/if}
+                <a
+                    href={mediaUrl()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs no-underline text-foreground hover:bg-secondary transition-colors"
+                    onclick={(e) => e.stopPropagation()}
+                >
+                    <ExternalLinkIcon class="size-3.5" />
+                    Open
+                </a>
                 <button
                     type="button"
                     class="rounded-md p-1.5 text-muted-foreground hover:text-foreground"
@@ -129,20 +120,62 @@
             class="relative min-h-0 flex-1 overflow-hidden"
             onclick={(e) => e.stopPropagation()}
         >
-            {#if pdf}
-                <iframe
-                    title="PDF viewer"
-                    src={mediaUrl({ pdfFit: true })}
-                    class="h-full w-full border-0 bg-background"
-                ></iframe>
+            <iframe
+                title="PDF viewer"
+                src={mediaUrl({ pdfFit: true })}
+                class="h-full w-full border-0 bg-background"
+            ></iframe>
+        </div>
+    </div>
+{:else if modelSrc || ingestBusy || ingestFailed}
+    <div
+        class="fixed top-11 inset-x-0 bottom-0 z-[60] bg-black/40 p-4 md:p-8"
+        onclick={(e) => {
+            if (e.target === e.currentTarget) closeViewer();
+        }}
+        role="dialog"
+        tabindex="-1"
+        aria-label="3D preview"
+        onkeydown={(e) => {
+            if (e.key === "Escape") closeViewer();
+        }}
+    >
+        <div
+            class="relative h-full w-full min-h-0 overflow-hidden rounded-md bg-neutral-950"
+            onclick={(e) => e.stopPropagation()}
+        >
+            {#if ingestBusy || ingestFailed}
+                <ArtefactTilesetProgress {item} class="absolute inset-0" />
             {:else if modelSrc}
                 <ArtefactMicroViewer
                     url={modelSrc.url}
                     kind={modelSrc.kind}
                     {accessToken}
-                    class="h-full w-full"
+                    chrome={false}
+                    class="absolute inset-0"
                 />
             {/if}
+            <div class="absolute top-2 right-2 z-20 flex items-center gap-1">
+                {#if tileset && !ingestBusy && !ingestFailed}
+                    <button
+                        type="button"
+                        class="rounded-md border border-border bg-background/90 p-1.5 text-muted-foreground hover:text-foreground"
+                        title="Open in Layers"
+                        aria-label="Open in Layers"
+                        onclick={() => openIn3D(item.hash)}
+                    >
+                        <BoxIcon class="size-4" />
+                    </button>
+                {/if}
+                <button
+                    type="button"
+                    class="rounded-md border border-border bg-background/90 p-1.5 text-muted-foreground hover:text-foreground"
+                    onclick={closeViewer}
+                    aria-label="Close"
+                >
+                    <XIcon class="size-4" />
+                </button>
+            </div>
         </div>
     </div>
 {:else}
@@ -189,9 +222,7 @@
                     <ChevronRight class="size-5" />
                 </button>
             {/if}
-            <div
-                class="absolute top-2 right-2 z-20 flex items-center gap-1"
-            >
+            <div class="absolute top-2 right-2 z-20 flex items-center gap-1">
                 {#if links[0]}
                     <a
                         href={entityLink(links[0].entity_type, links[0].entity_id)}
