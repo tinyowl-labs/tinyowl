@@ -64,6 +64,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
         joinRequests,
         invites,
         currentUserId: (await locals.getSession()).user?.id ?? "",
+        accessToken,
     };
 };
 
@@ -74,7 +75,11 @@ export const actions: Actions = {
 
         const data = await request.formData();
         const email = String(data.get("email") ?? "").trim();
+        const userId = String(data.get("user_id") ?? "").trim();
         const role = String(data.get("role") ?? "viewer").trim();
+        if (!email && !userId) {
+            return { error: "Pick a person or enter an email." };
+        }
 
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
@@ -86,7 +91,7 @@ export const actions: Actions = {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${accessToken}`,
                 },
-                body: JSON.stringify({ email, role }),
+                body: JSON.stringify({ email, role, user_id: userId || undefined }),
             },
         );
         if (!res.ok) return { error: await apiError(res) };

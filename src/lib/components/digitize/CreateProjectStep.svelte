@@ -27,6 +27,7 @@
         template?: string;
         org?: string;
         qfieldAccounts?: QFieldAccount[];
+		managedQField?: { enabled: boolean; base_url?: string; label?: string };
     };
 
     let {
@@ -36,6 +37,7 @@
         template = "",
         org = "",
         qfieldAccounts = [],
+		managedQField = { enabled: false },
     }: Props = $props();
 
     let title = $state("");
@@ -50,7 +52,8 @@
     let error = $state("");
     let createdSlug = $state("");
     let slugTouched = $state(false);
-    let enableFieldSync = $state(false);
+	let enableFieldSync = $state(Boolean(org && managedQField.enabled));
+	let fieldCloudMode = $state<"managed" | "byo">(managedQField.enabled && org ? "managed" : "byo");
     let qfieldAccountID = $state(
         untrack(() => qfieldAccounts[0]?.id ?? ""),
     );
@@ -128,7 +131,7 @@
             }
             createdSlug = data.slug ?? slug.trim();
             if (enableFieldSync) {
-                if (!qfieldAccountID) {
+				if (fieldCloudMode === "byo" && !qfieldAccountID) {
                     error = "Choose a connected QFieldCloud account";
                     return;
                 }
@@ -141,7 +144,7 @@
                             "Content-Type": "application/json",
                         },
                         body: JSON.stringify({
-                            account_id: qfieldAccountID,
+							...(fieldCloudMode === "managed" ? { managed: true } : { account_id: qfieldAccountID }),
                             name: createdSlug.replaceAll("/", "-"),
                             description: description.trim(),
                         }),
@@ -337,8 +340,7 @@
         <div>
             <h3 class="text-sm font-medium text-foreground">Field sync</h3>
             <p class="text-xs text-muted-foreground mt-0.5 max-w-lg">
-                Optional. Creates a private project on your self-hosted
-                QFieldCloud and keeps its field package projected from develop.
+				Creates a private field project and keeps its package projected from develop.
             </p>
         </div>
         <div class="rounded-lg border border-border px-3 py-3">
@@ -347,7 +349,7 @@
                     type="checkbox"
                     class="mt-1"
                     bind:checked={enableFieldSync}
-                    disabled={qfieldAccounts.length === 0}
+					disabled={!managedQField.enabled && qfieldAccounts.length === 0}
                 />
                 <span class="min-w-0 flex-1">
                     <span class="flex items-center gap-1.5 text-sm font-medium text-foreground">
@@ -355,8 +357,10 @@
                         Enable QField sync
                     </span>
                     <span class="block text-xs text-muted-foreground mt-0.5">
-                        {#if qfieldAccounts.length === 0}
-                            Connect a QFieldCloud account in Settings first.
+						{#if managedQField.enabled && org}
+							Uses {managedQField.label || "Echidna Field Cloud"} by default. Sign into QField with your Echidna account.
+						{:else if qfieldAccounts.length === 0}
+							Connect a QFieldCloud account in Settings first.
                         {:else if source === "import"}
                             Cloud projection waits for the first table import.
                         {:else}
@@ -365,7 +369,18 @@
                     </span>
                 </span>
             </label>
-            {#if enableFieldSync && qfieldAccounts.length > 0}
+			{#if enableFieldSync && managedQField.enabled && org}
+				<label class="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+					<input type="radio" bind:group={fieldCloudMode} value="managed" />
+					{managedQField.label || "Echidna Field Cloud"} (default)
+				</label>
+				{#if qfieldAccounts.length > 0}
+					<label class="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+						<input type="radio" bind:group={fieldCloudMode} value="byo" /> Bring your own QFieldCloud
+					</label>
+				{/if}
+			{/if}
+			{#if enableFieldSync && fieldCloudMode === "byo" && qfieldAccounts.length > 0}
                 <label class="mt-3 flex flex-col gap-1.5 text-sm">
                     <span class="text-muted-foreground">QFieldCloud account</span>
                     <select
@@ -381,7 +396,7 @@
                 </label>
             {/if}
         </div>
-        {#if qfieldAccounts.length === 0}
+		{#if !managedQField.enabled && qfieldAccounts.length === 0}
             <a
                 href="/settings"
                 class="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"

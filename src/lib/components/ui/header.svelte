@@ -2,7 +2,6 @@
 	import { onMount } from "svelte";
 	import { page } from "$app/stores";
 	import UserIcon from "@lucide/svelte/icons/user";
-	import FolderKanbanIcon from "@lucide/svelte/icons/folder-kanban";
 	import Building2Icon from "@lucide/svelte/icons/building-2";
 	import SettingsIcon from "@lucide/svelte/icons/settings";
 	import LogOutIcon from "@lucide/svelte/icons/log-out";
@@ -53,7 +52,6 @@
 		if (path.startsWith("/users/") && data.profile?.display_name) {
 			return data.profile.display_name;
 		}
-		if (path === "/profile" || path.startsWith("/profile/")) return "Projects";
 		if (path === "/settings" || path.startsWith("/settings/")) {
 			return "Settings";
 		}
@@ -190,7 +188,7 @@
 			{#if hasSession}
 				<div class="group/profile relative">
 					<a
-						href="/profile"
+						href={userId ? `/users/${userId}` : "/profile"}
 						class="inline-flex size-7 items-center justify-center rounded-full text-muted-foreground no-underline transition-colors hover:bg-accent group-hover/profile:bg-accent group-focus-within/profile:bg-accent"
 						aria-label="Account"
 						aria-haspopup="menu"
@@ -221,13 +219,6 @@
 									Your profile
 								</a>
 							{/if}
-							<a
-								href="/profile"
-								class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"
-							>
-								<FolderKanbanIcon class="size-3.5 shrink-0" />
-								Projects
-							</a>
 							<a
 								href="/orgs"
 								class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground no-underline hover:bg-accent hover:text-accent-foreground"

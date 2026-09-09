@@ -11,5 +11,6 @@
         accessToken={data.accessToken}
         org={data.org}
         qfieldAccounts={data.qfieldAccounts}
+        managedQField={data.managedQField}
     />
 </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
     import { enhance } from "$app/forms";
     import PlusIcon from "@lucide/svelte/icons/plus";
+    import XIcon from "@lucide/svelte/icons/x";
     import Trash2Icon from "@lucide/svelte/icons/trash-2";
     import { Button } from "$lib/components/ui/button/index.js";
     import { SELECT_CLASS } from "../pages";
@@ -59,8 +60,13 @@
                 class="text-muted-foreground hover:bg-accent hover:text-foreground"
                 onclick={() => (showInvite = !showInvite)}
             >
-                <PlusIcon class="size-3.5" />
-                {showInvite ? "Cancel" : "Invite"}
+                {#if showInvite}
+                    <XIcon class="size-3.5" />
+                    Cancel
+                {:else}
+                    <PlusIcon class="size-3.5" />
+                    Invite
+                {/if}
             </Button>
         {/if}
     </div>
@@ -88,6 +94,8 @@
             selectClass={SELECT_CLASS}
             inviteUrl={inviteUrl}
             invites={invites}
+            accessToken={(data as any)?.accessToken ?? ""}
+            memberUserIds={members.map((m: any) => m.user_id)}
             roleOptions={[
                 { value: "viewer", label: "Viewer" },
                 { value: "collaborator", label: "Collaborator" },

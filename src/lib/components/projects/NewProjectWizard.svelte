@@ -17,9 +17,10 @@
         accessToken: string;
         org?: string;
         qfieldAccounts?: QFieldAccount[];
+		managedQField?: { enabled: boolean; base_url?: string; label?: string };
     };
 
-    let { accessToken, org = "", qfieldAccounts = [] }: Props = $props();
+    let { accessToken, org = "", qfieldAccounts = [], managedQField = { enabled: false } }: Props = $props();
     let source = $state<StartSource | null>(null);
     let template = $state("mola-scr");
 
@@ -120,6 +121,7 @@
                     {accessToken}
                     {org}
                     {qfieldAccounts}
+					{managedQField}
                     {source}
                     template={source === "template" ? template : ""}
                     onCreated={finish}

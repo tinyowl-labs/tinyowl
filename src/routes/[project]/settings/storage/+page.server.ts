@@ -8,6 +8,7 @@ export type ProjectStorage = {
     limit_bytes?: number | null;
     available_bytes?: number | null;
     can_set_limit?: boolean;
+    breakdown?: { label: string; bytes: number; files: number }[];
 };
 
 export const load: PageServerLoad = async ({ locals, params, fetch }) => {

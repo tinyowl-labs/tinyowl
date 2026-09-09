@@ -17,6 +17,7 @@ export const load: PageServerLoad = async ({ locals, fetch, url }) => {
         username: string;
         label?: string | null;
     }[] = [];
+	let managedQField = { enabled: false, base_url: "", label: "Echidna Field Cloud" };
     try {
         const response = await fetch(
             `${TINYOWL_CORE_URL}/api/v1/integrations/qfieldcloud/accounts`,
@@ -24,10 +25,17 @@ export const load: PageServerLoad = async ({ locals, fetch, url }) => {
         );
         if (response.ok) qfieldAccounts = await response.json();
     } catch (_) {}
+	try {
+		const response = await fetch(`${TINYOWL_CORE_URL}/api/v1/integrations/qfieldcloud/managed`, {
+			headers: { Authorization: `Bearer ${accessToken}` },
+		});
+		if (response.ok) managedQField = await response.json();
+	} catch (_) {}
 
     return {
         accessToken,
         qfieldAccounts,
+		managedQField,
         org: url.searchParams.get("org")?.trim() ?? "",
     };
 };
