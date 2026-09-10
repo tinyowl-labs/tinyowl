@@ -3,6 +3,7 @@
     import { page } from "$app/stores";
     import { env as publicEnv } from "$env/dynamic/public";
     import { onDestroy, onMount, untrack } from "svelte";
+    import { slide } from "svelte/transition";
     import CheckIcon from "@lucide/svelte/icons/check";
     import BoxIcon from "@lucide/svelte/icons/box";
     import EyeIcon from "@lucide/svelte/icons/eye";
@@ -28,6 +29,7 @@
     import InstanceGraph from "$lib/instance-graph/InstanceGraph.svelte";
     import EntityContextMenu from "./EntityContextMenu.svelte";
     import SceneGraphPanel from "./SceneGraphPanel.svelte";
+    import SceneLegendPanel from "./SceneLegendPanel.svelte";
     import LayerStylePanel from "./LayerStylePanel.svelte";
     import TilesetOffsetPanel from "./TilesetOffsetPanel.svelte";
     import LayerSeriesBar from "./LayerSeriesBar.svelte";
@@ -41,6 +43,7 @@
     import { computeInViewKeys } from "./layerSceneInView";
     import { paintLayerViews } from "./layerSceneViews";
     import { createLayerViewer } from "./layerSceneBoot";
+    import { destroyCesiumViewer } from "$lib/components/cesiumBoot";
     import {
         clearDraftMeasure as clearDraftMeasureImpl,
         clearMeasurements as clearMeasurementsImpl,
@@ -173,6 +176,8 @@
         imageryOption,
         persistImageryId,
         persistTerrainId,
+        readStoredImageryId,
+        readStoredTerrainId,
         replaceBasemapLayer,
         resolveImageryId,
         resolveTerrainId,
@@ -398,8 +403,15 @@
     let ready = $state(false);
     /** True when an Ion imagery or terrain provider is active. */
     let hasIonTerrain = $state(false);
-    let imageryId = $state<ImageryId>("osm");
-    let terrainId = $state<TerrainId>("ellipsoid");
+    // Seed from localStorage so chrome does not flash OSM while the viewer boots.
+    const ionTokenPref =
+        publicEnv.PUBLIC_CESIUM_ION_ACCESS_TOKEN ?? "";
+    let imageryId = $state<ImageryId>(
+        resolveImageryId(readStoredImageryId(), Boolean(ionTokenPref)),
+    );
+    let terrainId = $state<TerrainId>(
+        resolveTerrainId(readStoredTerrainId(), Boolean(ionTokenPref)),
+    );
     let imageryBusy = $state(false);
     let terrainBusy = $state(false);
     let providerError = $state("");
@@ -653,6 +665,8 @@
     let lastFlownKey = "";
     let filterToView = $state(false);
     let styleLayerIdx = $state<number | null>(null);
+    /** Floating full legend (layer name); null = closed. */
+    let legendLayerName = $state<string | null>(null);
     /** Tileset hash with the height-offset panel open (null = closed). */
     let styleModelHash = $state<string | null>(null);
     let focusedLayerName = $state("");
@@ -662,7 +676,6 @@
     let inViewThrottle: ReturnType<typeof setTimeout> | null = null;
     let scratchSphere: any;
     let selectionDataSource: any = null;
-    let appliedClassifyTiles: boolean | null = null;
     /** Modifier keys captured on pointerdown (Cesium click has no modifiers). */
     let lastPointerMods = { shift: false, ctrl: false, meta: false };
 
@@ -2603,8 +2616,6 @@
                 /* ignore */
             }
         }
-        void syncPolygonGroundMode();
-
         applyBasemapTheme();
         try {
             viewer.resize();
@@ -2684,7 +2695,33 @@
         }
     }
 
-    async function boot() {
+    function teardownBootPartial() {
+        schemeHandle?.dispose();
+        schemeHandle = null;
+        for (const rm of renderRequestRemovers) {
+            try {
+                rm();
+            } catch {
+                /* ignore */
+            }
+        }
+        renderRequestRemovers = [];
+        try {
+            clickHandler?.destroy?.();
+        } catch {
+            /* ignore */
+        }
+        clickHandler = null;
+        postRenderRemover?.();
+        postRenderRemover = null;
+        const v = viewer;
+        viewer = null;
+        basemapLayer = null;
+        Cesium = null;
+        destroyCesiumViewer(v);
+    }
+
+    async function boot(isCancelled: () => boolean) {
         if (!browser || !el || !creditSink) return;
         const created = await createLayerViewer({
             container: el,
@@ -2692,6 +2729,17 @@
             ionToken: publicEnv.PUBLIC_CESIUM_ION_ACCESS_TOKEN ?? "",
             bumpRender,
         });
+        if (isCancelled()) {
+            for (const rm of created.renderRequestRemovers) {
+                try {
+                    rm();
+                } catch {
+                    /* ignore */
+                }
+            }
+            destroyCesiumViewer(created.viewer);
+            return;
+        }
         Cesium = created.Cesium;
         viewer = created.viewer;
         scratchSphere = created.scratchSphere;
@@ -2706,17 +2754,22 @@
         });
         const { nextImagery, nextTerrain } = created;
 
+        // Basemap already matches stored preference — do not load OSM then swap.
+        imageryId = nextImagery;
+        persistImageryId(nextImagery);
+        hasIonTerrain = usesIon(nextImagery, nextTerrain);
         applyBasemapTheme();
 
-        if (nextImagery !== "osm" && nextImagery !== "none") {
-            await applyImagery(nextImagery);
-        } else {
-            imageryId = nextImagery;
-            persistImageryId(nextImagery);
-            hasIonTerrain = usesIon(nextImagery, nextTerrain);
+        if (isCancelled()) {
+            teardownBootPartial();
+            return;
         }
         // Terrain must be live before syncLayers / sampleTerrainMostDetailed.
         await applyTerrain(nextTerrain);
+        if (isCancelled()) {
+            teardownBootPartial();
+            return;
+        }
         // Start in requested dim without morph flash on first paint.
         appliedDim = dim;
         viewer.scene.mode =
@@ -2928,7 +2981,6 @@
         if (gen !== modelLoadGen) return;
 
         flyHomeOnce();
-        void syncPolygonGroundMode();
         bumpRender();
     }
 
@@ -2993,7 +3045,6 @@
             }
         }
         if (visible) void syncModels(false);
-        void syncPolygonGroundMode();
     }
 
     function toggleModel(hash: string) {
@@ -3004,14 +3055,12 @@
             prim.show = next && dim === "3d";
             if (next) onSelectTileset?.(hash);
             bumpRender();
-            void syncPolygonGroundMode();
             return;
         }
         if (next) {
             onSelectTileset?.(hash);
             void syncModels(false);
         }
-        void syncPolygonGroundMode();
     }
 
     function coverageCtx(gen: number) {
@@ -3100,7 +3149,6 @@
                         viewer,
                         layer.packets,
                         layer.name,
-                        { classifyTiles: classifyTilesActive() },
                     );
                     if (gen !== layerLoadGen) {
                         ds.__echidnaDisposed = true;
@@ -3120,6 +3168,19 @@
                         ds.__echidnaOnTerrainHeights();
                     }
                     await viewer.dataSources.add(ds);
+                    if (gen !== layerLoadGen) {
+                        ds.__echidnaDisposed = true;
+                        try {
+                            viewer.dataSources.remove(ds, true);
+                        } catch {
+                            try {
+                                ds.entities.removeAll();
+                            } catch {
+                                /* ignore */
+                            }
+                        }
+                        return;
+                    }
                     layerSources.set(layer.name, ds);
                 } catch (e) {
                     console.warn("layer", layer.name, e);
@@ -3131,31 +3192,8 @@
 
         if (gen !== layerLoadGen) return;
 
-        appliedClassifyTiles = classifyTilesActive();
         applyLayerViews();
         flyHomeOnce();
-        bumpRender();
-    }
-
-    function classifyTilesActive(): boolean {
-        if (dim !== "3d") return false;
-        return models.some((m) => isModelVisible(m.hash));
-    }
-
-    async function syncPolygonGroundMode(force = false) {
-        if (!Cesium) return;
-        const next = classifyTilesActive();
-        if (!force && appliedClassifyTiles === next) return;
-        appliedClassifyTiles = next;
-        if (layerSources.size === 0) return;
-        const { applyPolygonClassification } = await import("./czmlEntities");
-        for (const ds of layerSources.values()) {
-            try {
-                applyPolygonClassification(Cesium, ds, next);
-            } catch {
-                /* ignore */
-            }
-        }
         bumpRender();
     }
 
@@ -3249,11 +3287,16 @@
 
     onMount(() => {
         if (!browser) return;
-        void boot().catch((e) => {
+        let cancelled = false;
+        void boot(() => cancelled).catch((e) => {
+            if (cancelled) return;
             error = e instanceof Error ? e.message : "Failed to start 3D";
             // Release the preparing overlay so the error banner is visible.
             hasFramed = true;
         });
+        return () => {
+            cancelled = true;
+        };
     });
 
     let modelKey = $derived(
@@ -3398,6 +3441,13 @@
     $effect(() => {
         if (styleLayerIdx === null) return;
         if (!layers[styleLayerIdx]) styleLayerIdx = null;
+    });
+
+    $effect(() => {
+        if (!legendLayerName) return;
+        if (!layers.some((l) => l.name === legendLayerName)) {
+            legendLayerName = null;
+        }
     });
 
     $effect(() => {
@@ -4794,6 +4844,10 @@
     bind:this={sceneRoot}
     class="relative flex h-full w-full min-h-0 flex-col overflow-hidden"
 >
+    {#if !fullscreen && !graphFullscreen}
+        <!-- App header is fixed over the map; reserve its height so scene chrome sits clear. -->
+        <div class="pointer-events-none h-11 shrink-0" aria-hidden="true"></div>
+    {/if}
     {#if !graphFullscreen}
         <SceneMenuBar
             {toolMode}
@@ -4863,7 +4917,7 @@
     {/if}
     <div class="relative min-h-0 flex-1 overflow-hidden">
     <div
-        class="absolute top-10 left-2 z-20 flex items-start gap-2 {graphFullscreen
+        class="absolute left-2 top-2 z-20 flex items-start gap-2 {graphFullscreen
             ? 'hidden'
             : ''}"
     >
@@ -5087,13 +5141,35 @@
                 {hiddenCount} hidden · Show all
             </button>
         {/if}
-        {#if ready && Cesium && viewer && dim === "3d"}
-            <EnuCornerWidget {Cesium} {viewer} show={true} />
+        <div
+            class="pointer-events-auto flex items-end gap-1.5 transition-transform duration-200 ease-out"
+        >
+            {#if ready && Cesium && viewer && dim === "3d"}
+                <EnuCornerWidget {Cesium} {viewer} show={true} />
+            {/if}
+            <CesiumAttribution
+                credits={creditsFor(imageryId, terrainId)}
+                ion={hasIonTerrain}
+            />
+        </div>
+        {#if !graphFullscreen &&
+            legendLayerName &&
+            layers.some((l) => l.name === legendLayerName)}
+            {@const legendLayer = layers.find(
+                (l) => l.name === legendLayerName,
+            )!}
+            <div
+                class="pointer-events-auto"
+                transition:slide={{ duration: 200, axis: "y" }}
+            >
+                <SceneLegendPanel
+                    layer={legendLayer}
+                    rows={rows[legendLayer.name] ?? []}
+                    resolveLabel={resolveLegendLabel}
+                    onClose={() => (legendLayerName = null)}
+                />
+            </div>
         {/if}
-        <CesiumAttribution
-            credits={creditsFor(imageryId, terrainId)}
-            ion={hasIonTerrain}
-        />
     </div>
 
     {#if !hasFramed && !error}
@@ -5102,12 +5178,12 @@
 
     {#if hasFramed && ready && !loading && hasSceneData}
         <div
-            class="pointer-events-none absolute top-10 bottom-2 z-10 flex items-start gap-2 {graphFullscreen
+            class="pointer-events-none absolute top-3 bottom-3 z-10 flex items-start gap-2 {graphFullscreen
                 ? 'hidden'
                 : ''}"
             style:right={showGraph
-                ? `calc(${100 - splitAt}% + 0.5rem)`
-                : "0.5rem"}
+                ? `calc(${100 - splitAt}% + 0.75rem)`
+                : "0.75rem"}
         >
             {#if styleLayerIdx !== null && layers[styleLayerIdx]}
                 {@const styleLayer = layers[styleLayerIdx]}
@@ -5144,10 +5220,7 @@
                 {/key}
             {/if}
             <div
-                class="pointer-events-auto flex max-h-full min-h-0 flex-col gap-2 {styleLayerIdx !==
-                    null || styleModelHash !== null
-                    ? 'w-52'
-                    : 'w-60'}"
+                class="pointer-events-auto flex min-h-0 max-h-[calc(100%-min(50vh,24rem))] w-72 flex-col gap-2"
             >
             <SceneGraphPanel
                 {layers}
@@ -5183,14 +5256,17 @@
                 {joinedKeys}
                 seriesStepByLayer={seriesStepByLayer}
                 resolveLegendLabel={resolveLegendLabel}
+                onOpenLegend={(name) => {
+                    legendLayerName = name;
+                }}
                 bind:filterToView
                 {inViewEntityKeys}
                 {inViewModelHashes}
-                    {canWrite}
-                    canEditModelOffset={canEditModelOffset}
-                    {schemaTables}
-                    {onOpenTable}
-                    class="min-h-0 flex-1"
+                {canWrite}
+                canEditModelOffset={canEditModelOffset}
+                {schemaTables}
+                {onOpenTable}
+                class="min-h-0 flex-1"
                 />
                 {#if canWrite && (bufferEntries.length > 0 || editBuffer.schemaAdds.length > 0 || commitDoneId)}
                     <div
@@ -5548,7 +5624,7 @@
     {#if canWrite && createFormOpen}
         <div
             class="pointer-events-auto z-[1100] {createFormDocked
-                ? 'absolute bottom-12 right-3'
+                ? 'absolute bottom-3 right-3'
                 : 'absolute'}"
             style={!createFormDocked
                 ? `left: ${pickPanelX}px; top: ${pickPanelY}px; transform: translate(-50%, ${pickFlipBelow ? "12px" : "calc(-100% - 12px)"});`

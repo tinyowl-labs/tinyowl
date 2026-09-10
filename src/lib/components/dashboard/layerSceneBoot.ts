@@ -4,6 +4,7 @@
  */
 import { loadCesiumGlobal } from "$lib/components/cesiumBoot";
 import {
+    createImageryProvider,
     createOsmImageryProvider,
     readStoredImageryId,
     readStoredTerrainId,
@@ -32,8 +33,10 @@ export type CreateLayerViewerOpts = {
 };
 
 /**
- * Load Cesium, construct the Viewer on ellipsoid, wire render-request
- * listeners. Caller then applies stored imagery/terrain and scene mode.
+ * Load Cesium and construct the Viewer with the user's stored basemap already
+ * applied (no OSM warm-up when preference is aerial/topo/…). Terrain stays
+ * ellipsoid here — world/bathy is applied after by the caller so height samples
+ * do not race an async Terrain.fromWorldTerrain swap.
  */
 export async function createLayerViewer(
     opts: CreateLayerViewerOpts,
@@ -43,16 +46,30 @@ export async function createLayerViewer(
     const ionAvailable = Boolean(opts.ionToken);
     if (opts.ionToken) Cesium.Ion.defaultAccessToken = opts.ionToken;
 
-    const nextImagery = resolveImageryId(readStoredImageryId(), ionAvailable);
+    let nextImagery = resolveImageryId(readStoredImageryId(), ionAvailable);
     const nextTerrain = resolveTerrainId(readStoredTerrainId(), ionAvailable);
 
-    // Viewer first on ellipsoid — same as injalak. Do NOT pass
-    // Terrain.fromWorldTerrain() here: that helper swaps the provider
-    // asynchronously after ready, so early height samples land at Z≈0.
-    const initialImagery =
-        nextImagery === "none"
-            ? false
-            : new Cesium.ImageryLayer(createOsmImageryProvider(Cesium));
+    let initialImagery: any = false;
+    if (nextImagery !== "none") {
+        try {
+            const provider = await createImageryProvider(Cesium, nextImagery);
+            initialImagery = provider
+                ? new Cesium.ImageryLayer(provider)
+                : false;
+            if (!provider) nextImagery = "none";
+        } catch (e) {
+            console.warn(
+                "[createLayerViewer] preferred imagery failed; falling back to OSM",
+                nextImagery,
+                e,
+            );
+            nextImagery = "osm";
+            initialImagery = new Cesium.ImageryLayer(
+                createOsmImageryProvider(Cesium),
+            );
+        }
+    }
+
     const viewer = new Cesium.Viewer(opts.container, {
         animation: false,
         timeline: false,

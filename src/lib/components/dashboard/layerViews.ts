@@ -172,6 +172,9 @@ function formatLegendNum(n: number): string {
 /** SCENE legend is uncapped; pass a finite cap only for compact previews. */
 const LEGEND_CLASS_CAP = Number.POSITIVE_INFINITY;
 
+/** Max class swatches in the SCENE one-line strip before “+N”. */
+export const LEGEND_SWATCH_CAP = 5;
+
 export type LayerLegendClass = {
 	label: string;
 	color: number[];

@@ -1,4 +1,4 @@
-/** Shared Cesium loader. Default is the IIFE `/cesium/Cesium.js`; ESM engine is opt-in. */
+/** Shared Cesium loader — IIFE `/cesium/Cesium.js` only. */
 
 let loadPromise: Promise<any> | null = null;
 
@@ -11,22 +11,6 @@ export function loadCesiumGlobal(): Promise<any> {
 
     loadPromise = (async () => {
         try {
-            const { preferCesiumEngine, loadCesiumEngine } = await import(
-                "./cesiumEngine"
-            );
-            if (preferCesiumEngine()) {
-                try {
-                    const ns = await loadCesiumEngine();
-                    (window as any).Cesium = ns;
-                    (window as any).__tinyowlCesiumLoader = "engine";
-                    return ns;
-                } catch (e) {
-                    console.warn(
-                        "Cesium engine ESM failed; falling back to Cesium.js",
-                        e,
-                    );
-                }
-            }
             (window as any).CESIUM_BASE_URL = "/cesium/";
             if (
                 !document.querySelector(
@@ -111,7 +95,6 @@ export function loadCesiumGlobal(): Promise<any> {
                     settle(false, new Error("Failed to load Cesium.js"));
                 document.head.appendChild(s);
             });
-            (window as any).__tinyowlCesiumLoader = "iife";
             return (window as any).Cesium;
         } catch (e) {
             // Allow a later caller to retry after a transient failure.

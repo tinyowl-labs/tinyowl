@@ -22,7 +22,7 @@
 		onSelect?: (table: string, id: string) => void;
 	} = $props();
 
-	let open = $state(true);
+	let open = $state(false);
 	let userMode = $state<"" | "list" | "star">("");
 
 	const grouped = $derived(hopsByDir(hops));

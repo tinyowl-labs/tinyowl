@@ -208,7 +208,7 @@
 <Menubar.Root
     value={viewportMenu.sceneValue()}
     onValueChange={onMenuChange}
-    class="scene-menubar surface absolute top-0 inset-x-0 z-40 flex h-8 shrink-0 select-none items-center gap-0.5 border-b border-border px-1.5 text-xs"
+    class="scene-menubar surface relative z-40 flex h-8 w-full shrink-0 select-none items-center gap-0.5 border-b border-border px-1.5 text-xs"
     ondblclick={preventBarSelect}
     onmousedown={preventRepeatMouse}
     onselectstart={preventBarSelect}
@@ -423,41 +423,6 @@
     {/if}
 
     <div class="ml-auto flex items-center gap-0.5">
-        {#if showRefToggle}
-            <div
-                class="mr-1 flex overflow-hidden rounded-md border border-border"
-                role="group"
-                aria-label="Viewing ref"
-            >
-                <button
-                    type="button"
-                    class="select-none px-2 py-0.5 text-[11px] {viewingRef ===
-                    'develop'
-                        ? 'selected'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
-                    onclick={() => onSetViewingRef?.("develop")}
-                >
-                    develop
-                </button>
-                <button
-                    type="button"
-                    class="select-none border-l border-border px-2 py-0.5 text-[11px] {viewingRef ===
-                    'main'
-                        ? 'selected'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
-                    title="Published main (read-only)"
-                    onclick={() => onSetViewingRef?.("main")}
-                >
-                    main
-                </button>
-            </div>
-            {#if viewingRef === "main"}
-                <span class="mr-1 select-none text-[10px] text-muted-foreground"
-                    >Published</span
-                >
-            {/if}
-        {/if}
-
         {#if onSetDim}
             <button
                 type="button"
@@ -563,6 +528,36 @@
                     <MaximizeIcon class="size-3.5" />
                 {/if}
             </button>
+        {/if}
+
+        {#if showRefToggle}
+            <div
+                class="ml-1 flex overflow-hidden rounded-md border border-border"
+                role="group"
+                aria-label="Viewing ref"
+            >
+                <button
+                    type="button"
+                    class="select-none px-2 py-0.5 text-[11px] {viewingRef ===
+                    'develop'
+                        ? 'selected'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
+                    onclick={() => onSetViewingRef?.("develop")}
+                >
+                    develop
+                </button>
+                <button
+                    type="button"
+                    class="select-none border-l border-border px-2 py-0.5 text-[11px] {viewingRef ===
+                    'main'
+                        ? 'selected'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
+                    title="Published main (read-only)"
+                    onclick={() => onSetViewingRef?.("main")}
+                >
+                    main
+                </button>
+            </div>
         {/if}
     </div>
 </Menubar.Root>

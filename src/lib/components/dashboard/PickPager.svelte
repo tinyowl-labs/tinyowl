@@ -47,7 +47,7 @@
         /**
          * `pinned` — fixed UI chrome (legacy bottom-left).
          * `floating` — click-relative overlay (on-map).
-         * `docked` is owned internally (bottom-right) and persisted.
+         * `docked` is owned internally (bottom-right, flush) and persisted.
          */
         placement?: "pinned" | "floating";
         /** Used when placement is floating — screen point of the click/anchor. */
@@ -319,7 +319,7 @@
             ? 'w-80 max-w-[min(22rem,calc(100%-1.5rem))]'
             : 'w-72 max-w-[min(18rem,calc(100%-1.5rem))]'} {layout ===
         'docked'
-            ? 'absolute bottom-12 right-3'
+            ? 'absolute bottom-3 right-3'
             : layout === 'pinned'
               ? 'absolute bottom-12 left-3'
               : 'absolute'}"

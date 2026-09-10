@@ -35,7 +35,6 @@
     } from "$lib/stores/layerSelection.svelte";
     import {
         joinHint,
-        relatedSelectionKeys,
     } from "$lib/project/schemaJoin";
     import { editBuffer, attrFieldsForTable } from "$lib/stores/editBuffer.svelte";
     import {
@@ -976,19 +975,13 @@
     let schemaLoading = $state(false);
     let schemaLoaded = $state(false);
 
-    const joinedKeys = $derived(
-        relatedSelectionKeys([...layerSelection.selected], {
-            edges: schemaEdges,
-            rowsByTable: rows,
-        }),
-    );
-    const joinedSet = $derived(new Set(joinedKeys));
+    /** Auto-highlight of related FK rows/entities is off — selection is explicit only. */
+    const joinedKeys: string[] = [];
     const tableJoinHint = $derived(joinHint(activeTab, schemaEdges, tables));
 
     function rowClassName(row: Record<string, unknown>): string {
         // Depend on selectionSig so row styles update when membership changes at same size.
         void selectionSig;
-        void joinedKeys;
         void editBuffer.entries;
         const id = String(row.source_id ?? row.SOURCE_ID ?? "");
         if (!id) return "";
@@ -1007,7 +1000,6 @@
             }
             return "bg-selected/40 text-foreground";
         }
-        if (joinedSet.has(key)) return "bg-accent/40";
         if (buffered) return "bg-selected/15";
         return "";
     }
@@ -1198,14 +1190,12 @@
         }
     }
 
-    /** Ensure selected + joined layers are visible — no refetch. */
+    /** Ensure selected layers are visible — no refetch. */
     $effect(() => {
         void selectionSig;
-        void joinedKeys;
         if (mapLayers.length === 0) return;
         let changed = false;
-        const keys = [...layerSelection.selected, ...joinedKeys];
-        for (const key of keys) {
+        for (const key of layerSelection.selected) {
             const { layer } = parseSelectionKey(key);
             if (!layer) continue;
             const idx = mapLayers.findIndex((l) => l.name === layer);
@@ -1602,10 +1592,6 @@
                                             class="shrink-0 pb-2 text-[11px] text-muted-foreground"
                                         >
                                             {tableJoinHint}
-                                            {#if joinedKeys.length > 0}
-                                                · {joinedKeys.length} related
-                                                highlighted
-                                            {/if}
                                         </p>
                                     {/if}
                                     {#if canMutate && tableEditEnabled && viewMode === "table"}

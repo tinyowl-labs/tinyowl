@@ -28,6 +28,8 @@
         activeView,
         contrastColor,
         layerLegend,
+        layerLegendColor,
+        LEGEND_SWATCH_CAP,
         rgbaToHex,
         rowByEntityId,
         rowMatchesFilter,
@@ -87,6 +89,8 @@
             field: string,
             value: string,
         ) => string | undefined;
+        /** Open the floating full legend for a geometry layer. */
+        onOpenLegend?: (layerName: string) => void;
         /** Role-based member flag for the tileset height-offset editor (not ref-gated). */
         canEditModelOffset?: boolean;
         /** Non-geometry schema tables (lookup / junction / attribute). */
@@ -126,6 +130,7 @@
         seriesStepByLayer = {},
         canWrite = false,
         resolveLegendLabel,
+        onOpenLegend,
         canEditModelOffset = false,
         schemaTables = [],
         onOpenTable,
@@ -136,7 +141,6 @@
     let coveragesOpen = $state(true);
     let attrTablesOpen = $state(false);
     let layerOpen = $state<Record<string, boolean>>({});
-    let entityOpen = $state<Record<string, boolean>>({});
     let rangeAnchorKey = $state<string | null>(null);
     let layerMenu = $state<{
         name: string;
@@ -156,10 +160,20 @@
     let tilesetMenuEl = $state<HTMLDivElement>();
 
     const geomNames = $derived(new Set(layers.map((l) => l.name)));
-    const attrGroups = $derived(groupNonGeomTables(schemaTables, geomNames));
-    const attrTableCount = $derived(
-        attrGroups.reduce((n, g) => n + g.tables.length, 0),
-    );
+    /** Flat list: raw tables, then links, then lookups — icons distinguish kind. */
+    const attrTablesFlat = $derived.by(() => {
+        const groups = groupNonGeomTables(schemaTables, geomNames);
+        const order = ["attribute", "junction", "lookup"] as const;
+        const out: { kind: (typeof order)[number]; table: SchemaTableKind }[] =
+            [];
+        for (const key of order) {
+            const g = groups.find((x) => x.key === key);
+            if (!g) continue;
+            for (const table of g.tables) out.push({ kind: key, table });
+        }
+        return out;
+    });
+    const attrTableCount = $derived(attrTablesFlat.length);
     const joinedSet = $derived(new Set(joinedKeys));
     const pendingByLayer = $derived(editBuffer.pendingByTable);
     const pendingKeys = $derived.by(() => {
@@ -226,26 +240,15 @@
         layerOpen = { ...layerOpen, [name]: !isLayerExpanded(name) };
     }
 
-    function isEntitiesExpanded(name: string): boolean {
-        return entityOpen[name] === true;
-    }
-
-    function toggleEntitiesExpanded(name: string) {
-        entityOpen = { ...entityOpen, [name]: !isEntitiesExpanded(name) };
-    }
-
     function expandAll() {
         modelsOpen = true;
         coveragesOpen = true;
         attrTablesOpen = true;
         const next: Record<string, boolean> = {};
-        const ents: Record<string, boolean> = {};
         for (const l of layers) {
             next[l.name] = true;
-            ents[l.name] = true;
         }
         layerOpen = next;
-        entityOpen = ents;
     }
 
     function collapseAll() {
@@ -253,13 +256,10 @@
         coveragesOpen = false;
         attrTablesOpen = false;
         const next: Record<string, boolean> = {};
-        const ents: Record<string, boolean> = {};
         for (const l of layers) {
             next[l.name] = false;
-            ents[l.name] = false;
         }
         layerOpen = next;
-        entityOpen = ents;
     }
 
     function byDisplayName(a: string, b: string): number {
@@ -408,6 +408,22 @@
         closeLayerMenu();
     }
 
+    function openLegendFromMenu() {
+        if (!layerMenu) return;
+        onOpenLegend?.(layerMenu.name);
+        closeLayerMenu();
+    }
+
+    function legendForLayer(layer: LayerData) {
+        const view =
+            activeView(layer.views, layer.activeViewId ?? "") ?? undefined;
+        if (!view) return null;
+        const field = view.style.categoryField ?? view.style.colorField ?? "";
+        return layerLegend(view, rows[layer.name], LEGEND_SWATCH_CAP, (v) =>
+            field ? resolveLegendLabel?.(layer.name, field, v) : undefined,
+        );
+    }
+
     const filteredModels = $derived(
         models
             .filter((m) => {
@@ -485,14 +501,15 @@
         };
     });
 
-    const childIndent = "ml-[1.375rem] border-l border-border/60 pl-2.5";
+    /** Indent for nested rows. Margin lives here — do not put `w-full` on the same node. */
+    const childIndent = "ml-[1.375rem] min-w-0 border-l border-border/60 pl-2.5";
     const menuItem =
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-secondary";
 </script>
 
 <div class="flex min-h-0 w-full flex-col rounded-lg shadow-lg {klass}">
     <div
-        class="surface flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg border border-border text-xs"
+        class="surface flex min-h-0 w-full max-h-full flex-1 flex-col overflow-hidden rounded-lg border border-border text-xs"
     >
     <div class="border-b border-border px-2 py-1.5">
         <div class="flex items-center justify-between gap-2 px-0.5">
@@ -766,17 +783,11 @@
             {@const allEnts = entitiesForLayerSorted(layer)}
             {@const ents = filterEntities(layer, allEnts)}
             {@const orderedKeys = ents.map((e) => e.key)}
-            {@const readLegend = (() => {
-                if (layer.name !== focusLayerName) return null;
-                const view =
-                    activeView(layer.views, layer.activeViewId ?? "") ??
-                    undefined;
-                if (!view) return null;
-                const field = view.style.categoryField ?? "";
-                return layerLegend(view, rows[layer.name], undefined, (v) =>
-                    resolveLegendLabel?.(layer.name, field, v),
-                );
-            })()}
+            {@const stripLegend = legendForLayer(layer)}
+            {@const showStrip =
+                isLayerExpanded(layer.name) ||
+                layer.name === focusLayerName ||
+                layer.name === styleLayerName}
             {#if ents.length > 0 || !filterToView}
                 <div
                     class="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {editBuffer.targetLayer ===
@@ -848,170 +859,159 @@
                         {/if}
                     </button>
                 </div>
-                {#if readLegend && (readLegend.ramp || readLegend.classes.length > 0)}
-                    <div
-                        class="mb-1 max-h-40 space-y-0.5 overflow-y-auto {childIndent}"
-                    >
-                        {#if readLegend.ramp}
-                            <div class="px-0.5 py-0.5">
-                                <div
-                                    class="h-1.5 rounded-full border border-border/50"
-                                    style="background: {readLegend.ramp.css}"
-                                ></div>
-                                <div
-                                    class="mt-0.5 flex justify-between gap-2 text-[9px] font-normal normal-case tracking-normal tabular-nums text-muted-foreground"
-                                >
-                                    <span>{readLegend.ramp.min}</span>
-                                    <span>{readLegend.ramp.max}</span>
-                                </div>
-                            </div>
-                        {:else}
-                            {#each readLegend.classes as cls}
-                                <div
-                                    class="flex min-w-0 items-center gap-1.5 px-0.5 py-0.5"
-                                >
-                                    <span
-                                        class="size-2.5 shrink-0 rounded-sm border"
-                                        style="background: {rgbaToHex(
-                                            cls.color,
-                                        )}; border-color: {rgbaToHex(
-                                            contrastColor(cls.color),
-                                        )}"
-                                    ></span>
-                                    <span
-                                        class="min-w-0 truncate text-[10px] font-normal normal-case tracking-normal text-muted-foreground"
-                                        title={cls.label}>{cls.label}</span
-                                    >
-                                </div>
-                            {/each}
-                            {#if readLegend.more > 0}
-                                <p
-                                    class="px-0.5 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
-                                >
-                                    +{readLegend.more} more
-                                </p>
-                            {/if}
-                        {/if}
-                    </div>
-                {/if}
-                {#if !compact && isLayerExpanded(layer.name)}
+                {#if showStrip}
                     <div class="mb-1 {childIndent}">
                         <button
                             type="button"
-                            class="flex w-full items-center gap-1 rounded-md px-0.5 py-0.5 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:bg-secondary hover:text-foreground"
-                            title={isEntitiesExpanded(layer.name)
-                                ? "Collapse entities"
-                                : "Expand entities"}
-                            onclick={() => toggleEntitiesExpanded(layer.name)}
+                            class="flex w-full min-w-0 items-center gap-1 rounded-md px-0.5 py-0.5 text-left hover:bg-secondary/80"
+                            title="Open legend"
+                            onclick={() => onOpenLegend?.(layer.name)}
                         >
-                            <ChevronDownIcon
-                                class="size-3 shrink-0 transition-transform {isEntitiesExpanded(
-                                    layer.name,
-                                )
-                                    ? ''
-                                    : '-rotate-90'}"
-                            />
-                            <span>Entities</span>
-                            <span class="ml-auto tabular-nums opacity-60"
-                                >{ents.length}</span
-                            >
+                            {#if stripLegend?.ramp}
+                                <span
+                                    class="h-1.5 min-w-0 flex-1 rounded-full border border-border/50"
+                                    style="background: {stripLegend.ramp.css}"
+                                ></span>
+                                <span
+                                    class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                    >Legend</span
+                                >
+                            {:else if stripLegend && stripLegend.classes.length > 0}
+                                <span class="flex min-w-0 items-center gap-0.5">
+                                    {#each stripLegend.classes as cls}
+                                        <span
+                                            class="size-2 shrink-0 rounded-sm border"
+                                            style="background: {rgbaToHex(
+                                                cls.color,
+                                            )}; border-color: {rgbaToHex(
+                                                contrastColor(cls.color),
+                                            )}"
+                                        ></span>
+                                    {/each}
+                                </span>
+                                {#if stripLegend.more > 0}
+                                    <span
+                                        class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                        >+{stripLegend.more}</span
+                                    >
+                                {/if}
+                                <span
+                                    class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                    >Legend</span
+                                >
+                            {:else}
+                                {@const fill = layerLegendColor(
+                                    layer.views,
+                                    layer.activeViewId ?? "",
+                                )}
+                                <span
+                                    class="size-2 shrink-0 rounded-sm border"
+                                    style="background: {rgbaToHex(
+                                        fill,
+                                    )}; border-color: {rgbaToHex(
+                                        contrastColor(fill),
+                                    )}"
+                                ></span>
+                                <span
+                                    class="shrink-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground"
+                                    >Legend</span
+                                >
+                            {/if}
                         </button>
-                        {#if isEntitiesExpanded(layer.name)}
+                    </div>
+                {/if}
+                {#if !compact && isLayerExpanded(layer.name)}
+                    <div
+                        class="mb-1 max-h-52 space-y-0.5 overflow-y-auto {childIndent}"
+                    >
+                        {#each ents as ent}
+                            {@const selected =
+                                layerSelection.isSelected(
+                                    ent.layerName,
+                                    ent.entityId,
+                                ) ||
+                                joinedSet.has(
+                                    toSelectionKey(
+                                        ent.layerName,
+                                        ent.entityId,
+                                    ),
+                                )}
+                            {@const primary = layerSelection.isPrimary(
+                                ent.layerName,
+                                ent.entityId,
+                            )}
+                            {@const hidden = layerSelection.isSessionHidden(
+                                ent.layerName,
+                                ent.entityId,
+                            )}
                             <div
-                                class="mt-0.5 max-h-52 space-y-0.5 overflow-y-auto"
+                                class="flex items-center gap-0.5 rounded-md {selected
+                                    ? primary
+                                        ? 'selected'
+                                        : 'bg-selected/40'
+                                    : 'hover:bg-secondary'}"
                             >
-                                {#each ents as ent}
-                                    {@const selected =
-                                        layerSelection.isSelected(
+                                <button
+                                    type="button"
+                                    class="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left"
+                                    onclick={(e) =>
+                                        onEntityClick(
+                                            e,
                                             ent.layerName,
                                             ent.entityId,
-                                        ) ||
-                                        joinedSet.has(
-                                            toSelectionKey(
-                                                ent.layerName,
-                                                ent.entityId,
-                                            ),
+                                            orderedKeys,
                                         )}
-                                    {@const primary =
-                                        layerSelection.isPrimary(
-                                            ent.layerName,
-                                            ent.entityId,
-                                        )}
-                                    {@const hidden =
-                                        layerSelection.isSessionHidden(
+                                    ondblclick={() =>
+                                        onEntityDblClick(
                                             ent.layerName,
                                             ent.entityId,
                                         )}
-                                    <div
-                                        class="flex items-center gap-0.5 rounded-md {selected
-                                            ? primary
-                                                ? 'selected'
-                                                : 'bg-selected/40'
-                                            : 'hover:bg-secondary'}"
+                                    title={ent.entityId}
+                                >
+                                    <HexagonIcon
+                                        class="size-3 shrink-0 text-muted-foreground"
+                                    />
+                                    <span
+                                        class="truncate {hidden
+                                            ? 'opacity-40 line-through'
+                                            : ''}"
                                     >
-                                        <button
-                                            type="button"
-                                            class="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left"
-                                            onclick={(e) =>
-                                                onEntityClick(
-                                                    e,
-                                                    ent.layerName,
-                                                    ent.entityId,
-                                                    orderedKeys,
-                                                )}
-                                            ondblclick={() =>
-                                                onEntityDblClick(
-                                                    ent.layerName,
-                                                    ent.entityId,
-                                                )}
-                                            title={ent.entityId}
+                                        {ent.label}
+                                    </span>
+                                    {#if pendingKeys.has(ent.key)}
+                                        <span
+                                            class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-normal normal-case tracking-normal text-foreground"
+                                            title="In session"
+                                            >buf</span
                                         >
-                                            <HexagonIcon
-                                                class="size-3 shrink-0 text-muted-foreground"
-                                            />
-                                            <span
-                                                class="truncate {hidden
-                                                    ? 'opacity-40 line-through'
-                                                    : ''}"
-                                            >
-                                                {ent.label}
-                                            </span>
-                                            {#if pendingKeys.has(ent.key)}
-                                                <span
-                                                    class="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-normal normal-case tracking-normal text-foreground"
-                                                    title="In session"
-                                                    >buf</span
-                                                >
-                                            {/if}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                                            title={hidden ? "Show" : "Hide"}
-                                            onclick={() =>
-                                                toggleEntityHidden(
-                                                    ent.layerName,
-                                                    ent.entityId,
-                                                )}
-                                        >
-                                            {#if hidden}
-                                                <EyeOffIcon class="size-3" />
-                                            {:else}
-                                                <EyeIcon class="size-3" />
-                                            {/if}
-                                        </button>
-                                    </div>
-                                {:else}
-                                    <p
-                                        class="px-1 py-1 text-[10px] text-muted-foreground"
-                                    >
-                                        {filterToView
-                                            ? "None in view"
-                                            : "No entities"}
-                                    </p>
-                                {/each}
+                                    {/if}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                                    title={hidden ? "Show" : "Hide"}
+                                    onclick={() =>
+                                        toggleEntityHidden(
+                                            ent.layerName,
+                                            ent.entityId,
+                                        )}
+                                >
+                                    {#if hidden}
+                                        <EyeOffIcon class="size-3" />
+                                    {:else}
+                                        <EyeIcon class="size-3" />
+                                    {/if}
+                                </button>
                             </div>
-                        {/if}
+                        {:else}
+                            <p
+                                class="px-1 py-1 text-[10px] text-muted-foreground"
+                            >
+                                {filterToView
+                                    ? "None in view"
+                                    : "No entities"}
+                            </p>
+                        {/each}
                     </div>
                 {/if}
             {/if}
@@ -1042,45 +1042,37 @@
                 </div>
             </div>
             {#if attrTablesOpen}
-                {#each attrGroups as group (group.key)}
-                    <p
-                        class="px-1.5 pt-1 text-[9px] font-medium uppercase tracking-wide text-muted-foreground {childIndent}"
-                    >
-                        {group.label}
-                    </p>
-                    {#each group.tables as tbl (tbl.name)}
-                        <div
-                            class="flex w-full items-center gap-0.5 {childIndent}"
+                <div class="mb-1 space-y-0.5 {childIndent}">
+                    {#each attrTablesFlat as row (row.table.name)}
+                        <button
+                            type="button"
+                            class="flex w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-secondary hover:text-foreground"
+                            title={row.table.name}
+                            onclick={() => onOpenTable?.(row.table.name)}
                         >
-                            <button
-                                type="button"
-                                class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-secondary hover:text-foreground"
-                                title={tbl.name}
-                                onclick={() => onOpenTable?.(tbl.name)}
+                            {#if row.kind === "lookup"}
+                                <ListIcon
+                                    class="size-3 shrink-0 text-muted-foreground"
+                                />
+                            {:else if row.kind === "junction"}
+                                <LinkIcon
+                                    class="size-3 shrink-0 text-muted-foreground"
+                                />
+                            {:else}
+                                <TableIcon
+                                    class="size-3 shrink-0 text-muted-foreground"
+                                />
+                            {/if}
+                            <span class="min-w-0 flex-1 truncate"
+                                >{row.table.label ||
+                                    row.table.name.replace(/_/g, " ")}</span
                             >
-                                {#if group.key === "lookup"}
-                                    <ListIcon
-                                        class="size-3 shrink-0 text-muted-foreground"
-                                    />
-                                {:else if group.key === "junction"}
-                                    <LinkIcon
-                                        class="size-3 shrink-0 text-muted-foreground"
-                                    />
-                                {:else}
-                                    <TableIcon
-                                        class="size-3 shrink-0 text-muted-foreground"
-                                    />
-                                {/if}
-                                <span class="truncate"
-                                    >{tbl.label || tbl.name.replace(/_/g, " ")}</span
-                                >
-                                <span class="ml-auto tabular-nums opacity-60"
-                                    >{tbl.count ?? 0}</span
-                                >
-                            </button>
-                        </div>
+                            <span class="shrink-0 tabular-nums opacity-60"
+                                >{row.table.count ?? 0}</span
+                            >
+                        </button>
                     {/each}
-                {/each}
+                </div>
             {/if}
         {/if}
 
@@ -1133,6 +1125,15 @@
         >
             <PaletteIcon class="size-3.5 shrink-0 text-muted-foreground" />
             Style
+        </button>
+        <button
+            type="button"
+            class={menuItem}
+            role="menuitem"
+            onclick={openLegendFromMenu}
+        >
+            <ListIcon class="size-3.5 shrink-0 text-muted-foreground" />
+            Legend
         </button>
         <button
             type="button"

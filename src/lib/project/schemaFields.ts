@@ -463,9 +463,10 @@ export function groupNonGeomTables(
 	links.sort(byName);
 	attrs.sort(byName);
 	const out: AttrTableGroup[] = [];
-	if (lookups.length) out.push({ key: "lookup", label: "Lookups", tables: lookups });
-	if (links.length) out.push({ key: "junction", label: "Links", tables: links });
+	// Raw tables first; callers that flatten use icon (not labels) to distinguish.
 	if (attrs.length)
 		out.push({ key: "attribute", label: "Tables", tables: attrs });
+	if (links.length) out.push({ key: "junction", label: "Links", tables: links });
+	if (lookups.length) out.push({ key: "lookup", label: "Lookups", tables: lookups });
 	return out;
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
     /**
-     * Screen-space East / North / Up widget (bottom-left).
+     * Screen-space East / North / Up widget (bottom-left stack; rides above legend).
      * Tracks camera orientation only — not a world primitive.
      */
     import { onDestroy } from "svelte";

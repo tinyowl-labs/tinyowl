@@ -10,44 +10,29 @@
 
     let { class: klass = "", credits = [], ion = false }: Props = $props();
 
-    const shown = $derived.by(() => {
+    /** Basemap / terrain credits only — Ion is rendered with the Cesium mark. */
+    const others = $derived.by(() => {
         const out: CreditLink[] = [];
         const seen = new Set<string>();
         for (const c of credits) {
+            if (c.label === "Ion" || c.label === "Cesium") continue;
             if (seen.has(c.label)) continue;
             seen.add(c.label);
             out.push(c);
         }
-        if (ion && !seen.has("Ion")) {
-            out.push({ label: "Ion", href: "https://cesium.com/ion/" });
-        }
         return out;
     });
+
+    const showIon = $derived(
+        ion || credits.some((c) => c.label === "Ion"),
+    );
 </script>
 
 <div
-    class="surface pointer-events-auto flex max-w-[11rem] flex-wrap items-center gap-x-1 gap-y-0 rounded px-1 py-0.5 text-[9px] leading-tight text-muted-foreground {klass}"
+    class="surface pointer-events-auto flex max-w-[14rem] flex-wrap items-center gap-x-1 gap-y-0 rounded px-1 py-0.5 text-[9px] leading-tight text-muted-foreground {klass}"
 >
-    {#each shown as c, i}
-        {#if i > 0}
-            <span class="opacity-40">·</span>
-        {/if}
-        {#if c.href}
-            <a
-                class="hover:text-foreground hover:underline"
-                href={c.href}
-                target="_blank"
-                rel="noopener noreferrer">{c.label}</a
-            >
-        {:else}
-            <span>{c.label}</span>
-        {/if}
-    {/each}
-    {#if shown.length > 0}
-        <span class="opacity-40">·</span>
-    {/if}
     <a
-        class="inline-flex items-center hover:opacity-90"
+        class="inline-flex shrink-0 items-center hover:opacity-90"
         href="https://cesium.com/"
         target="_blank"
         rel="noopener noreferrer"
@@ -63,4 +48,27 @@
             draggable="false"
         />
     </a>
+    {#if showIon}
+        <a
+            class="hover:text-foreground hover:underline"
+            href="https://cesium.com/ion/"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Cesium ion"
+            >Ion</a
+        >
+    {/if}
+    {#each others as c}
+        <span class="opacity-40">·</span>
+        {#if c.href}
+            <a
+                class="hover:text-foreground hover:underline"
+                href={c.href}
+                target="_blank"
+                rel="noopener noreferrer">{c.label}</a
+            >
+        {:else}
+            <span>{c.label}</span>
+        {/if}
+    {/each}
 </div>

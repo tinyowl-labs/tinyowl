@@ -51,38 +51,6 @@ function ringHasZ(flat: number[]): boolean {
     return false;
 }
 
-function polygonIsExtruded(entity: any): boolean {
-    try {
-        const h = entity?.polygon?.extrudedHeight;
-        if (h == null) return false;
-        const v = typeof h.getValue === "function" ? h.getValue() : h;
-        return v != null && Number(v) > 0;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Kept for LayerScene tileset toggles. Classification is opaque/sharded on
- * steep terrain — clear it so sampled absolute polygons stay translucent.
- */
-export function applyPolygonClassification(
-    _Cesium: any,
-    ds: any,
-    _classifyTiles: boolean,
-): void {
-    if (!ds?.entities) return;
-    for (const entity of ds.entities.values) {
-        if (!entity?.polygon || polygonIsExtruded(entity)) continue;
-        entity.polygon.classificationType = undefined;
-        // Extrusion / view-height paint may set these; leave extruded alone.
-        if (entity.polygon.extrudedHeight == null) {
-            entity.polygon.height = undefined;
-            entity.polygon.heightReference = undefined;
-        }
-    }
-}
-
 function coordKey(lng: number, lat: number): string {
     return `${lng},${lat}`;
 }
@@ -235,9 +203,7 @@ export async function customDataSourceFromCzml(
     viewer: any,
     packets: Record<string, unknown>[],
     layerName: string,
-    opts?: { classifyTiles?: boolean },
 ): Promise<any> {
-    void opts; // tileset classify path removed — opaque / sharded on steep DEM
     const ds = new Cesium.CustomDataSource(layerName);
     const terrainPoints: Array<{ entity: any; lng: number; lat: number }> = [];
     const terrainPolygons: Array<{

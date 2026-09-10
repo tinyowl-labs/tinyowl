@@ -195,9 +195,6 @@ export default defineConfig({
   },
   // Cesium is loaded as a browser global from /static/cesium — keep it out of
   // Vite's dep optimizer (prebundled cesium can break WebGL / texture atlas).
-  // Combined `cesium` IIFE stays out of the optimizer (prebundle broke WebGL/atlas).
-  // `@cesium/engine` MUST be optimized: its CJS deps (mersenne-twister, …) have no
-  // default ESM export, so native exclude-mode imports fail in Vite dev.
   resolve: {
     // One Svelte runtime. Prebundling Svelte component libraries otherwise
     // inlines a second svelte/internal/client (next_sibling_getter stays
@@ -205,12 +202,11 @@ export default defineConfig({
     dedupe: ["svelte"],
   },
   ssr: {
-    external: ["cesium", "@cesium/engine"],
+    external: ["cesium"],
     noExternal: ["@xyflow/svelte", "@lucide/svelte"],
   },
   optimizeDeps: {
     exclude: ["cesium", "@xyflow/svelte", "@lucide/svelte"],
-    include: ["@cesium/engine"],
   },
   server: {
     host: true,

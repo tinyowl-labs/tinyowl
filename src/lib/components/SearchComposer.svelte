@@ -2887,11 +2887,11 @@
                 </div>
             </div>
         {/if}
-        <div
-            class="search-vt-bar relative z-10 flex w-full min-h-11 items-center rounded-2xl border border-border py-1.5 pl-10 pr-12 surface shadow-lg focus-within:border-primary {dragOver
+        <div class="relative z-10 w-full">
+        <label
+            class="search-vt-bar relative flex w-full min-h-11 cursor-text items-center rounded-2xl border border-border py-1.5 pl-10 pr-12 surface shadow-lg focus-within:border-primary {dragOver
                 ? 'ring-2 ring-primary/40'
                 : ''} {klass}"
-            onclick={() => inputEl?.focus()}
         >
         <SearchIcon
             class="pointer-events-none absolute left-3.5 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground"
@@ -2915,6 +2915,8 @@
                 >
             </span>
         {/if}
+        <!-- Primary search field: native autofocus only on the discovery landing (see `autofocus` prop). -->
+        <!-- svelte-ignore a11y_autofocus -->
         <input
             bind:this={inputEl}
             bind:value
@@ -2945,15 +2947,6 @@
             class="w-full min-w-0 border-0 bg-transparent py-1 text-sm placeholder:text-muted-foreground focus:outline-none"
         />
         </div>
-        <input
-            bind:this={fileInputEl}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/*"
-            class="sr-only"
-            tabindex="-1"
-            aria-hidden="true"
-            onchange={onFilePicked}
-        />
         {#if shortcutHint && !focused && !hasSpatialChip && activeTags.length === 0 && activeVocabs.length === 0 && activeLayers.length === 0 && activeRows.length === 0 && activeProjects.length === 0}
             <span
                 class="pointer-events-none absolute right-11 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 text-[10px] text-muted-foreground/80"
@@ -2967,16 +2960,23 @@
                 {/each}
             </span>
         {/if}
+        </label>
+        <input
+            bind:this={fileInputEl}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/*"
+            class="sr-only"
+            tabindex="-1"
+            aria-hidden="true"
+            onchange={onFilePicked}
+        />
         <button
             type="button"
             class="absolute right-2.5 top-1/2 z-10 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
             title="Search by image — click, drop, or paste a photo"
             aria-label="Search by image"
             disabled={imageBusy}
-            onclick={(e) => {
-                e.stopPropagation();
-                openImagePicker();
-            }}
+            onclick={() => openImagePicker()}
         >
             {#if imageBusy}
                 <LoaderIcon class="size-4 animate-spin" />
