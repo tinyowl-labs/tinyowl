@@ -48,7 +48,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
   let tables: Record<string, string[]> = {};
   try {
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables${refQS}`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/tables${refQS}`,
       { headers },
     );
     if (res.ok) {
@@ -68,7 +68,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
       }
       try {
         const res = await fetch(
-          `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${encodeURIComponent(name)}/rows${refQS}`,
+          `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(name)}/rows${refQS}`,
           { headers },
         );
         allRows[name] = res.ok ? ((await res.json()).rows ?? []) : [];
@@ -86,7 +86,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
     let offset = 0;
     for (;;) {
       const res = await fetch(
-        `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/media?limit=${pageSize}&offset=${offset}`,
+        `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/media?limit=${pageSize}&offset=${offset}`,
         { headers },
       );
       if (!res.ok) break;
@@ -140,7 +140,7 @@ export const load: PageServerLoad = async ({ locals, params, url, fetch }) => {
       for (const row of searchRows) qs.append("row", row);
       if (url.searchParams.get("ref") === "main") qs.set("ref", "main");
       const res = await fetch(
-        `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/search-entities?${qs}`,
+        `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/search-entities?${qs}`,
         { headers },
       );
       if (res.ok) {

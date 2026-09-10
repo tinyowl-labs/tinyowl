@@ -11,7 +11,7 @@ export const load: LayoutServerLoad = async ({ parent, params, url }) => {
         !user ||
         (role !== "owner" && role !== "admin" && !fieldPage)
     ) {
-        throw redirect(303, `/${params.project}`);
+        throw redirect(303, `/${encodeURIComponent(params.project)}`);
     }
     return {};
 };

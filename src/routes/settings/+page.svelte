@@ -1475,7 +1475,7 @@
                                                                     ] ?? link}
                                                                 <li class="space-y-1.5">
                                                                     <a
-                                                                        href="/{link.tinyowl_slug}/settings"
+                                                                        href="/{encodeURIComponent(link.tinyowl_slug)}/settings"
                                                                         class="inline-flex items-center gap-1.5 text-sm text-foreground hover:underline"
                                                                     >
                                                                         {link.tinyowl_slug}
@@ -1713,7 +1713,7 @@
                                             >
                                                 <a
                                                     class="underline"
-                                                    href={`/${link.tinyowl_slug}`}
+                                                    href={`/${encodeURIComponent(link.tinyowl_slug)}`}
                                                     >{link.tinyowl_slug}</a
                                                 >
                                                 <span

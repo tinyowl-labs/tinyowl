@@ -47,6 +47,7 @@
 		role === "owner" || role === "admin" || role === "collaborator",
 	);
 	const gpkgUri = $derived(project?.gpkg_uri ?? null);
+	const projectRoot = $derived(`/${encodeURIComponent(slug)}`);
 
 	const navGroups = $derived.by((): NavGroup[] => {
 		if (!slug) return [];
@@ -56,24 +57,24 @@
 				items: [
 					{
 						label: "Map",
-						href: `/${slug}/layers?view=map`,
+						href: `${projectRoot}/layers?view=map`,
 						icon: MapIcon,
 					},
 					{
 						label: "Tables",
-						href: `/${slug}/layers?view=table`,
+						href: `${projectRoot}/layers?view=table`,
 						icon: TableIcon,
 					},
 					{
 						label: "Artefacts",
-						href: `/${slug}/artefacts`,
+						href: `${projectRoot}/artefacts`,
 						icon: ArchiveIcon,
 					},
 					...(canWrite
 						? [
 								{
 									label: "Import",
-									href: `/${slug}/import`,
+								href: `${projectRoot}/import`,
 									icon: FileUpIcon,
 								},
 							]
@@ -82,7 +83,7 @@
 						? [
 								{
 									label: "History",
-									href: `/${slug}/history`,
+								href: `${projectRoot}/history`,
 									icon: HistoryIcon,
 								},
 							]
@@ -105,17 +106,17 @@
 				items: [
 					{
 						label: "Manage",
-						href: `/${slug}/dashboard`,
+						href: `${projectRoot}/dashboard`,
 						icon: GaugeIcon,
 					},
 					{
 						label: "Review",
-						href: `/${slug}/review`,
+						href: `${projectRoot}/review`,
 						icon: GitPullRequestIcon,
 					},
 					{
 						label: "Mappings",
-						href: `/${slug}/mappings`,
+						href: `${projectRoot}/mappings`,
 						icon: WaypointsIcon,
 					},
 				],
@@ -124,10 +125,10 @@
 		return groups;
 	});
 
-	const settingsHref = $derived(canManage ? `/${slug}/settings` : "");
+	const settingsHref = $derived(canManage ? `${projectRoot}/settings` : "");
 
 	function isActive(href: string) {
-		const slugRoot = `/${slug}`;
+		const slugRoot = projectRoot;
 		const q = href.indexOf("?");
 		const hrefPath = q >= 0 ? href.slice(0, q) : href;
 		const hrefSearch = q >= 0 ? href.slice(q + 1) : "";

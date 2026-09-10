@@ -15,7 +15,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     const token = await locals.getAccessToken();
     try {
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/storage`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/storage`,
             { headers: { Authorization: `Bearer ${token}` } },
         );
         if (res.ok) return { storage: (await res.json()) as ProjectStorage };
@@ -35,7 +35,7 @@ export const actions: Actions = {
         }
         const token = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/storage-limit`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/storage-limit`,
             {
                 method: "PUT",
                 headers: {

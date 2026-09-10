@@ -620,7 +620,7 @@
                             {@const imgLoaded = loadedImages.has(sim.hash)}
                             {@const imgFailed = failedImages.has(sim.hash)}
                             <a
-                                href={`/${sim.project_slug}/artefacts`}
+                                href={`/${encodeURIComponent(sim.project_slug)}/artefacts`}
                                 class="group relative aspect-square overflow-hidden rounded-md bg-secondary/60 no-underline"
                                 title="{sim.project_title} · {similarityPct(sim.distance)}%"
                             >
@@ -769,4 +769,3 @@
         {/if}
     {/snippet}
 </SpatialDiscovery>
-

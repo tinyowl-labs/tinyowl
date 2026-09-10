@@ -184,7 +184,7 @@
         errorMsg = "";
         try {
             const res = await fetch(
-                `/api/v1/projects/${slug}/commits/${id}/changes`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/commits/${id}/changes`,
                 { headers: jsonAuthHeaders(accessToken) },
             );
             const body = await res.json().catch(() => ({}));
@@ -226,7 +226,7 @@
         busy = true;
         errorMsg = "";
         try {
-            const res = await fetch(`/api/v1/projects/${slug}/promote`, {
+            const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/promote`, {
                 method: "POST",
                 headers: jsonAuthHeaders(accessToken),
                 body: JSON.stringify({ note: note.trim() }),
@@ -252,7 +252,7 @@
         errorMsg = "";
         clearConflicts();
         try {
-            const res = await fetch(`/api/v1/projects/${slug}/integrate`, {
+            const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/integrate`, {
                 method: "POST",
                 headers: jsonAuthHeaders(accessToken),
                 body: JSON.stringify({
@@ -294,7 +294,7 @@
                 source_id: e.source_id,
                 take: conflictTake[conflictKey(e)],
             }));
-            const res = await fetch(`/api/v1/projects/${slug}/integrate`, {
+            const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/integrate`, {
                 method: "POST",
                 headers: jsonAuthHeaders(accessToken),
                 body: JSON.stringify({
@@ -413,7 +413,7 @@
                     {#each leftover as cs}
                         <li>
                             <ChangesetListRow
-                                href="/{slug}/review/{cs.id}"
+                                href="/{encodeURIComponent(slug)}/review/{cs.id}"
                                 badge="leftover"
                                 title={cs.message?.trim() || "Untitled"}
                                 subtitle="{formatCommitDate(cs.created_at)} · pre-DAG pending"
@@ -423,7 +423,7 @@
                     {#each conflictedCommits as c}
                         <li>
                             <ChangesetListRow
-                                href="/{slug}/history/{c.id}"
+                                href="/{encodeURIComponent(slug)}/history/{c.id}"
                                 badge="conflicted"
                                 mono={(c.id ?? "").slice(0, 8)}
                                 title={c.message?.trim() || "Untitled"}

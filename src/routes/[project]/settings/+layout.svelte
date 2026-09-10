@@ -15,7 +15,7 @@
     const pathname = $derived($page.url.pathname);
 
     function href(id: string) {
-        return `/${slug}/settings/${id}`;
+        return `/${encodeURIComponent(slug)}/settings/${id}`;
     }
 
     function isActive(id: string) {

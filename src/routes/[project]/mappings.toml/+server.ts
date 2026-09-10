@@ -8,7 +8,7 @@ export const GET: RequestHandler = async ({ locals, params, fetch }) => {
     return new Response("Sign in required", { status: 401 });
   }
   const res = await fetch(
-    `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/mappings.toml`,
+    `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/mappings.toml`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
   );
   if (!res.ok) {
@@ -19,7 +19,7 @@ export const GET: RequestHandler = async ({ locals, params, fetch }) => {
     status: 200,
     headers: {
       "Content-Type": "application/toml; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${params.project}-mappings.toml"`,
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(params.project)}-mappings.toml"`,
     },
   });
 };

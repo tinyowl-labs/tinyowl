@@ -11,7 +11,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
   let readme: string | null = null;
   try {
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/readme`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/readme`,
       { headers },
     );
     if (res.ok) readme = await res.text();
@@ -32,7 +32,7 @@ export const actions: Actions = {
     const accessToken = await locals.getAccessToken();
 
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/readme`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/readme`,
       {
         method: "PUT",
         headers: {
@@ -53,7 +53,7 @@ export const actions: Actions = {
     const slug = params.project;
     const accessToken = await locals.getAccessToken();
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/join-request`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/join-request`,
       {
         method: "POST",
         headers: {
@@ -80,7 +80,7 @@ export const actions: Actions = {
     const slug = params.project;
     const accessToken = await locals.getAccessToken();
     const res = await fetch(
-      `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/members/${user.id}`,
+      `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/members/${user.id}`,
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${accessToken}` },

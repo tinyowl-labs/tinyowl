@@ -25,7 +25,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     let developCommit = "";
     try {
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/qfieldcloud-link`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (res.ok) {
@@ -42,7 +42,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     } catch (_) {}
     try {
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/refs`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/refs`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (res.ok) {
@@ -69,7 +69,7 @@ export const actions: Actions = {
 		}
 		const token = await locals.getAccessToken();
 		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/qfieldcloud-provision`,
+			`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/qfieldcloud-provision`,
 			{
 				method: "POST",
 				headers: {
@@ -108,7 +108,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/qfieldcloud-link`,
             {
                 method: "PUT",
                 headers: {
@@ -137,7 +137,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/qfieldcloud-link`,
             {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${accessToken}` },
@@ -159,7 +159,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/qfieldcloud-link/sync`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/qfieldcloud-link/sync`,
             {
                 method: "POST",
                 headers: { Authorization: `Bearer ${accessToken}` },
@@ -205,7 +205,7 @@ export const actions: Actions = {
         body.set("message", message);
         body.set("base_commit", baseCommit);
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/field-package/push`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/field-package/push`,
             {
                 method: "POST",
                 headers: {

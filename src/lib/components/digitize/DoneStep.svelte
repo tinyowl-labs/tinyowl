@@ -106,14 +106,14 @@
 
     {#if pending && changesetId}
         <a
-            href="/{slug}/review/{changesetId}"
+            href="/{encodeURIComponent(slug)}/review/{changesetId}"
             class="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground no-underline"
         >
             Open leftover review
         </a>
     {:else if !pending && !media}
         <a
-            href="/{slug}/review"
+            href="/{encodeURIComponent(slug)}/review"
             class="self-start rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground no-underline"
         >
             Publish to viewers
@@ -122,7 +122,7 @@
 
     {#if pending}
         <a
-            href="/{slug}/dashboard"
+            href="/{encodeURIComponent(slug)}/dashboard"
             class="self-start text-sm text-muted-foreground hover:text-foreground"
         >
             Back to manage
@@ -131,7 +131,7 @@
         <div class="grid gap-2 sm:grid-cols-2">
             {#if media}
                 <a
-                    href="/{slug}/artefacts"
+                    href="/{encodeURIComponent(slug)}/artefacts"
                     class="rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
                 >
                     <span class="block text-sm font-medium text-foreground"
@@ -142,7 +142,7 @@
                     >
                 </a>
                 <a
-                    href="/{slug}/layers"
+                    href="/{encodeURIComponent(slug)}/layers"
                     class="rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
                 >
                     <span class="block text-sm font-medium text-foreground"
@@ -156,7 +156,7 @@
                 </a>
             {:else}
                 <a
-                    href="/{slug}/layers?view=table"
+                    href="/{encodeURIComponent(slug)}/layers?view=table"
                     class="rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
                 >
                     <span class="block text-sm font-medium text-foreground"
@@ -167,7 +167,7 @@
                     >
                 </a>
                 <a
-                    href="/{slug}/layers?view=schema"
+                    href="/{encodeURIComponent(slug)}/layers?view=schema"
                     class="rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
                 >
                     <span class="block text-sm font-medium text-foreground"
@@ -179,7 +179,7 @@
                 </a>
             {/if}
             <a
-                href="/{slug}/dashboard"
+                href="/{encodeURIComponent(slug)}/dashboard"
                 class="rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
             >
                 <span class="block text-sm font-medium text-foreground"
@@ -190,7 +190,7 @@
                 >
             </a>
             <a
-                href="/{slug}/import"
+                href="/{encodeURIComponent(slug)}/import"
                 class="rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
             >
                 <span class="block text-sm font-medium text-foreground"

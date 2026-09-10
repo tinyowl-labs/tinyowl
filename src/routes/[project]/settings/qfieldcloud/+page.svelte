@@ -76,7 +76,7 @@
 	});
 
 	const packageHref = $derived(
-		`/api/v1/projects/${slug}/field-package?ref=develop${accessToken ? `&token=${encodeURIComponent(accessToken)}` : ""}`,
+		`/api/v1/projects/${encodeURIComponent(slug)}/field-package?ref=develop${accessToken ? `&token=${encodeURIComponent(accessToken)}` : ""}`,
 	);
 
 	function formatLocal(ts: string): string {

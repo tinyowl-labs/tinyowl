@@ -303,7 +303,7 @@
         const slug = $page.params.project;
         if (!slug) return;
         void goto(
-            `/${slug}/layers${layersSearch({
+            `/${encodeURIComponent(slug)}/layers${layersSearch({
                 mode: viewMode,
                 dim: mapDim,
                 layer: activeTab,
@@ -317,7 +317,7 @@
         const slug = $page.params.project;
         if (!slug) return;
         void goto(
-            `/${slug}/layers${layersSearch({
+            `/${encodeURIComponent(slug)}/layers${layersSearch({
                 mode: viewMode,
                 dim: mapDim,
                 q: "",
@@ -903,7 +903,7 @@
         );
         try {
             const res = await fetch(
-                `/api/v1/projects/${slug}/tilesets/${hash}`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/tilesets/${hash}`,
                 {
                     method: "PATCH",
                     headers: {
@@ -1049,7 +1049,7 @@
         const viewsPromise = (async () => {
             try {
                 const vr = await fetch(
-                    withViewingRef(`/api/v1/projects/${slug}/layer-views`),
+                    withViewingRef(`/api/v1/projects/${encodeURIComponent(slug)}/layer-views`),
                     { headers: authHeaders() },
                 );
                 if (!vr.ok) return {} as Record<string, LayerView[]>;
@@ -1070,7 +1070,7 @@
                 name,
                 fetch(
                     withViewingRef(
-                        `/api/v1/projects/${slug}/layers/${encodeURIComponent(name)}/czml`,
+                        `/api/v1/projects/${encodeURIComponent(slug)}/layers/${encodeURIComponent(name)}/czml`,
                     ),
                     { headers: authHeaders() },
                 ).catch(() => null),
@@ -1158,7 +1158,7 @@
         const slug = $page.params.project;
         try {
             const res = await fetch(
-                `/api/v1/projects/${slug}/layers/${encodeURIComponent(layerName)}/views`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/layers/${encodeURIComponent(layerName)}/views`,
                 {
                     method: "PUT",
                     headers: {
@@ -1223,7 +1223,7 @@
         if (showSpinner) schemaLoading = true;
         try {
             const slug = $page.params.project;
-            const res = await fetch(`/api/v1/projects/${slug}/schema`, {
+            const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/schema`, {
                 headers: authHeaders(),
             });
             if (res.ok) {
@@ -1247,7 +1247,7 @@
         try {
             const slug = $page.params.project;
             const res = await fetch(
-                withViewingRef(`/api/v1/projects/${slug}/tilesets`),
+                withViewingRef(`/api/v1/projects/${encodeURIComponent(slug)}/tilesets`),
                 {
                     headers: authHeaders(),
                 },
@@ -1283,7 +1283,7 @@
         try {
             const slug = $page.params.project;
             const res = await fetch(
-                withViewingRef(`/api/v1/projects/${slug}/coverages`),
+                withViewingRef(`/api/v1/projects/${encodeURIComponent(slug)}/coverages`),
                 {
                     headers: authHeaders(),
                 },

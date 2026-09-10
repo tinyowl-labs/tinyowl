@@ -15,14 +15,14 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 	);
 
 	const diffs = jsonArray(
-		await coreJson(fetch, `/api/v1/projects/${slug}/diffs`, headers),
+		await coreJson(fetch, `/api/v1/projects/${encodeURIComponent(slug)}/diffs`, headers),
 		"diffs",
 	);
 
 	let tables: { name: string }[] = [];
 	const tablesPayload = await coreJson(
 		fetch,
-		`/api/v1/projects/${slug}/tables`,
+		`/api/v1/projects/${encodeURIComponent(slug)}/tables`,
 		headers,
 	);
 	if (tablesPayload && typeof tablesPayload === "object") {
@@ -36,28 +36,28 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 	const pendingChangesets = jsonArray(
 		await coreJson(
 			fetch,
-			`/api/v1/projects/${slug}/changesets?status=pending`,
+			`/api/v1/projects/${encodeURIComponent(slug)}/changesets?status=pending`,
 			headers,
 		),
 	);
 	const commits = jsonArray(
 		await coreJson(
 			fetch,
-			`/api/v1/projects/${slug}/commits?ref=develop`,
+			`/api/v1/projects/${encodeURIComponent(slug)}/commits?ref=develop`,
 			headers,
 		),
 	);
 	const mainCommits = jsonArray(
 		await coreJson(
 			fetch,
-			`/api/v1/projects/${slug}/commits?ref=main`,
+			`/api/v1/projects/${encodeURIComponent(slug)}/commits?ref=main`,
 			headers,
 		),
 	);
 	const conflictedCommits = jsonArray(
 		await coreJson(
 			fetch,
-			`/api/v1/projects/${slug}/commits?status=conflicted`,
+			`/api/v1/projects/${encodeURIComponent(slug)}/commits?status=conflicted`,
 			headers,
 		),
 	);

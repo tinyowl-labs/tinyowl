@@ -103,7 +103,7 @@
         try {
             const slug = $page.params.project;
             const res = await fetch(
-                `/api/v1/projects/${slug}/media/${hash}/care`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/media/${hash}/care`,
                 {
                     method: "PATCH",
                     headers: {
@@ -188,7 +188,7 @@
         try {
             const slug = $page.params.project;
             const res = await fetch(
-                `/api/v1/projects/${slug}/media/integrity`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/media/integrity`,
                 accessToken
                     ? { headers: { Authorization: `Bearer ${accessToken}` } }
                     : {},
@@ -237,7 +237,7 @@
         } catch {
             /* ignore */
         }
-        goto(`/${slug}/layers?view=3d&tileset=${encodeURIComponent(hash)}`);
+        goto(`/${encodeURIComponent(slug)}/layers?view=3d&tileset=${encodeURIComponent(hash)}`);
     }
 
     async function copyHash(hash: string) {
@@ -274,7 +274,7 @@
                 const headers: Record<string, string> = {};
                 if (token) headers.Authorization = `Bearer ${token}`;
                 const res = await fetch(
-                    `/api/v1/projects/${slug}/tilesets/${hash}`,
+                    `/api/v1/projects/${encodeURIComponent(slug)}/tilesets/${hash}`,
                     { headers },
                 );
                 if (!res.ok || cancelled) return;
@@ -441,7 +441,7 @@
         if (hit.project_slug === $page.params.project) {
             selectedHash = hit.hash;
         } else {
-            goto(`/${hit.project_slug}/artefacts`);
+            goto(`/${encodeURIComponent(hit.project_slug)}/artefacts`);
         }
     }
 
@@ -498,7 +498,7 @@
             const profileParam =
                 filter === "coverage" ? `&profile=coverage` : "";
             const res = await fetch(
-                `/api/v1/projects/${slug}/media?offset=${at}&limit=${LIMIT}${typeParam}${profileParam}`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/media?offset=${at}&limit=${LIMIT}${typeParam}${profileParam}`,
                 accessToken
                     ? { headers: { Authorization: `Bearer ${accessToken}` } }
                     : {},
@@ -725,7 +725,7 @@
                                 </p>
                                 {#if canUpload}
                                     <a
-                                        href="/{projectSlug}/import?kind=media"
+                                        href="/{encodeURIComponent(projectSlug)}/import?kind=media"
                                         class="mt-4 inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground no-underline"
                                     >
                                         Import media

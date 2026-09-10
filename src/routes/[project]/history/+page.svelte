@@ -95,8 +95,8 @@
         const headers: Record<string, string> = {};
         if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
         const changesURL = onDevelop
-            ? `/api/v1/projects/${slug}/commits/${rev}/changes`
-            : `/api/v1/projects/${slug}/diffs/${rev}/changes`;
+            ? `/api/v1/projects/${encodeURIComponent(slug)}/commits/${rev}/changes`
+            : `/api/v1/projects/${encodeURIComponent(slug)}/diffs/${rev}/changes`;
         try {
             const res = await fetch(changesURL, { headers });
             const body = await res.json().catch(() => ({}));
@@ -150,7 +150,7 @@
             for (const name of names) {
                 try {
                     const res = await fetch(
-                        `/api/v1/projects/${slug}/at/${encodeURIComponent(rev)}/layers/${encodeURIComponent(name)}/geojson`,
+                        `/api/v1/projects/${encodeURIComponent(slug)}/at/${encodeURIComponent(rev)}/layers/${encodeURIComponent(name)}/geojson`,
                         { headers },
                     );
                     if (!res.ok) continue;
@@ -366,7 +366,7 @@
                         {#each conflictedCommits as c}
                             <li>
                                 <ChangesetListRow
-                                    href="/{slug}/history/{c.id}"
+                                    href="/{encodeURIComponent(slug)}/history/{c.id}"
                                     badge="conflicted"
                                     mono={(c.id ?? "").slice(0, 8)}
                                     title={c.message?.trim() || "Untitled"}
@@ -389,7 +389,7 @@
                         {#each pendingChangesets as cs}
                             <li>
                                 <ChangesetListRow
-                                    href="/{slug}/review/{cs.id}"
+                                    href="/{encodeURIComponent(slug)}/review/{cs.id}"
                                     badge="pending"
                                     title={cs.message?.trim() || "Untitled"}
                                     subtitle={formatCommitDate(cs.created_at)}
@@ -449,7 +449,7 @@
             {#if selectedRev}
                 <button
                     class="text-xs text-primary hover:underline"
-                    onclick={() => goto(`/${slug}/history/${selectedRev}`)}
+                    onclick={() => goto(`/${encodeURIComponent(slug)}/history/${selectedRev}`)}
                 >
                     Open inspect
                 </button>

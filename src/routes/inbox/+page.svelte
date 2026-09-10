@@ -29,9 +29,9 @@
             if (jr.project_slug) {
                 const slug = encodeURIComponent(jr.project_slug);
                 if (n.kind === "join_request") {
-                    return `/${slug}/settings/members`;
+				return `/${encodeURIComponent(slug)}/settings/members`;
                 }
-                return `/${slug}`;
+			return `/${encodeURIComponent(slug)}`;
             }
         }
         const inv = n.invite;

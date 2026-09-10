@@ -356,7 +356,7 @@
             </h1>
             {#if canManage}
                 <a
-                    href="/{project?.slug}/settings/general"
+                    href="/{encodeURIComponent(project?.slug ?? "")}/settings/general"
                     class="text-muted-foreground hover:text-foreground transition-colors -mb-1"
                     title="Edit project"
                 >
@@ -455,7 +455,7 @@
             {#if (project as any)?.bbox}
                 <BboxMap
                     bbox={(project as any).bbox}
-                    href={`/${project?.slug}/layers?view=map`}
+                    href={`/${encodeURIComponent(project?.slug ?? "")}/layers?view=map`}
                     class="h-36 w-full"
                 />
             {/if}
@@ -722,7 +722,7 @@
                             <div class="divide-y divide-border">
                                 {#each similar as item}
                                     <a
-                                        href="/{item.slug}"
+                                        href="/{encodeURIComponent(item.slug)}"
                                         class="block px-4 py-3 hover:bg-secondary/50 transition-colors no-underline group"
                                     >
                                         <p

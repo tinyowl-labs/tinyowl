@@ -118,7 +118,7 @@ export function entityLabel(entityType: string): string {
 }
 
 export function tilesetRootUrl(projectSlug: string, hash: string): string {
-    return `/api/v1/projects/${projectSlug}/tilesets/${hash}/tileset.json`;
+    return `/api/v1/projects/${encodeURIComponent(projectSlug)}/tilesets/${hash}/tileset.json`;
 }
 
 export function modelPreviewSource(

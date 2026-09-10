@@ -6,7 +6,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     let tables: Record<string, string[]> = {};
     try {
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/tables`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/tables`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (res.ok) {
@@ -36,7 +36,7 @@ export const actions: Actions = {
             body.visibility = visibility;
         }
 
-        const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`, {
+        const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}`, {
             method: "PATCH",
             headers: {
                 "Content-Type": "application/json",

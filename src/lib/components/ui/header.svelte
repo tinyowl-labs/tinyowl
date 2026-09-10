@@ -72,7 +72,7 @@
 	});
 
 	const subtitleHref = $derived.by(() => {
-		if (projectSlug) return `/${projectSlug}`;
+		if (projectSlug) return `/${encodeURIComponent(projectSlug)}`;
 		if (orgSlug) return `/orgs/${orgSlug}`;
 		return "";
 	});

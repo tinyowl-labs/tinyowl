@@ -47,7 +47,7 @@
 
     async function afterInvert(newId: string) {
         if (newId) {
-            await goto(`/${slug}/history/${newId}`);
+            await goto(`/${encodeURIComponent(slug)}/history/${newId}`);
         } else {
             await invalidateAll();
         }
@@ -56,7 +56,7 @@
 
 <ChangesetWorkspace title="{shortRev} — {slug} — echidna">
     {#snippet meta()}
-        <a href="/{slug}/history" class="hover:text-foreground hover:underline"
+        <a href="/{encodeURIComponent(slug)}/history" class="hover:text-foreground hover:underline"
             >History</a
         >
         <span>/</span>

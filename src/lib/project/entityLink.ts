@@ -22,7 +22,7 @@ export function entityLayersHref(
   if (opts.highlight) params.set("highlight", opts.highlight);
   params.set("view", opts.view ?? "map");
   const qs = params.toString();
-  return `/${projectSlug}/layers${qs ? `?${qs}` : ""}`;
+  return `/${encodeURIComponent(projectSlug)}/layers${qs ? `?${qs}` : ""}`;
 }
 
 /** Open a project's map, optionally with a cell/value query (`?q=`). */
@@ -44,7 +44,7 @@ export function projectLayersSearchHref(
   }
   const query = q.trim();
   if (query) params.set("q", query);
-  return `/${projectSlug}/layers?${params}`;
+  return `/${encodeURIComponent(projectSlug)}/layers?${params}`;
 }
 
 /** Focus a named layer on the project map. */
@@ -55,7 +55,7 @@ export function projectLayerHref(
   const params = new URLSearchParams();
   params.set("view", "map");
   params.set("layer", layerName);
-  return `/${projectSlug}/layers?${params}`;
+  return `/${encodeURIComponent(projectSlug)}/layers?${params}`;
 }
 
 /** Open the artefacts gallery on a specific media hash. */
@@ -66,7 +66,7 @@ export function projectArtefactHref(
   const params = new URLSearchParams();
   if (hash) params.set("media", hash);
   const qs = params.toString();
-  return `/${projectSlug}/artefacts${qs ? `?${qs}` : ""}`;
+  return `/${encodeURIComponent(projectSlug)}/artefacts${qs ? `?${qs}` : ""}`;
 }
 
 /** Apply a gazetteer hit as a camera/filter target on the project map. */
@@ -96,5 +96,5 @@ export function projectLayersPlaceHref(
     params.set("lng", String(geom.lng));
     params.set("radius", String(geom.radius ?? DEFAULT_SEARCH_RADIUS));
   }
-  return `/${projectSlug}/layers?${params}`;
+  return `/${encodeURIComponent(projectSlug)}/layers?${params}`;
 }

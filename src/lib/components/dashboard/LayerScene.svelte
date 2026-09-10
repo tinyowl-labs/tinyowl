@@ -4863,7 +4863,7 @@
     {/if}
     <div class="relative min-h-0 flex-1 overflow-hidden">
     <div
-        class="absolute top-[5.25rem] left-2 z-20 flex items-start gap-2 {graphFullscreen
+        class="absolute top-10 left-2 z-20 flex items-start gap-2 {graphFullscreen
             ? 'hidden'
             : ''}"
     >
@@ -5102,7 +5102,7 @@
 
     {#if hasFramed && ready && !loading && hasSceneData}
         <div
-            class="pointer-events-none absolute top-[5.25rem] bottom-2 z-10 flex items-start gap-2 {graphFullscreen
+            class="pointer-events-none absolute top-10 bottom-2 z-10 flex items-start gap-2 {graphFullscreen
                 ? 'hidden'
                 : ''}"
             style:right={showGraph
@@ -5350,7 +5350,7 @@
                                 On develop
                                 <a
                                     class="font-medium text-foreground underline-offset-2 hover:underline"
-                                    href="/{projectSlug}/history"
+                                    href="/{encodeURIComponent(projectSlug)}/history"
                                     >history</a
                                 >
                             </p>
@@ -5362,7 +5362,7 @@
                                 Parked — integrate from
                                 <a
                                     class="font-medium text-foreground underline-offset-2 hover:underline"
-                                    href="/{projectSlug}/review"
+                                    href="/{encodeURIComponent(projectSlug)}/review"
                                     >review</a
                                 >
                             </p>
@@ -5401,7 +5401,7 @@
                 {/if}
                 <div class="flex items-center gap-3">
                     <a
-                        href="/{projectSlug}/artefacts"
+                        href="/{encodeURIComponent(projectSlug)}/artefacts"
                         class="text-xs text-primary hover:underline">Open Artefacts</a
                     >
                     <button
@@ -5498,7 +5498,7 @@
         {/if}
         <div
             class="absolute right-0 bottom-0 z-20 min-w-0"
-            style:top={graphFullscreen ? "2.75rem" : "5.25rem"}
+            style:top={graphFullscreen ? "0.5rem" : "2.5rem"}
             style:left={graphFullscreen ? "0" : `${splitAt}%`}
         >
             <InstanceGraph

@@ -26,7 +26,7 @@
     );
     function isWorkspacePath(pathname: string, slug: string | undefined) {
         if (!slug) return false;
-        const prefix = `/${slug}/`;
+        const prefix = `/${encodeURIComponent(slug)}/`;
         if (!pathname.startsWith(prefix)) return false;
         const rest = pathname.slice(prefix.length);
         const [head] = rest.split("/");
@@ -65,24 +65,24 @@
                 items: [
                     {
                         label: "Map",
-                        href: `/${slug}/layers?view=map`,
+                        href: `/${encodeURIComponent(slug)}/layers?view=map`,
                         icon: MapIcon,
                     },
                     {
                         label: "Tables",
-                        href: `/${slug}/layers?view=table`,
+                        href: `/${encodeURIComponent(slug)}/layers?view=table`,
                         icon: TableIcon,
                     },
                     {
                         label: "Artefacts",
-                        href: `/${slug}/artefacts`,
+                        href: `/${encodeURIComponent(slug)}/artefacts`,
                         icon: ArchiveIcon,
                     },
                     ...(canWrite
                         ? [
                               {
                                   label: "Import",
-                                  href: `/${slug}/import`,
+                                  href: `/${encodeURIComponent(slug)}/import`,
                                   icon: FileUpIcon,
                               },
                           ]
@@ -91,7 +91,7 @@
                         ? [
                               {
                                   label: "History",
-                                  href: `/${slug}/history`,
+                                  href: `/${encodeURIComponent(slug)}/history`,
                                   icon: HistoryIcon,
                               },
                           ]
@@ -114,17 +114,17 @@
                 items: [
                     {
                         label: "Manage",
-                        href: `/${slug}/dashboard`,
+                        href: `/${encodeURIComponent(slug)}/dashboard`,
                         icon: GaugeIcon,
                     },
                     {
                         label: "Review",
-                        href: `/${slug}/review`,
+                        href: `/${encodeURIComponent(slug)}/review`,
                         icon: GitPullRequestIcon,
                     },
                     {
                         label: "Mappings",
-                        href: `/${slug}/mappings`,
+                        href: `/${encodeURIComponent(slug)}/mappings`,
                         icon: WaypointsIcon,
                     },
                 ],

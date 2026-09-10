@@ -208,7 +208,7 @@
 <Menubar.Root
     value={viewportMenu.sceneValue()}
     onValueChange={onMenuChange}
-    class="scene-menubar surface absolute top-11 inset-x-0 z-40 flex h-8 shrink-0 select-none items-center gap-0.5 border-b border-border px-1.5 text-xs"
+    class="scene-menubar surface absolute top-0 inset-x-0 z-40 flex h-8 shrink-0 select-none items-center gap-0.5 border-b border-border px-1.5 text-xs"
     ondblclick={preventBarSelect}
     onmousedown={preventRepeatMouse}
     onselectstart={preventBarSelect}

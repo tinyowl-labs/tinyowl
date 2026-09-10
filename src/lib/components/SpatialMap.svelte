@@ -497,7 +497,7 @@
             Lref?.DomEvent.stopPropagation(e);
             if (pointStep !== "idle" || drawKind !== "none") return;
             if (onResultClick) onResultClick(slug);
-            else goto(`/${slug}`);
+            else goto(`/${encodeURIComponent(slug)}`);
         });
         layer.on("mouseover", () => onResultHover?.(slug));
         layer.on("mouseout", () => onResultHover?.(null));

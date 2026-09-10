@@ -6,7 +6,7 @@ export const GET: RequestHandler = async ({ locals, params, fetch }) => {
 	const headers: Record<string, string> = {};
 	if (token) headers.Authorization = `Bearer ${token}`;
 	const res = await fetch(
-		`${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/cover`,
+		`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/cover`,
 		{ headers },
 	);
 	if (!res.ok) {

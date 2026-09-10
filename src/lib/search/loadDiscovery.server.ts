@@ -366,7 +366,11 @@ export async function loadHomeDiscovery(args: LoadArgs): Promise<DiscoveryPageDa
   let projects: SearchProject[];
   if (accessToken) {
     const membership = await loadMembership(args.fetch, headers);
-    projects = mergeMembership(membership, centroids);
+    // An expired access token must not hide the public catalogue. The browser
+    // refreshes it after hydration, then invalidates and reloads memberships.
+    projects = membership.length
+      ? mergeMembership(membership, centroids)
+      : centroids.map(asSearchProject);
   } else {
     projects = centroids.map(asSearchProject);
   }

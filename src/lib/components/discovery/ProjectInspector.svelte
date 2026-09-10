@@ -200,14 +200,14 @@
 
         <div class="flex flex-col gap-2">
             <a
-                href="/{project.slug}"
+                href="/{encodeURIComponent(project.slug)}"
                 class="{cta} border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
             >
                 <FolderKanbanIcon class="size-4" />
                 Open project
             </a>
             <a
-                href="/{project.slug}/layers?view=map"
+                href="/{encodeURIComponent(project.slug)}/layers?view=map"
                 class="{cta} bg-foreground text-background hover:bg-primary hover:text-primary-foreground"
             >
                 <MapIcon class="size-4" />

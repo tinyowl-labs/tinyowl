@@ -177,21 +177,21 @@
                     </div>
                     <div class="border-t border-border my-1"></div>
                     <a
-                        href={`/api/v1/projects/${slug}/gpkg${accessToken ? `?token=${encodeURIComponent(accessToken)}` : ""}`}
+                        href={`/api/v1/projects/${encodeURIComponent(slug)}/gpkg${accessToken ? `?token=${encodeURIComponent(accessToken)}` : ""}`}
                         class="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors no-underline"
                     >
                         <DownloadIcon class="size-4" />
                         Download GPKG
                     </a>
                     <a
-                        href={`/api/v1/projects/${slug}/field-package?ref=develop${accessToken ? `&token=${encodeURIComponent(accessToken)}` : ""}`}
+                        href={`/api/v1/projects/${encodeURIComponent(slug)}/field-package?ref=develop${accessToken ? `&token=${encodeURIComponent(accessToken)}` : ""}`}
                         class="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors no-underline"
                     >
                         <DownloadIcon class="size-4" />
                         Download field package
                     </a>
                     <a
-                        href={`/api/v1/projects/${slug}/exit-pack${accessToken ? `?token=${encodeURIComponent(accessToken)}` : ""}`}
+                        href={`/api/v1/projects/${encodeURIComponent(slug)}/exit-pack${accessToken ? `?token=${encodeURIComponent(accessToken)}` : ""}`}
                         data-sveltekit-reload
                         class="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors no-underline"
                     >
@@ -206,7 +206,7 @@
     <!-- Quick actions -->
     <div class="grid gap-2 sm:grid-cols-3 mb-8">
         <a
-            href={`/${slug}/import`}
+            href={`/${encodeURIComponent(slug)}/import`}
             class="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
         >
             <FileUpIcon class="size-4 mt-0.5 text-primary shrink-0" />
@@ -220,7 +220,7 @@
             </span>
         </a>
         <a
-            href={`/${slug}/layers?view=schema`}
+            href={`/${encodeURIComponent(slug)}/layers?view=schema`}
             class="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
         >
             <WaypointsIcon class="size-4 mt-0.5 text-primary shrink-0" />
@@ -234,7 +234,7 @@
             </span>
         </a>
         <a
-            href={`/${slug}/layers?view=table`}
+            href={`/${encodeURIComponent(slug)}/layers?view=table`}
             class="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3 no-underline hover:bg-accent/40 transition-colors"
         >
             <LayersIcon class="size-4 mt-0.5 text-primary shrink-0" />
@@ -286,7 +286,7 @@
 
     <!-- Bbox map -->
     {#if bbox}
-        <BboxMap {bbox} href={`/${slug}/layers?view=map`} class="h-64 mb-8" />
+        <BboxMap {bbox} href={`/${encodeURIComponent(slug)}/layers?view=map`} class="h-64 mb-8" />
     {/if}
 
     <!-- Entity breakdown -->
@@ -299,7 +299,7 @@
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mb-8">
             {#each tables as tbl}
                 <a
-                    href={`/${slug}/layers?layer=${encodeURIComponent(tbl.name)}&view=table`}
+                    href={`/${encodeURIComponent(slug)}/layers?layer=${encodeURIComponent(tbl.name)}&view=table`}
                     class="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5 hover:bg-accent/50 transition-colors no-underline"
                 >
                     <span class="text-sm font-medium text-foreground truncate"
@@ -322,7 +322,7 @@
                 3D tileset without a table.
             </p>
             <a
-                href={`/${slug}/import`}
+                href={`/${encodeURIComponent(slug)}/import`}
                 class="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground no-underline"
             >
                 <FileUpIcon class="size-4" />
@@ -394,12 +394,12 @@
                     >
                 {/if}
                 <a
-                    href="/{slug}/review"
+                    href="/{encodeURIComponent(slug)}/review"
                     class="ml-auto text-xs text-primary hover:underline"
                     >Review</a
                 >
                 <a
-                    href="/{slug}/history"
+                    href="/{encodeURIComponent(slug)}/history"
                     class="text-xs text-primary hover:underline"
                     >Time machine</a
                 >
@@ -414,7 +414,7 @@
                 <div class="divide-y divide-border max-h-80 overflow-y-auto">
                     {#each conflictedCommits as c}
                         <a
-                            href="/{slug}/history/{c.id}"
+                            href="/{encodeURIComponent(slug)}/history/{c.id}"
                             class="px-4 py-2.5 flex items-start justify-between gap-3 text-xs hover:bg-accent/40"
                         >
                             <div class="min-w-0">
@@ -443,7 +443,7 @@
                     {/each}
                     {#each pendingChangesets as cs}
                         <a
-                            href="/{slug}/review/{cs.id}"
+                            href="/{encodeURIComponent(slug)}/review/{cs.id}"
                             class="px-4 py-2.5 flex items-start justify-between gap-3 text-xs hover:bg-accent/40"
                         >
                             <div class="min-w-0">
@@ -477,8 +477,8 @@
                         {@const isCommit = Boolean(row.id && !row.seq)}
                         <a
                             href={isCommit
-                                ? `/${slug}/history`
-                                : `/${slug}/history/${row.seq}`}
+                                ? `/${encodeURIComponent(slug)}/history`
+                                : `/${encodeURIComponent(slug)}/history/${row.seq}`}
                             class="px-4 py-2.5 flex items-start justify-between gap-3 text-xs hover:bg-accent/40"
                         >
                             <div class="min-w-0">
@@ -516,7 +516,7 @@
     <!-- Mappings summary -->
     {#if mappings.length > 0}
         <a
-            href="/{slug}/mappings"
+            href="/{encodeURIComponent(slug)}/mappings"
             class="rounded-lg border border-border bg-card px-4 py-3 mb-8 block hover:bg-accent/40"
         >
             <div class="flex items-center justify-between gap-2">

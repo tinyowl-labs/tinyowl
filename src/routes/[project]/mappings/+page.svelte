@@ -100,13 +100,13 @@
                 </h1>
             </div>
             <p class="mt-1 text-sm text-muted-foreground">
-                Opt a column into PeriodO, AAT, or CRM, then link its local
-                labels to a shared concept URI. Other projects can use different
-                wording if they share the URI.
+                Opt a column into PeriodO, AAT, CRM, or Dublin Core, then link
+                its local labels to a shared concept URI. Other projects can
+                use different wording if they share the URI.
             </p>
         </div>
         <a
-            href="/{slug}/mappings.toml"
+            href="/{encodeURIComponent(slug)}/mappings.toml"
             class="text-xs font-medium text-primary hover:underline shrink-0 mt-2"
             download="{slug}-mappings.toml"
         >

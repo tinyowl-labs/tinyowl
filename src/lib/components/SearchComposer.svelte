@@ -1945,7 +1945,7 @@
         closeMention();
         abortSuggestions();
         value = "";
-        void goto(`/${project.slug}`);
+        void goto(`/${encodeURIComponent(project.slug)}`);
     }
 
     function removeSpatial() {

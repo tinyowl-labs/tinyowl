@@ -24,7 +24,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 	};
 	const promote = await coreJson(
 		fetch,
-		`/api/v1/projects/${slug}/promote`,
+		`/api/v1/projects/${encodeURIComponent(slug)}/promote`,
 		headers,
 	);
 	if (promote && typeof promote === "object") {
@@ -34,14 +34,14 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 	let changesets = jsonArray(
 		await coreJson(
 			fetch,
-			`/api/v1/projects/${slug}/changesets?status=pending`,
+			`/api/v1/projects/${encodeURIComponent(slug)}/changesets?status=pending`,
 			headers,
 		),
 	);
 	const requested = jsonArray(
 		await coreJson(
 			fetch,
-			`/api/v1/projects/${slug}/changesets?status=changes_requested`,
+			`/api/v1/projects/${encodeURIComponent(slug)}/changesets?status=changes_requested`,
 			headers,
 		),
 	);
@@ -50,13 +50,13 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 	const conflictedCommits = jsonArray(
 		await coreJson(
 			fetch,
-			`/api/v1/projects/${slug}/commits?status=conflicted`,
+			`/api/v1/projects/${encodeURIComponent(slug)}/commits?status=conflicted`,
 			headers,
 		),
 	);
 
 	let heads: { name: string; commit_id: string; author?: string }[] = [];
-	const refs = await coreJson(fetch, `/api/v1/projects/${slug}/refs`, headers);
+	const refs = await coreJson(fetch, `/api/v1/projects/${encodeURIComponent(slug)}/refs`, headers);
 	if (refs && typeof refs === "object") {
 		const develop = typeof (refs as any).develop === "string" ? (refs as any).develop : "";
 		if (Array.isArray((refs as any).heads)) {

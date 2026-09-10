@@ -41,21 +41,21 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
     let invites: Invite[] = [];
     try {
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/members`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/members`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (res.ok) members = await res.json();
     } catch (_) {}
     try {
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/join-requests`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/join-requests`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (res.ok) joinRequests = await res.json();
     } catch (_) {}
     try {
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/invites`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/invites`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (res.ok) invites = await res.json();
@@ -85,7 +85,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/invites`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/invites`,
             {
                 method: "POST",
                 headers: {
@@ -118,7 +118,7 @@ export const actions: Actions = {
         if (!id) return { error: "Invite id required." };
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${params.project}/invites/${id}`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(params.project)}/invites/${id}`,
             {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${accessToken}` },
@@ -140,7 +140,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/members/${userId}`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/members/${userId}`,
             {
                 method: "PATCH",
                 headers: {
@@ -165,7 +165,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/members/${userId}`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/members/${userId}`,
             {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${accessToken}` },
@@ -185,7 +185,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/join-requests/${id}/accept`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/join-requests/${id}/accept`,
             {
                 method: "POST",
                 headers: {
@@ -208,7 +208,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
         const res = await fetch(
-            `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/join-requests/${id}/decline`,
+            `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/join-requests/${id}/decline`,
             {
                 method: "POST",
                 headers: { Authorization: `Bearer ${accessToken}` },

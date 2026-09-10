@@ -1,13 +1,14 @@
 <script lang="ts">
     import "../app.css";
     import { onMount } from "svelte";
-    import { onNavigate } from "$app/navigation";
+    import { invalidateAll, onNavigate } from "$app/navigation";
     import {
         applyTheme,
         themePrefs,
         pullThemeFromSupabase,
     } from "$lib/stores/theme.svelte";
     import { pullKeyboardFromSupabase } from "$lib/shortcuts";
+    import { createClient } from "$lib/supabase/client";
     import { page } from "$app/stores";
     import Header from "$lib/components/ui/header.svelte";
     import SearchOverlay from "$lib/components/SearchOverlay.svelte";
@@ -35,6 +36,12 @@
     onMount(() => {
         void pullThemeFromSupabase();
         void pullKeyboardFromSupabase();
+        // Local Supabase may rotate its signing key during development. Refresh
+        // from the long-lived refresh token before relying on SSR page data so
+        // an otherwise valid browser session is not sent to the API as stale.
+        void createClient().auth.refreshSession().then(({ data, error }) => {
+            if (!error && data.session) void invalidateAll();
+        });
     });
 
     // Shared-element morph for home ↔ /search only. Same-path query updates

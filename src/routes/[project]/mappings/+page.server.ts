@@ -24,7 +24,7 @@ type Mapping = {
 export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	const { user } = await locals.getSession();
 	const slug = params.project;
-	if (!user) throw redirect(303, `/${slug}`);
+	if (!user) throw redirect(303, `/${encodeURIComponent(slug)}`);
 
 	const accessToken = await locals.getAccessToken();
 
@@ -41,13 +41,13 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	} catch (_) {}
 
 	if (role !== "owner" && role !== "admin" && role !== "collaborator") {
-		throw redirect(303, `/${slug}`);
+		throw redirect(303, `/${encodeURIComponent(slug)}`);
 	}
 
 	let mappings: Mapping[] = [];
 	try {
 		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/value-mappings`,
+			`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/value-mappings`,
 			{ headers: { Authorization: `Bearer ${accessToken}` } },
 		);
 		if (res.ok) mappings = await res.json();
@@ -63,7 +63,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	}[] = [];
 	try {
 		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/column-annotations`,
+			`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/column-annotations`,
 			{ headers: { Authorization: `Bearer ${accessToken}` } },
 		);
 		if (res.ok) annotations = await res.json();
@@ -72,7 +72,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 	let tables: Record<string, string[]> = {};
 	try {
 		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables`,
+			`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/tables`,
 			{ headers: { Authorization: `Bearer ${accessToken}` } },
 		);
 		if (res.ok) {
@@ -97,7 +97,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch }) => {
 		Object.keys(tables).map(async (table) => {
 			try {
 				const res = await fetch(
-					`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/tables/${encodeURIComponent(table)}/rows?limit=80`,
+					`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(table)}/rows?limit=80`,
 					{ headers: { Authorization: `Bearer ${accessToken}` } },
 				);
 				if (!res.ok) return;
@@ -153,7 +153,7 @@ export const actions: Actions = {
 		const accessToken = await locals.getAccessToken();
 
 		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/column-annotations`,
+			`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/column-annotations`,
 			{
 				method: "PUT",
 				headers: {
@@ -194,7 +194,7 @@ export const actions: Actions = {
 		const accessToken = await locals.getAccessToken();
 
 		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/value-mappings`,
+			`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/value-mappings`,
 			{
 				method: "PUT",
 				headers: {
@@ -234,7 +234,7 @@ export const actions: Actions = {
 		const accessToken = await locals.getAccessToken();
 
 		const res = await fetch(
-			`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/value-mappings/bulk`,
+			`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/value-mappings/bulk`,
 			{
 				method: "POST",
 				headers: {

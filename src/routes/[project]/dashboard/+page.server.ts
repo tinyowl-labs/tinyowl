@@ -17,7 +17,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
   let tables: { name: string; count: number }[] = [];
   const tablesPayload = await coreJson(
     fetch,
-    `/api/v1/projects/${slug}/tables`,
+    `/api/v1/projects/${encodeURIComponent(slug)}/tables`,
     headers,
   );
   if (tablesPayload && typeof tablesPayload === "object") {
@@ -38,20 +38,20 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
   const warnings = jsonArray(
     await coreJson(
       fetch,
-      `/api/v1/projects/${slug}/warnings?limit=10`,
+      `/api/v1/projects/${encodeURIComponent(slug)}/warnings?limit=10`,
       headers,
     ),
   );
 
   const diffs = jsonArray(
-    await coreJson(fetch, `/api/v1/projects/${slug}/diffs`, headers),
+    await coreJson(fetch, `/api/v1/projects/${encodeURIComponent(slug)}/diffs`, headers),
     "diffs",
   ).slice(0, 10);
 
   const pendingChangesets = jsonArray(
     await coreJson(
       fetch,
-      `/api/v1/projects/${slug}/changesets?status=pending`,
+      `/api/v1/projects/${encodeURIComponent(slug)}/changesets?status=pending`,
       headers,
     ),
   );
@@ -59,7 +59,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
   const developCommits = jsonArray(
     await coreJson(
       fetch,
-      `/api/v1/projects/${slug}/commits?ref=develop`,
+      `/api/v1/projects/${encodeURIComponent(slug)}/commits?ref=develop`,
       headers,
     ),
   ).slice(0, 10);
@@ -67,7 +67,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
   const conflictedCommits = jsonArray(
     await coreJson(
       fetch,
-      `/api/v1/projects/${slug}/commits?status=conflicted`,
+      `/api/v1/projects/${encodeURIComponent(slug)}/commits?status=conflicted`,
       headers,
     ),
   );
@@ -75,7 +75,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
   const mappings = jsonArray(
     await coreJson(
       fetch,
-      `/api/v1/projects/${slug}/value-mappings`,
+      `/api/v1/projects/${encodeURIComponent(slug)}/value-mappings`,
       headers,
     ),
   );

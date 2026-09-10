@@ -24,8 +24,8 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 	}
 
 	const url = isCommit
-		? `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/commits/${rev}/changes`
-		: `${TINYOWL_CORE_URL}/api/v1/projects/${slug}/diffs/${seq}/changes`;
+		? `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/commits/${rev}/changes`
+		: `${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/diffs/${seq}/changes`;
 	const res = await fetch(url, { headers });
 	if (res.status === 404) throw error(404, "Revision not found");
 	if (!res.ok) throw error(res.status, "Failed to load revision");
@@ -36,7 +36,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 		const list = jsonArray(
 			await coreJson(
 				fetch,
-				`/api/v1/projects/${slug}/commits?ref=main`,
+				`/api/v1/projects/${encodeURIComponent(slug)}/commits?ref=main`,
 				headers,
 			),
 		);

@@ -59,6 +59,6 @@ export const actions: Actions = {
 		);
 		if (!res.ok) return { error: `Failed: ${await res.text()}` };
 		const created = await res.json();
-		throw redirect(303, `/${created.slug}`);
+		throw redirect(303, `/${encodeURIComponent(created.slug)}`);
 	},
 };

@@ -14,7 +14,7 @@ export const load: PageServerLoad = async ({ locals, params, fetch, parent }) =>
 	);
 
 	const res = await fetch(
-		`${TINYOWL_CORE_URL}/api/v1/projects/${slug}/changesets/${id}/changes`,
+		`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}/changesets/${id}/changes`,
 		{ headers },
 	);
 	if (res.status === 404) throw error(404, "Changeset not found");

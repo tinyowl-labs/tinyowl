@@ -16,7 +16,7 @@ export const actions: Actions = {
         const slug = params.project;
         const accessToken = await locals.getAccessToken();
 
-        const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`, {
+        const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}`, {
             method: "PATCH",
             headers: {
                 "Content-Type": "application/json",

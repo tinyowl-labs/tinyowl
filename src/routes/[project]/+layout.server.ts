@@ -36,7 +36,7 @@ export const load: LayoutServerLoad = async ({ locals, params, fetch }) => {
     const accessToken = await locals.getAccessToken();
     const headers: Record<string, string> = {};
     if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${slug}`, {
+    const res = await fetch(`${TINYOWL_CORE_URL}/api/v1/projects/${encodeURIComponent(slug)}`, {
       headers,
     });
     if (res.ok) project = await res.json();

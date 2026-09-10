@@ -255,7 +255,7 @@
             tags={previewTags}
             hasCover={coverPresent}
             {coverBust}
-            href="/{slug}"
+            href="/{encodeURIComponent(slug)}"
         />
     </section>
 
@@ -447,7 +447,7 @@
         <div class="flex items-center gap-3 border-t border-border pt-6">
             <Button type="submit">Save changes</Button>
             <a
-                href="/{slug}"
+                href="/{encodeURIComponent(slug)}"
                 class="text-sm text-muted-foreground no-underline hover:text-foreground"
                 >View project</a
             >

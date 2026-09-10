@@ -91,6 +91,49 @@
         return d.toISOString();
     }
 
+    async function provisionFieldSync(): Promise<boolean> {
+        if (fieldCloudMode === "byo" && !qfieldAccountID) {
+            error = "Choose a connected QFieldCloud account";
+            return false;
+        }
+        const cloudRes = await fetch(
+            `/api/v1/projects/${encodeURIComponent(createdSlug)}/qfieldcloud-provision`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    ...(fieldCloudMode === "managed" ? { managed: true } : { account_id: qfieldAccountID }),
+                    name: createdSlug.replaceAll("/", "-"),
+                    description: description.trim(),
+                }),
+            },
+        );
+        const cloudData = await cloudRes.json().catch(() => ({}));
+        if (!cloudRes.ok) {
+            error = `Project created, but field sync setup failed: ${cloudData.error || cloudData.message || cloudRes.status}`;
+            return false;
+        }
+        return true;
+    }
+
+    async function retryFieldSync() {
+        if (!createdSlug) return;
+        error = "";
+        busy = true;
+        try {
+            if (await provisionFieldSync()) {
+                onCreated({ slug: createdSlug, title: title.trim(), fieldSync: true });
+            }
+        } catch (err) {
+            error = err instanceof Error ? err.message : "Field sync setup failed";
+        } finally {
+            busy = false;
+        }
+    }
+
     async function submit(e: Event) {
         e.preventDefault();
         error = "";
@@ -131,30 +174,7 @@
             }
             createdSlug = data.slug ?? slug.trim();
             if (enableFieldSync) {
-				if (fieldCloudMode === "byo" && !qfieldAccountID) {
-                    error = "Choose a connected QFieldCloud account";
-                    return;
-                }
-                const cloudRes = await fetch(
-                    `/api/v1/projects/${encodeURIComponent(createdSlug)}/qfieldcloud-provision`,
-                    {
-                        method: "POST",
-                        headers: {
-                            Authorization: `Bearer ${accessToken}`,
-                            "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-							...(fieldCloudMode === "managed" ? { managed: true } : { account_id: qfieldAccountID }),
-                            name: createdSlug.replaceAll("/", "-"),
-                            description: description.trim(),
-                        }),
-                    },
-                );
-                const cloudData = await cloudRes.json().catch(() => ({}));
-                if (!cloudRes.ok) {
-                    error = `Project created, but field sync setup failed: ${cloudData.error || cloudData.message || cloudRes.status}`;
-                    return;
-                }
+                if (!(await provisionFieldSync())) return;
             }
             onCreated({
                 slug: createdSlug,
@@ -408,6 +428,14 @@
         <div class="text-sm text-destructive">
             <p>{error}</p>
             {#if createdSlug}
+                {#if enableFieldSync}
+                    <button
+                        type="button"
+                        class="mt-2 block underline underline-offset-4"
+                        disabled={busy}
+                        onclick={retryFieldSync}
+                    >Retry field sync</button>
+                {/if}
                 <a
                     href="/{encodeURIComponent(createdSlug)}/settings/qfieldcloud"
                     class="mt-1 inline-block underline underline-offset-4"

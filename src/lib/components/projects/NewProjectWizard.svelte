@@ -27,7 +27,7 @@
     function finish(info: { slug: string; fieldSync: boolean }) {
         const project = encodeURIComponent(info.slug);
         if (source === "import") {
-            goto(`/${project}/import`);
+            goto(`/${encodeURIComponent(project)}/import`);
             return;
         }
         goto(

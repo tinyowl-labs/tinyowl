@@ -39,7 +39,7 @@
         errorMsg = "";
         try {
             const res = await fetch(
-                `/api/v1/projects/${slug}/changesets/${changeset.id}/${action}`,
+                `/api/v1/projects/${encodeURIComponent(slug)}/changesets/${changeset.id}/${action}`,
                 {
                     method: "POST",
                     headers: jsonAuthHeaders(accessToken),
@@ -51,7 +51,7 @@
                 errorMsg = body.error || `Failed (${res.status})`;
                 return;
             }
-            await goto(`/${slug}/dashboard`);
+            await goto(`/${encodeURIComponent(slug)}/dashboard`);
         } catch (e: any) {
             errorMsg = e?.message || "Request failed";
         } finally {

@@ -16,9 +16,10 @@ export async function projectAuth(
 ) {
 	const layout = await parent();
 	const role = layout.role ?? "viewer";
-	if (!layout.user) throw redirect(303, `/${slug}`);
+	const projectHref = `/${encodeURIComponent(slug)}`;
+	if (!layout.user) throw redirect(303, projectHref);
 	if (mode === "member" && !layout.isMember) {
-		throw redirect(303, `/${slug}`);
+		throw redirect(303, projectHref);
 	}
 	if (
 		mode === "writer" &&
@@ -26,7 +27,7 @@ export async function projectAuth(
 		role !== "admin" &&
 		role !== "collaborator"
 	) {
-		throw redirect(303, `/${slug}`);
+		throw redirect(303, projectHref);
 	}
 	const accessToken = (await locals.getAccessToken()) ?? "";
 	const headers: Record<string, string> = {};

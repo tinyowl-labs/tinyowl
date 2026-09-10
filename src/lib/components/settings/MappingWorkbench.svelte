@@ -36,7 +36,7 @@
         crm_range: string | null;
     };
 
-    const SHARED_VOCABS = ["periodo", "aat", "crm", "lithology", "soil-color"] as const;
+    const SHARED_VOCABS = ["periodo", "aat", "crm", "dc", "lithology", "soil-color"] as const;
 
     function sharedVocabName(name: string | null | undefined): string | null {
         const v = (name ?? "").trim().toLowerCase();
@@ -44,10 +44,12 @@
             v === "periodo" ||
             v === "aat" ||
             v === "crm" ||
+            v === "dc" ||
+            v === "dcterms" ||
             v === "lithology" ||
             v === "soil-color"
         ) {
-            return v;
+            return v === "dcterms" ? "dc" : v;
         }
         return null;
     }
@@ -159,10 +161,8 @@
         return out;
     }
 
-    function columnNeedsWork(col: ColumnMappingRow): boolean {
-        if (!isSharedVocab(col.vocabulary)) return false;
-        const rows = valuesFor(col);
-        return rows.length === 0 || rows.some((v) => !v.concept_uri);
+    function hasUnmappedValues(col: ColumnMappingRow): boolean {
+        return displayRows(col).some((v) => !v.concept_uri);
     }
 
     $effect(() => {
@@ -181,11 +181,12 @@
         columns.filter((c) => !tableFilter || c.entity_type === tableFilter),
     );
 
-    const queueColumns = $derived(tableColumns.filter(columnNeedsWork));
+    const unmappedColumns = $derived(tableColumns.filter(hasUnmappedValues));
     const filteredColumns = $derived(
         tableColumns.filter((c) => {
             if (columnFilter && c.column_name !== columnFilter) return false;
-            if (statusFilter === "unmapped" && !columnNeedsWork(c)) return false;
+            if (statusFilter === "unmapped" && !hasUnmappedValues(c))
+                return false;
             return true;
         }),
     );
@@ -199,18 +200,18 @@
         return shown.join(", ") + (labels.length > limit ? "…" : "");
     }
 
-    const queueValues = $derived(
-        tableColumns.flatMap((c) =>
-            isSharedVocab(c.vocabulary) ? valuesFor(c) : [],
-        ),
+    const tableDisplayValues = $derived(
+        tableColumns.flatMap((c) => displayRows(c)),
     );
     const mappedInTable = $derived(
-        queueValues.filter((v) => !!v.concept_uri).length,
+        tableDisplayValues.filter((v) => !!v.concept_uri).length,
     );
-    const unmappedInTable = $derived(queueValues.length - mappedInTable);
+    const unmappedInTable = $derived(
+        tableDisplayValues.length - mappedInTable,
+    );
     const pctMapped = $derived(
-        queueValues.length > 0
-            ? Math.round((mappedInTable / queueValues.length) * 100)
+        tableDisplayValues.length > 0
+            ? Math.round((mappedInTable / tableDisplayValues.length) * 100)
             : 0,
     );
 
@@ -233,6 +234,15 @@
         const key = colKey(col.entity_type, col.column_name);
         expandedKey = expandedKey === key ? null : key;
     }
+
+    let colPickerKey = $state<string | null>(null);
+    const activeColPicker = $derived(
+        colPickerKey
+            ? (columns.find(
+                  (c) => colKey(c.entity_type, c.column_name) === colPickerKey,
+              ) ?? null)
+            : null,
+    );
 
     let editingKey = $state<string | null>(null);
     let editConcept = $state("");
@@ -273,6 +283,7 @@
     $effect(() => {
         if (form?.mappingAction || form?.annotationAction) {
             closePicker();
+            colPickerKey = null;
         }
     });
 
@@ -318,6 +329,56 @@
         });
     }
 
+    async function fetchVocabFrom(
+        vocab: string,
+        q: string,
+        ctrl: AbortController,
+        setWarming: () => void,
+    ): Promise<VocabResult[]> {
+        const warming =
+            vocab === "periodo" ||
+            vocab === "aat" ||
+            vocab === "lithology";
+        const budget = vocab === "periodo" ? 90_000 : 12_000;
+        const deadline = Date.now() + budget;
+        while (!ctrl.signal.aborted) {
+            let res: Response;
+            try {
+                res = await fetch(
+                    `/api/v1/vocab/search?vocab=${vocab}&q=${encodeURIComponent(q)}&limit=10`,
+                    { signal: ctrl.signal },
+                );
+            } catch {
+                return [];
+            }
+            if (
+                res.status === 503 &&
+                warming &&
+                Date.now() < deadline
+            ) {
+                setWarming();
+                const retry = Number(res.headers.get("Retry-After"));
+                const waitMs =
+                    Number.isFinite(retry) && retry > 0
+                        ? retry * 1000
+                        : 2000;
+                try {
+                    await sleepMs(waitMs, ctrl.signal);
+                } catch {
+                    return [];
+                }
+                continue;
+            }
+            if (!res.ok) return [];
+            try {
+                return (await res.json()) as VocabResult[];
+            } catch {
+                return [];
+            }
+        }
+        return [];
+    }
+
     async function searchVocab(query: string) {
         const q = query.trim();
         if (!q) {
@@ -333,55 +394,12 @@
         vocabWarming = false;
         vocabResults = [];
 
-        async function fetchVocab(vocab: string): Promise<VocabResult[]> {
-            const warming =
-                vocab === "periodo" ||
-                vocab === "aat" ||
-                vocab === "lithology";
-            const budget = vocab === "periodo" ? 90_000 : 12_000;
-            const deadline = Date.now() + budget;
-            while (!ctrl.signal.aborted) {
-                let res: Response;
-                try {
-                    res = await fetch(
-                        `/api/v1/vocab/search?vocab=${vocab}&q=${encodeURIComponent(q)}&limit=10`,
-                        { signal: ctrl.signal },
-                    );
-                } catch {
-                    return [];
-                }
-                if (
-                    res.status === 503 &&
-                    warming &&
-                    Date.now() < deadline
-                ) {
-                    vocabWarming = true;
-                    const retry = Number(res.headers.get("Retry-After"));
-                    const waitMs =
-                        Number.isFinite(retry) && retry > 0
-                            ? retry * 1000
-                            : 2000;
-                    try {
-                        await sleepMs(waitMs, ctrl.signal);
-                    } catch {
-                        return [];
-                    }
-                    continue;
-                }
-                if (!res.ok) return [];
-                try {
-                    return (await res.json()) as VocabResult[];
-                } catch {
-                    return [];
-                }
-            }
-            return [];
-        }
-
         try {
             await Promise.all(
                 pickerVocabs.map(async (v) => {
-                    const list = await fetchVocab(v);
+                    const list = await fetchVocabFrom(v, q, ctrl, () => {
+                        vocabWarming = true;
+                    });
                     if (ctrl.signal.aborted || list.length === 0) return;
                     vocabResults = [...vocabResults, ...list].sort(
                         (a: VocabResult, b: VocabResult) =>
@@ -398,6 +416,70 @@
         }
     }
 
+    function vocabsForColumn(col: ColumnMappingRow): string[] {
+        const shared = sharedVocabName(col.vocabulary);
+        return shared ? [shared] : [...SHARED_VOCABS];
+    }
+
+    function openColumnPicker(col: ColumnMappingRow) {
+        closePicker();
+        colPickerKey = colKey(col.entity_type, col.column_name);
+        editConcept = col.crm_property ?? "";
+        pickerMode = "search";
+        pickerVocabs = vocabsForColumn(col);
+        manualSearchQuery = col.column_name;
+        pickerInspectUri = null;
+        pickerInspectDoc = null;
+        pickerInspectLoading = false;
+        void searchVocab(col.column_name);
+    }
+
+    function closeColumnPicker() {
+        closePicker();
+        colPickerKey = null;
+    }
+
+    function applyColumnResult(col: ColumnMappingRow, result: VocabResult) {
+        col.vocabulary = result.vocabulary || null;
+        col.crm_property = result.uri;
+        formData = {
+            entity_type: col.entity_type,
+            column_name: col.column_name,
+            local_value: "",
+            concept_uri: "",
+            vocabulary: result.vocabulary,
+            crm_property: result.uri,
+            crm_range: col.crm_range ?? "",
+            confidence: "",
+        };
+        closeColumnPicker();
+        setTimeout(() => annotationForm?.requestSubmit(), 0);
+    }
+
+    function submitColumnManual(col: ColumnMappingRow) {
+        const uri = editConcept.trim();
+        if (!uri) return;
+        let vocabulary = (col.vocabulary ?? "").trim();
+        if (!vocabulary) {
+            const idx = uri.indexOf(":");
+            if (idx > 0) vocabulary = uri.slice(0, idx).toLowerCase();
+        }
+        col.vocabulary = vocabulary || null;
+        col.crm_property = uri;
+        formData = {
+            entity_type: col.entity_type,
+            column_name: col.column_name,
+            local_value: "",
+            concept_uri: "",
+            vocabulary,
+            crm_property: uri,
+            crm_range: col.crm_range ?? "",
+            confidence: "",
+        };
+        closeColumnPicker();
+        setTimeout(() => annotationForm?.requestSubmit(), 0);
+    }
+
     function vocabsForValue(row: ValueMappingRow, col: ColumnMappingRow): string[] {
         const shared =
             sharedVocabName(col.vocabulary) ?? sharedVocabName(row.vocabulary);
@@ -409,6 +491,7 @@
     }
 
     function openPicker(row: ValueMappingRow, col: ColumnMappingRow) {
+        colPickerKey = null;
         editingKey = valueKey(row);
         editConcept = row.concept_uri ?? "";
         pickerMode = "search";
@@ -523,6 +606,25 @@
             crm_range: row.crm_range ?? "",
             confidence: "",
         };
+        row.vocabulary = vocabulary || null;
+        setTimeout(() => annotationForm?.requestSubmit(), 0);
+    }
+
+    function clearColumnMapping(col: ColumnMappingRow) {
+        col.vocabulary = null;
+        col.crm_property = null;
+        col.crm_range = null;
+        formData = {
+            entity_type: col.entity_type,
+            column_name: col.column_name,
+            local_value: "",
+            concept_uri: "",
+            vocabulary: "",
+            crm_property: "",
+            crm_range: "",
+            confidence: "",
+        };
+        closeColumnPicker();
         setTimeout(() => annotationForm?.requestSubmit(), 0);
     }
 
@@ -532,10 +634,11 @@
                 periodo: "PeriodO",
                 aat: "AAT",
                 crm: "CRM",
+                dc: "Dublin Core",
             };
             return `Search ${names[pickerVocabs[0]] ?? pickerVocabs[0]}…`;
         }
-        return "Search PeriodO, AAT, CRM…";
+        return "Search PeriodO, AAT, CRM, DC…";
     });
 </script>
 
@@ -576,7 +679,7 @@
             <p class="text-sm text-muted-foreground mb-1">No columns yet</p>
             <p class="text-xs text-muted-foreground max-w-sm text-center">
                 Push a project with tables, then opt columns into PeriodO, AAT,
-                or CRM and map their labels here.
+                CRM, or Dublin Core and map their labels here.
             </p>
         </div>
     {:else}
@@ -601,6 +704,7 @@
                                 tableFilter = t;
                                 columnFilter = "";
                                 expandedKey = null;
+                                colPickerKey = null;
                             }}
                         >
                             {t}
@@ -696,7 +800,7 @@
                 <span
                     class="text-xs text-muted-foreground tabular-nums whitespace-nowrap"
                 >
-                    {mappedInTable}/{queueValues.length}
+                    {mappedInTable}/{tableDisplayValues.length}
                 </span>
             </div>
         </div>
@@ -748,8 +852,8 @@
                 <div class="flex flex-col items-center justify-center py-12">
                     <p class="text-sm text-muted-foreground">
                         {statusFilter === "unmapped" &&
-                        queueColumns.length === 0
-                            ? "No shared-vocabulary columns need URIs. Opt a column in, then push to index values."
+                        unmappedColumns.length === 0
+                            ? "All values in this view are mapped."
                             : "No columns match this filter"}
                     </p>
                     <button
@@ -792,10 +896,19 @@
                                 </button>
                                 <button
                                     type="button"
-                                    class="min-w-0 text-left truncate font-medium text-foreground hover:underline"
+                                    class="min-w-0 text-left font-medium text-foreground hover:underline"
                                     onclick={() => toggleExpand(col)}
                                 >
-                                    {col.column_name}
+                                    <span class="truncate block"
+                                        >{col.column_name}</span
+                                    >
+                                    {#if col.crm_property}
+                                        <span
+                                            class="truncate block font-mono text-[11px] font-normal text-muted-foreground"
+                                            >→ {col.crm_property}{#if col.crm_range}
+                                                · {col.crm_range}{/if}</span
+                                        >
+                                    {/if}
                                 </button>
                                 <select
                                     class="{selectClass} min-w-0 max-w-full"
@@ -818,16 +931,246 @@
                                     <option value="periodo">PeriodO</option>
                                     <option value="aat">AAT</option>
                                     <option value="crm">CIDOC CRM</option>
+                                    <option value="dc">Dublin Core</option>
                                 </select>
-                                <span
-                                    class="text-xs text-muted-foreground tabular-nums"
-                                >
-                                    {#if colValues.length === 0}
-                                        {shared ? "not indexed" : "—"}
-                                    {:else}
-                                        {colValues.length - unmapped.length}/{colValues.length}
-                                    {/if}
-                                </span>
+                                <div class="flex min-w-0 items-center gap-0.5">
+                                    <Popover.Root
+                                        open={colPickerKey === key}
+                                        onOpenChange={(next) => {
+                                            if (next) openColumnPicker(col);
+                                            else if (colPickerKey === key)
+                                                closeColumnPicker();
+                                        }}
+                                    >
+                                        <Popover.Trigger
+                                            class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                                            title={col.crm_property
+                                                ? "Edit column mapping"
+                                                : "Map column to a shared concept"}
+                                        >
+                                            <SearchIcon class="size-3.5" />
+                                        </Popover.Trigger>
+                                        <Popover.Content
+                                            class="w-80 p-0"
+                                            align="end"
+                                            sideOffset={6}
+                                        >
+                                            {#if activeColPicker}
+                                                {@const pc = activeColPicker}
+                                                {#if pc.crm_property}
+                                                    <div
+                                                        class="flex items-center gap-1.5 border-b border-border px-2.5 py-2"
+                                                    >
+                                                        <span
+                                                            class="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
+                                                            >→ {pc.crm_property}</span
+                                                        >
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="xs"
+                                                            onclick={() =>
+                                                                clearColumnMapping(
+                                                                    pc,
+                                                                )}
+                                                        >
+                                                            Clear
+                                                        </Button>
+                                                    </div>
+                                                {/if}
+                                                <div
+                                                    class="border-b border-border p-2.5 space-y-2"
+                                                >
+                                                    <div
+                                                        class="flex items-center gap-1.5"
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            onclick={() =>
+                                                                (pickerMode =
+                                                                    "search")}
+                                                            class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
+                                                            'search'
+                                                                ? 'bg-foreground text-background'
+                                                                : 'text-muted-foreground hover:bg-muted'}"
+                                                        >
+                                                            Search
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onclick={startManualEdit}
+                                                            class="rounded px-2 py-1 text-[11px] font-medium transition-colors {pickerMode ===
+                                                            'manual'
+                                                                ? 'bg-foreground text-background'
+                                                                : 'text-muted-foreground hover:bg-muted'}"
+                                                        >
+                                                            Manual
+                                                        </button>
+                                                    </div>
+                                                    {#if pickerMode === "search"}
+                                                        <div class="relative">
+                                                            <SearchIcon
+                                                                class="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                                                            />
+                                                            <input
+                                                                type="search"
+                                                                value={manualSearchQuery}
+                                                                oninput={(e) =>
+                                                                    onManualQueryInput(
+                                                                        (
+                                                                            e.currentTarget as HTMLInputElement
+                                                                        )
+                                                                            .value,
+                                                                    )}
+                                                                placeholder={searchPlaceholder}
+                                                                class="h-8 w-full rounded-md border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                            />
+                                                        </div>
+                                                    {:else}
+                                                        <input
+                                                            type="text"
+                                                            bind:value={editConcept}
+                                                            placeholder="concept URI, e.g. dc:description"
+                                                            class="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                        />
+                                                        <div
+                                                            class="flex justify-end gap-1.5"
+                                                        >
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="xs"
+                                                                onclick={closeColumnPicker}
+                                                            >
+                                                                Cancel
+                                                            </Button>
+                                                            <Button
+                                                                type="button"
+                                                                size="xs"
+                                                                onclick={() =>
+                                                                    submitColumnManual(
+                                                                        pc,
+                                                                    )}
+                                                            >
+                                                                Save
+                                                            </Button>
+                                                        </div>
+                                                    {/if}
+                                                </div>
+
+                                                {#if pickerMode === "search"}
+                                                    <div
+                                                        class="max-h-56 overflow-y-auto p-1.5"
+                                                    >
+                                                        {#if pickerInspectUri}
+                                                            <button
+                                                                type="button"
+                                                                class="mb-1.5 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+                                                                onclick={() => {
+                                                                    pickerInspectUri = null;
+                                                                    pickerInspectDoc = null;
+                                                                    pickerInspectLoading = false;
+                                                                }}
+                                                            >
+                                                                Back
+                                                            </button>
+                                                            <div
+                                                                class="px-1.5 pb-1.5"
+                                                            >
+                                                                <TermInspectPane
+                                                                    doc={pickerInspectDoc}
+                                                                    loading={pickerInspectLoading}
+                                                                    empty="Not in the catalog yet"
+                                                                />
+                                                            </div>
+                                                        {:else}
+                                                            {#if vocabLoading}
+                                                                <div
+                                                                    class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground"
+                                                                >
+                                                                    <LoaderIcon
+                                                                        class="size-3.5 animate-spin"
+                                                                    />
+                                                                    {vocabWarming
+                                                                        ? "Loading PeriodO…"
+                                                                        : "Searching…"}
+                                                                </div>
+                                                            {/if}
+                                                            {#if vocabResults.length > 0}
+                                                                {#each vocabResults as result (result.uri)}
+                                                                    <div
+                                                                        class="flex items-center gap-0.5"
+                                                                    >
+                                                                        <button
+                                                                            type="button"
+                                                                            onclick={() =>
+                                                                                applyColumnResult(
+                                                                                    pc,
+                                                                                    result,
+                                                                                )}
+                                                                            class="min-w-0 flex-1 flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent transition-colors"
+                                                                        >
+                                                                            <div
+                                                                                class="min-w-0"
+                                                                            >
+                                                                                <span
+                                                                                    class="font-medium text-foreground truncate block"
+                                                                                    >{result.label}</span
+                                                                                >
+                                                                                <span
+                                                                                    class="text-muted-foreground"
+                                                                                    >{result.vocabulary}{#if result.context}
+                                                                                        — {result.context}{/if}</span
+                                                                                >
+                                                                            </div>
+                                                                            <span
+                                                                                class="shrink-0 text-muted-foreground font-mono text-[10px]"
+                                                                                >{Math.round(
+                                                                                    result.score *
+                                                                                        100,
+                                                                                )}%</span
+                                                                            >
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
+                                                                            title="Inspect term"
+                                                                            onclick={() =>
+                                                                                openPickerInspect(
+                                                                                    result.uri,
+                                                                                )}
+                                                                        >
+                                                                            <InfoIcon
+                                                                                class="size-3.5"
+                                                                            />
+                                                                        </button>
+                                                                    </div>
+                                                                {/each}
+                                                            {:else if !vocabLoading}
+                                                                <p
+                                                                    class="px-2 py-4 text-xs text-muted-foreground"
+                                                                >
+                                                                    {manualSearchQuery.trim()
+                                                                        ? "No matching terms. Try another query or switch to Manual."
+                                                                        : "Type to search vocabularies."}
+                                                                </p>
+                                                            {/if}
+                                                        {/if}
+                                                    </div>
+                                                {/if}
+                                            {/if}
+                                        </Popover.Content>
+                                    </Popover.Root>
+                                    <span
+                                        class="text-xs text-muted-foreground tabular-nums"
+                                    >
+                                        {#if colValues.length === 0}
+                                            {shared ? "not indexed" : "—"}
+                                        {:else}
+                                            {colValues.length - unmapped.length}/{colValues.length}
+                                        {/if}
+                                    </span>
+                                </div>
                             </div>
 
                             {#if open}
