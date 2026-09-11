@@ -149,16 +149,17 @@
 
         {#if hasDates}
             <div class="relative pl-3.5 text-xs">
-                {#if dateStartText && dateEndText}
-                    <div
-                        class="absolute left-[4px] top-[10px] bottom-[10px] w-px bg-border"
-                        aria-hidden="true"
-                    ></div>
-                {/if}
                 {#if dateStartText}
                     <div class="relative {dateEndText ? 'pb-4' : ''}">
+                        {#if dateEndText}
+                            <!-- Rail runs dot-center to dot-center (dots sit at top-1.5 + half of size-1.5). -->
+                            <div
+                                class="absolute -left-[10px] top-[9px] bottom-0 w-px bg-border"
+                                aria-hidden="true"
+                            ></div>
+                        {/if}
                         <span
-                            class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                            class="absolute -left-[12.5px] top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
                             aria-hidden="true"
                         ></span>
                         <p
@@ -173,8 +174,14 @@
                 {/if}
                 {#if dateEndText}
                     <div class="relative">
+                        {#if dateStartText}
+                            <div
+                                class="absolute -left-[10px] top-0 h-[9px] w-px bg-border"
+                                aria-hidden="true"
+                            ></div>
+                        {/if}
                         <span
-                            class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                            class="absolute -left-[12.5px] top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
                             aria-hidden="true"
                         ></span>
                         <p

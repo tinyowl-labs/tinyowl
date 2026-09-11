@@ -1,3 +1,4 @@
+import { readTableRows } from "./readTableRows";
 /** Schema-driven form / infobox helpers (confirmed FKs + lookup/junction kinds). */
 
 export type LookupOpt = { id: string; label: string };
@@ -99,14 +100,15 @@ export function optsFromRows(
 export async function loadProjectFkLookups(opts: {
 	slug: string;
 	accessToken?: string;
+ ref?: "main" | "develop";
 	tables: Record<string, string[]>;
 }): Promise<Record<string, Record<string, LookupOpt[]>>> {
-	const { slug, accessToken = "", tables } = opts;
+	const { slug, accessToken = "", tables, ref = "develop" } = opts;
 	if (!slug) return {};
 	const headers: Record<string, string> = {};
 	if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 	const res = await fetch(
-		`/api/v1/projects/${encodeURIComponent(slug)}/schema`,
+		`/api/v1/projects/${encodeURIComponent(slug)}/schema?ref=${ref}`,
 		{ headers },
 	);
 	if (!res.ok) return {};
@@ -118,19 +120,8 @@ export async function loadProjectFkLookups(opts: {
 	const loadTarget = async (target: string) => {
 		const hit = targetCache.get(target);
 		if (hit) return hit;
-		const pending = (async () => {
-			const rowsRes = await fetch(
-				`/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(target)}/rows`,
-				{ headers },
-			);
-			return rowsRes.ok
-				? optsFromRows(
-						((await rowsRes.json()) as {
-							rows?: Record<string, unknown>[];
-						}).rows,
-				  )
-				: [];
-		})();
+        const pending = readTableRows({slug, table: target, ref, headers}).then(optsFromRows);
+
 		targetCache.set(target, pending);
 		return pending;
 	};

@@ -33,6 +33,12 @@
         columns: ColumnDef<TData>[];
         data: TData[];
         pageSize?: number;
+        totalRows?: number;
+        loading?: boolean;
+        onSortChange?: (sorting: SortingState) => void;
+        onFiltersChange?: (filters: ColumnFiltersState) => void;
+        loadColumnValues?: (column: string) => Promise<{ rows: Record<string, unknown>[]; total: number }>;
+
         rowClassName?: (row: TData) => string;
         pageIndex?: number;
         onPageChange?: (index: number) => void;
@@ -55,6 +61,12 @@
         columns,
         data,
         pageSize = 25,
+        totalRows,
+        loading = false,
+        onSortChange,
+        onFiltersChange,
+        loadColumnValues,
+
         rowClassName,
         pageIndex = 0,
         onPageChange,
@@ -80,7 +92,22 @@
         _pageIndex = pageIndex;
     });
 
+    let valueChoices = $state<Record<string, {rows: Record<string, unknown>[]; total: number}>>({});
+    let valueErrors = $state<Record<string, string>>({});
+    async function loadValues(column: string) {
+        if (!loadColumnValues) return;
+        valueChoices = {...valueChoices, [column]: undefined} as typeof valueChoices;
+        valueErrors = {...valueErrors, [column]: ""};
+        try { const result = await loadColumnValues(column); valueChoices = {...valueChoices, [column]: result}; }
+        catch { valueErrors = {...valueErrors, [column]: "Could not load values."}; }
+    }
     const table = createSvelteTable({
+        get enableMultiSort() { return totalRows === undefined; },
+        get manualPagination() { return totalRows !== undefined; },
+        get manualSorting() { return totalRows !== undefined; },
+        get manualFiltering() { return totalRows !== undefined; },
+        get rowCount() { return totalRows; },
+
         get data() {
             return data;
         },
@@ -101,12 +128,14 @@
         onSortingChange: (updater) => {
             if (typeof updater === "function") sorting = updater(sorting);
             else sorting = updater;
+            onSortChange?.(sorting);
         },
         onColumnFiltersChange: (updater) => {
             if (typeof updater === "function")
                 columnFilters = updater(columnFilters);
             else columnFilters = updater;
             _pageIndex = 0;
+            onFiltersChange?.(columnFilters);
             onPageChange?.(0);
         },
         onPaginationChange: (updater) => {
@@ -182,7 +211,7 @@
                                                 isExcelFilterActive(filterValue)}
                                             {@const filterSummary =
                                                 excelFilterSummary(filterValue)}
-                                            <Popover.Root>
+                                            <Popover.Root onOpenChange={(open) => { if (open) void loadValues(header.column.id); }}>
                                                 <Popover.Trigger
                                                     class="flex size-6 shrink-0 items-center justify-center rounded-md transition-colors {filterActive
                                                         ? 'bg-secondary text-foreground'
@@ -204,10 +233,15 @@
                                                     align="end"
                                                     sideOffset={6}
                                                 >
+                                                    {#if loadColumnValues && !valueChoices[header.column.id]}
+                                                        <p role="status" class="p-3 text-xs">{valueErrors[header.column.id] || "Loading values…"}</p>
+                                                        {#if valueErrors[header.column.id]}<button class="p-3 underline" onclick={() => loadValues(header.column.id)}>Retry</button>{/if}
+                                                    {:else}
                                                     <ColumnFilterPanel
                                                         columnId={header.column
                                                             .id}
-                                                        data={data}
+                                                        data={valueChoices[header.column.id]?.rows ?? data}
+                                                        valuesPartial={(valueChoices[header.column.id]?.total ?? 0) > (valueChoices[header.column.id]?.rows.length ?? 0)}
                                                         {filterValue}
                                                         lookups={columnLookups?.[
                                                             header.column.id
@@ -226,6 +260,7 @@
                                                                 undefined,
                                                             )}
                                                     />
+                                                    {/if}
                                                 </Popover.Content>
                                             </Popover.Root>
                                         {/if}
@@ -307,14 +342,14 @@
         <div
             class="text-muted-foreground {compact ? 'text-[10px]' : 'text-sm'}"
         >
-            {table.getFilteredRowModel().rows.length} row(s)
+            {totalRows ?? table.getFilteredRowModel().rows.length} row(s)
         </div>
         <div class="flex items-center gap-2">
             <Button
                 variant="outline"
                 size="sm"
                 class={compact ? "h-7 px-2 text-[10px]" : ""}
-                disabled={!table.getCanPreviousPage()}
+                disabled={loading || !table.getCanPreviousPage()}
                 onclick={() => table.previousPage()}
             >
                 <ChevronLeft class="size-4" />
@@ -332,7 +367,7 @@
                 variant="outline"
                 size="sm"
                 class={compact ? "h-7 px-2 text-[10px]" : ""}
-                disabled={!table.getCanNextPage()}
+                disabled={loading || !table.getCanNextPage()}
                 onclick={() => table.nextPage()}
             >
                 Next

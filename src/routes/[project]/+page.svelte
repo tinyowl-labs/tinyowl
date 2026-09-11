@@ -215,14 +215,59 @@
 
     let editing = $state(false);
     let editContent = $state("");
+    /** Rich/source markdown editor — lazy chunk, fetched on first edit. */
+    let MarkdownEditorCmp = $state<any>(null);
+    /** Close/save choreography: the editor reverses first, then reports. */
+    let editorClosing = $state(false);
+    let saveQueued = $state(false);
+    let formEl = $state<HTMLFormElement | null>(null);
 
     $effect(() => {
-        if (form?.success) editing = false;
+        if (form?.success) {
+            editing = false;
+            editorClosing = false;
+            saveQueued = false;
+        }
+        if (form?.error) {
+            // Save failed: stay editing, replay the entrance.
+            saveQueued = false;
+            editorClosing = false;
+        }
     });
 
     function startEdit() {
         editContent = readmeRaw ?? "";
         editing = true;
+        editorClosing = false;
+        saveQueued = false;
+        if (!MarkdownEditorCmp) {
+            void import("$lib/components/markdown/markdown-editor.svelte").then(
+                (m) => {
+                    MarkdownEditorCmp = m.default;
+                },
+            );
+        }
+    }
+
+    function requestEditorCancel() {
+        if (editorClosing) return;
+        editorClosing = true;
+    }
+
+    function requestEditorSave() {
+        if (editorClosing) return;
+        saveQueued = true;
+        editorClosing = true;
+    }
+
+    function handleEditorClosed() {
+        if (saveQueued) {
+            saveQueued = false;
+            formEl?.requestSubmit();
+            return;
+        }
+        editing = false;
+        editorClosing = false;
     }
 
     interface Article {
@@ -392,37 +437,53 @@
                         method="POST"
                         action="?/saveReadme"
                         use:enhance
+                        bind:this={formEl}
                         class="space-y-3"
                     >
-                        <div class="flex items-center gap-2">
-                            <FileTextIcon class="size-4 text-muted-foreground" />
-                            <span class="text-sm font-medium text-foreground"
-                                >README.md</span
-                            >
-                        </div>
-                        <textarea
+                        <input
+                            type="hidden"
                             name="content"
-                            bind:value={editContent}
-                            rows={16}
-                            class="w-full rounded-lg border border-input bg-background px-3.5 py-3 text-sm font-mono shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
-                            placeholder="# Project Title&#10;&#10;Describe your project here..."
-                        ></textarea>
+                            value={editContent}
+                        />
+                        {#if MarkdownEditorCmp}
+                            <MarkdownEditorCmp
+                                bind:value={editContent}
+                                placeholder="# Project Title&#10;&#10;Describe your project here..."
+                                onCancel={requestEditorCancel}
+                                onSave={requestEditorSave}
+                                closing={editorClosing}
+                                onClosed={handleEditorClosed}
+                            />
+                        {:else}
+                            <div
+                                class="space-y-2"
+                                aria-busy="true"
+                                aria-label="Loading editor"
+                            >
+                                <div class="flex items-center justify-between gap-2">
+                                    <div
+                                        class="h-[34px] w-40 animate-pulse rounded-md bg-muted"
+                                    ></div>
+                                    <div
+                                        class="h-[34px] w-32 animate-pulse rounded-md bg-muted"
+                                    ></div>
+                                </div>
+                                <div
+                                    class="min-h-56 animate-pulse rounded-lg border border-border bg-muted/40"
+                                ></div>
+                                <div class="flex gap-2 justify-end">
+                                    <button
+                                        type="button"
+                                        onclick={() => (editing = false)}
+                                        class="inline-flex items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-secondary transition-colors"
+                                        >Cancel</button
+                                    >
+                                </div>
+                            </div>
+                        {/if}
                         {#if form?.error}
                             <p class="text-sm text-destructive">{form.error}</p>
                         {/if}
-                        <div class="flex gap-2 justify-end">
-                            <button
-                                type="button"
-                                onclick={() => (editing = false)}
-                                class="inline-flex items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-secondary transition-colors"
-                                >Cancel</button
-                            >
-                            <button
-                                type="submit"
-                                class="inline-flex items-center rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90 transition-colors"
-                                >Save</button
-                            >
-                        </div>
                     </form>
                 {:else if readmeRaw}
                     <div class="group relative">
@@ -471,16 +532,17 @@
                     {/if}
                     {#if hasDates}
                         <div class="relative pl-3.5 text-xs">
-                            {#if dateStartText && dateEndText}
-                                <div
-                                    class="absolute left-[4px] top-[10px] bottom-[10px] w-px bg-border"
-                                    aria-hidden="true"
-                                ></div>
-                            {/if}
                             {#if dateStartText}
                                 <div class="relative {dateEndText ? 'pb-4' : ''}">
+                                    {#if dateEndText}
+                                        <!-- Rail runs dot-center to dot-center (dots sit at top-1.5 + half of size-1.5). -->
+                                        <div
+                                            class="absolute -left-[10px] top-[9px] bottom-0 w-px bg-border"
+                                            aria-hidden="true"
+                                        ></div>
+                                    {/if}
                                     <span
-                                        class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                                        class="absolute -left-[12.5px] top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
                                         aria-hidden="true"
                                     ></span>
                                     <p
@@ -495,8 +557,14 @@
                             {/if}
                             {#if dateEndText}
                                 <div class="relative">
+                                    {#if dateStartText}
+                                        <div
+                                            class="absolute -left-[10px] top-0 h-[9px] w-px bg-border"
+                                            aria-hidden="true"
+                                        ></div>
+                                    {/if}
                                     <span
-                                        class="absolute -left-3.5 top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
+                                        class="absolute -left-[12.5px] top-1.5 size-1.5 rounded-full bg-muted-foreground/70"
                                         aria-hidden="true"
                                     ></span>
                                     <p

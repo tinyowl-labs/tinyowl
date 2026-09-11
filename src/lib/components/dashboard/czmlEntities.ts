@@ -216,7 +216,13 @@ export async function customDataSourceFromCzml(
     // visualizers can then build their static batches without per-entity churn.
     ds.entities.suspendEvents();
     try {
+        let sliceStarted = performance.now();
         for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+            // Check before geometry branches so points and lines also yield.
+            if (packetIndex > 0 && (packetIndex % 100 === 0 || performance.now() - sliceStarted >= 8)) {
+                await yieldEntityBuild();
+                sliceStarted = performance.now();
+            }
             const pkt = packets[packetIndex]!;
             const id = pkt.id;
             if (typeof id !== "string" || id === "document") continue;
@@ -347,11 +353,7 @@ export async function customDataSourceFromCzml(
                 }
             }
 
-            // Cesium's Entity visualizers already batch static ground geometry;
-            // yield while feeding them so large layers do not become one long task.
-            if (packetIndex > 0 && packetIndex % 100 === 0) {
-                await yieldEntityBuild();
-            }
+
         }
     } finally {
         ds.entities.resumeEvents();

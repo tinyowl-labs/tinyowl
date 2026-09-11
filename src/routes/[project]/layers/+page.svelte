@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { mapConcurrent } from "$lib/async/mapConcurrent";
     import LayersIcon from "@lucide/svelte/icons/layers";
     import TableIcon from "@lucide/svelte/icons/table";
     import PanelRightIcon from "@lucide/svelte/icons/panel-right";
@@ -27,6 +28,7 @@
         SchemaEdge,
     } from "$lib/components/dashboard/SchemaGraph.svelte";
     import { browser } from "$app/environment";
+    import { readTableRows } from "$lib/project/readTableRows";
     import { onMount, onDestroy } from "svelte";
     import {
         layerSelection,
@@ -84,9 +86,93 @@
     const serverRows = $derived(
         (data?.rows as Record<string, Record<string, unknown>[]> | null) ?? {},
     );
+    let tablePageRows = $state<Record<string, unknown>[]>([]);
+    let tablePageName = $state("");
+    let tablePageScope = $state("");
+    let tableRowsLoading = $state(false);
+    let tableRowsError = $state("");
+    let tableTotal = $state(0);
+    let tableSort = $state<{id: string; desc: boolean}[]>([]);
+    let tableFilters = $state<{id: string; value: unknown}[]>([]);
+    let tableRequestKey = "";
+    let locatedHighlight = "";
+    let lookupRetry = $state(0);
+    let tableRequestGen = 0;
+    let tableController: AbortController | null = null;
+
+    async function loadTablePage(force = false) {
+        const slug = $page.params.project ?? "";
+        const name = activeTab;
+        if (!slug || !name || name === SCHEMA_TAB) return;
+        const scope = `${slug}\0${viewingRef}`;
+        const qs = new URLSearchParams({limit: "25", offset: String(currentPage * 25), ref: viewingRef});
+        if (tableSort[0]) {qs.set("sort", tableSort[0].id); qs.set("direction", tableSort[0].desc ? "desc" : "asc");}
+        if (tableFilters.length) qs.set("filters", JSON.stringify(tableFilters));
+        const highlightKey = `${scope}\0${name}\0${highlightId}`;
+        const highlight = highlightId && locatedHighlight !== highlightKey ? highlightId : "";
+        if (highlight) qs.set("highlight", highlight);
+        const key = `${scope}\0${name}\0${qs}\0${dataEpoch}`;
+        if (!force && key === tableRequestKey) return;
+        tableRequestKey = key;
+        tableController?.abort();
+        const controller = new AbortController(); tableController = controller;
+        const gen = ++tableRequestGen;
+        tableRowsLoading = true; tableRowsError = "";
+        tablePageRows = []; tableTotal = 0; tablePageName = name; tablePageScope = scope;
+        try {
+            const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/tables/${encodeURIComponent(name)}/rows?${qs}`, {headers: authHeaders(), signal: controller.signal});
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const body = await res.json();
+            if (gen !== tableRequestGen) return;
+            if (highlight) locatedHighlight = highlightKey;
+            tablePageRows = body.rows ?? []; tableTotal = Number(body.total ?? tablePageRows.length);
+            const page = Math.floor(Number(body.offset ?? 0) / 25);
+            if (page !== currentPage) currentPage = page;
+        } catch (error) {
+            if (gen !== tableRequestGen || controller.signal.aborted) return;
+            tableRowsError = "Could not load this table. Your data has not been removed.";
+            tableRequestKey = "";
+        } finally { if (gen === tableRequestGen) tableRowsLoading = false; }
+    }
+
+    async function loadColumnValues(column: string) {
+        const qs = new URLSearchParams({limit: "10000", distinct: column, ref: viewingRef});
+        const res = await fetch(`/api/v1/projects/${encodeURIComponent($page.params.project ?? "")}/tables/${encodeURIComponent(activeTab)}/rows?${qs}`, {headers: authHeaders()});
+        if (!res.ok) throw new Error("Could not load column values");
+        return await res.json() as {rows: Record<string, unknown>[]; total: number};
+    }
+
+    $effect(() => {
+        const scope = `${$page.params.project}\0${viewingRef}\0${activeTab}`;
+        void scope;
+        untrack(() => { currentPage = highlightPage; tableSort = []; tableFilters = []; tableRequestKey = ""; });
+    });
+    $effect(() => {
+        const request = [viewMode, activeTab, $page.params.project, viewingRef, currentPage, JSON.stringify(tableSort), JSON.stringify(tableFilters), highlightId, dataEpoch];
+        void request;
+        if (viewMode === "table") untrack(() => void loadTablePage());
+    });
+
+    let relatedRows = $state<Record<string, Record<string, unknown>[]>>({});
+    let relatedRowsError = $state("");
+    let relatedScope = "";
+    const relatedLoads = new Set<string>();
+    async function loadRelatedRows() {
+        const slug = $page.params.project ?? "";
+        const scope = `${slug}\0${viewingRef}\0${dataEpoch}`;
+        if (scope !== relatedScope) {relatedScope = scope; relatedRows = {}; relatedLoads.clear(); relatedRowsError = "";}
+        const names = [...new Set(schemaEdges.filter(edge => edge.source === selectedLayer).map(edge => edge.target))].filter(name => !relatedLoads.has(name));
+        for (const name of names) relatedLoads.add(name);
+        await mapConcurrent(names, 4, async name => {
+            try {const values = await readTableRows({slug, table: name, ref: viewingRef, headers: authHeaders()}); if (scope === relatedScope) relatedRows = {...relatedRows, [name]: values};}
+            catch {if (scope === relatedScope) {relatedLoads.delete(name); relatedRowsError = "Some related table values could not be loaded.";}}
+        });
+    }
+    $effect(() => {void dataEpoch; void selectedLayer; void schemaEdges; void viewingRef; void $page.params.project; untrack(() => void loadRelatedRows());});
     const rows = $derived.by(() => {
         const out: Record<string, Record<string, unknown>[]> = {
             ...serverRows,
+            ...relatedRows,
         };
         for (const layer of mapLayers) {
             if (!layer.packets?.length) continue;
@@ -94,12 +180,60 @@
             const fromCzml = rowsFromPackets(layer.packets, layer.name);
             if (fromCzml.length) out[layer.name] = fromCzml;
         }
+        if (tablePageScope === `${$page.params.project ?? ""}\0${viewingRef}` && tablePageName && !(out[tablePageName]?.length)) out[tablePageName] = tablePageRows;
         return out;
     });
     const accessToken = $derived((data?.accessToken as string) ?? "");
+    let visibleMedia = $state<Record<string, {url: string; media_type: string}[]>>({});
+    let mediaLoadError = $state("");
+    const mediaLoadedEntities = new Set<string>();
+    const mediaLoadingEntities = new Set<string>();
+    let mediaScope = "";
+    let mediaLoadGen = 0;
+    async function loadVisibleMedia(keys: string[]) {
+        const slug = $page.params.project ?? "";
+        const scope = `${slug}\0${viewingRef}\0${dataEpoch}`;
+        if (scope !== mediaScope) {mediaScope = scope; mediaLoadGen++; mediaLoadedEntities.clear(); mediaLoadingEntities.clear(); visibleMedia = {}; mediaLoadError = "";}
+        const missing = [...new Set(keys)].filter(key => key && !mediaLoadedEntities.has(key) && !mediaLoadingEntities.has(key));
+        if (!missing.length) return;
+        for (const key of missing) mediaLoadingEntities.add(key);
+        const gen = mediaLoadGen;
+        mediaLoadError = "";
+        const found: typeof visibleMedia = Object.fromEntries(missing.map(key => [key, []]));
+        try {
+            for (let offset = 0;;) {
+                const qs = new URLSearchParams({limit: "200", offset: String(offset), ref: viewingRef});
+                for (const key of missing) qs.append("entity", key);
+                const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/media?${qs}`, {headers: authHeaders()});
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const body = await res.json();
+                if (gen !== mediaLoadGen) return;
+                const items = Array.isArray(body) ? body : body.items ?? [];
+                for (const item of items) for (const link of item.entities ?? []) {
+                    const key = `${link.entity_type}:${link.entity_id}`;
+                    if (!(key in found)) continue;
+                    const entry = {url: item.url?.startsWith("/") ? item.url : `/media/${item.hash}`, media_type: item.media_type};
+                    if (entry.media_type?.startsWith("image/")) found[key].unshift(entry); else found[key].push(entry);
+                }
+                offset += items.length;
+                if (items.length < 200) break;
+            }
+            if (gen !== mediaLoadGen) return;
+            visibleMedia = {...visibleMedia, ...found};
+            for (const key of missing) mediaLoadedEntities.add(key);
+        } catch {if (gen === mediaLoadGen) mediaLoadError = "Could not load media for the visible records.";}
+        finally {if (gen === mediaLoadGen) for (const key of missing) mediaLoadingEntities.delete(key);}
+    }
+    $effect(() => {
+        const keys = viewMode === "table" ? tablePageRows.map(row => `${tablePageName}:${row.source_id ?? row.SOURCE_ID ?? ""}`) : [];
+        if (layerSelection.primaryKey) keys.push(layerSelection.primaryKey);
+        void viewingRef; void $page.params.project; void dataEpoch;
+        untrack(() => void loadVisibleMedia(keys));
+    });
+
     const mediaByEntity = $derived.by(() => {
         const raw =
-            (data?.mediaByEntity as Record<
+            (visibleMedia as Record<
                 string,
                 { url: string; media_type: string }[]
             >) ?? {};
@@ -301,7 +435,7 @@
 
     function setViewingRef(ref: ViewingRef) {
         if (!isMember) return;
-        const slug = $page.params.project;
+        const slug = $page.params.project ?? "";
         if (!slug) return;
         void goto(
             `/${encodeURIComponent(slug)}/layers${layersSearch({
@@ -315,7 +449,7 @@
     }
 
     function clearSearchQ() {
-        const slug = $page.params.project;
+        const slug = $page.params.project ?? "";
         if (!slug) return;
         void goto(
             `/${encodeURIComponent(slug)}/layers${layersSearch({
@@ -766,8 +900,9 @@
 
     $effect(() => {
         if (!browser) return;
-        const tablesMode = inTables;
-        const slug = $page.params.project;
+        void lookupRetry; void dataEpoch;
+        const tablesMode = viewMode === "table";
+        const slug = $page.params.project ?? "";
         const token = accessToken;
         const tbls = tables;
         if (!tablesMode || !slug || Object.keys(tbls).length === 0) return;
@@ -775,10 +910,11 @@
         void loadProjectFkLookups({
             slug,
             accessToken: token,
-            tables: tbls,
+            tables: {[activeTab]: tbls[activeTab] ?? []},
+            ref: viewingRef,
         }).then((next) => {
             if (!cancelled) tableLookups = next;
-        });
+        }).catch(() => {if (!cancelled) tableRowsError = "Related field choices could not be loaded. Retry this table before editing a related field.";});
         return () => {
             cancelled = true;
         };
@@ -866,6 +1002,9 @@
     });
 
     onDestroy(() => {
+        czmlController?.abort();
+        tableController?.abort();
+        czmlLoadGen++;
         layerSelection.exitIsolate();
     });
 
@@ -897,7 +1036,7 @@
         offset: number | null,
     ): Promise<boolean> {
         if (!canWrite) return false;
-        const slug = $page.params.project;
+        const slug = $page.params.project ?? "";
         if (!slug || !hash) return false;
         const prev = tilesets;
         tilesets = tilesets.map((t) =>
@@ -967,7 +1106,10 @@
 
     let mapLoading = $state(false);
     let czmlLoadGen = 0;
-    let czmlContentKey = "";
+    let czmlErrors = $state<string[]>([]);
+    let czmlController: AbortController | null = null;
+    let czmlScope = "";
+    const czmlLayerCache = new Map<string, LayerData>();
     /** Last completed CZML fetch identity — skip duplicate $effect runs. */
     let czmlFetchedKey = "";
     let czmlInFlightKey = "";
@@ -1011,127 +1153,85 @@
         return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     }
 
-    function layersContentKey(layers: LayerData[]): string {
-        return layers
-            .map((l) => `${l.name}:${l.packets?.length ?? 0}`)
-            .join("|");
-    }
-
     async function loadAllCzml(force = false) {
-        const slug = $page.params.project;
+        const slug = $page.params.project ?? "";
         const names = untrack(() => tableNames);
         const colsByTable = untrack(() => tables);
         const spatial = names.filter((name) =>
             (colsByTable[name] ?? []).some((c) => /^_?geom/i.test(c)),
         );
-        const fetchKey = `${slug}\0${viewingRef}\0${spatial.join("\0")}`;
-        if (
-            !force &&
-            (fetchKey === czmlFetchedKey || fetchKey === czmlInFlightKey)
-        )
-            return;
-
+        const scope = `${slug}\0${viewingRef}`;
+        const fetchKey = `${scope}\0${spatial.join("\0")}`;
+        if (!force && (fetchKey === czmlFetchedKey || fetchKey === czmlInFlightKey)) return;
         const gen = ++czmlLoadGen;
+        // A previous scope is no longer loaded once a new generation starts.
+        czmlFetchedKey = "";
+        czmlController?.abort();
+        const controller = new AbortController();
+        czmlController = controller;
         czmlInFlightKey = fetchKey;
-        // Only show the loading gate on the first fetch — flipping mapLoading
-        // later would destroy/recreate LayerScene (full Cesium remount).
+        if (scope !== czmlScope) {
+            czmlScope = scope;
+            czmlLayerCache.clear();
+            mapLayers = [];
+        }
+        if (force) czmlLayerCache.clear();
+        czmlErrors = [];
         const initial = mapLayers.length === 0;
         if (initial) mapLoading = true;
         const prevByName = new Map(mapLayers.map((l) => [l.name, l]));
-        const results: LayerData[] = [];
         const persistQueue: { name: string; views: LayerView[] }[] = [];
-
-        const viewsPromise = (async () => {
-            try {
-                const vr = await fetch(
-                    withViewingRef(`/api/v1/projects/${encodeURIComponent(slug)}/layer-views`),
-                    { headers: authHeaders() },
-                );
-                if (!vr.ok) return {} as Record<string, LayerView[]>;
-                const doc = (await vr.json()) as {
-                    layers?: Record<string, LayerView[]>;
-                };
-                return doc.layers ?? {};
-            } catch {
-                return {} as Record<string, LayerView[]>;
-            }
-        })();
-
-        // Start every request together, but parse/publish in stable layer
-        // order. This removes an RTT per table without making result ordering
-        // or default colours nondeterministic.
-        const downloads = new Map(
-            spatial.map((name) => [
-                name,
-                fetch(
-                    withViewingRef(
-                        `/api/v1/projects/${encodeURIComponent(slug)}/layers/${encodeURIComponent(name)}/czml`,
-                    ),
-                    { headers: authHeaders() },
-                ).catch(() => null),
-            ]),
-        );
-        const viewsByLayer = await viewsPromise;
+        const prefix = `/api/v1/projects/${encodeURIComponent(slug)}`;
+        const refQS = viewingRef === "main" ? "?ref=main" : "";
+        const options = { headers: authHeaders(), signal: controller.signal };
+        const viewsPromise = fetch(`${prefix}/layer-views${refQS}`, options)
+            .then(async (res) => res.ok ? (await res.json()).layers ?? {} : {})
+            .catch(() => ({})) as Promise<Record<string, LayerView[]>>;
         let publishedFirstLayer = false;
-
-        for (const name of spatial) {
-            if (gen !== czmlLoadGen) return;
+        const failed: string[] = [];
+        const loaded = await mapConcurrent(spatial, 4, async (name): Promise<LayerData | null> => {
+            const cacheKey = `${fetchKey}\0${name}`;
+            const cached = czmlLayerCache.get(cacheKey);
+            if (cached) return cached;
             try {
-                const res = await downloads.get(name);
-                if (res?.ok) {
-                    const packets = await parseNdjsonCzmlAsync(await res.text());
-                    const entityIds = entityIdsFromPackets(packets, name);
-                    if (entityIds.length > 0) {
-                        const prev = prevByName.get(name);
-                        const stored = viewsByLayer[name] ?? prev?.views;
-                        const { views, persist } = ensureExplicitViews(
-                            name,
-                            stored,
-                        );
-                        if (persist) persistQueue.push({ name, views });
-                        const loadedLayer: LayerData = {
-                            name,
-                            packets,
-                            entityIds,
-                            visible: prev?.visible ?? true,
-                            opacity:
-                                prev?.opacity ??
-                                defaultOpacityForPackets(packets),
-                            views,
-                            activeViewId:
-                                prev?.activeViewId &&
-                                views.some((v) => v.id === prev.activeViewId)
-                                    ? prev.activeViewId
-                                    : (views[0]?.id ?? ""),
-                        };
-                        results.push(loadedLayer);
-                        if (initial && !publishedFirstLayer) {
-                            publishedFirstLayer = true;
-                            mapLayers = [loadedLayer];
-                            mapLoading = false;
-                        }
-                    }
+                const res = await fetch(`${prefix}/layers/${encodeURIComponent(name)}/czml${refQS}`, options);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const packets = await parseNdjsonCzmlAsync(await res.text());
+                const viewsByLayer = await viewsPromise;
+                if (gen !== czmlLoadGen) return null;
+                const prev = prevByName.get(name);
+                const { views, persist } = ensureExplicitViews(name, viewsByLayer[name] ?? prev?.views);
+                if (persist) persistQueue.push({ name, views });
+                const layer: LayerData = {
+                    name, packets, entityIds: entityIdsFromPackets(packets, name),
+                    visible: prev?.visible ?? true,
+                    opacity: prev?.opacity ?? defaultOpacityForPackets(packets),
+                    views,
+                    activeViewId: prev?.activeViewId && views.some((v) => v.id === prev.activeViewId)
+                        ? prev.activeViewId : (views[0]?.id ?? ""),
+                };
+                czmlLayerCache.set(cacheKey, layer);
+                if (initial && !publishedFirstLayer && layer.entityIds.length > 0) {
+                    publishedFirstLayer = true;
+                    mapLayers = [layer];
+                    mapLoading = false;
                 }
-            } catch (_) {}
-        }
-
-        if (gen !== czmlLoadGen) {
-            if (czmlInFlightKey === fetchKey) czmlInFlightKey = "";
-            return;
-        }
-        const key = layersContentKey(results);
-        if (force || key !== czmlContentKey || persistQueue.length > 0) {
-            czmlContentKey = key;
-            mapLayers = results;
-        }
-        czmlFetchedKey = fetchKey;
-        czmlInFlightKey = "";
-        if (initial) mapLoading = false;
-        if (canMutate) {
-            for (const item of persistQueue) {
-                persistLayerViews(item.name, item.views);
+                return layer;
+            } catch {
+                if (!controller.signal.aborted) failed.push(name);
+                return prevByName.get(name) ?? null;
             }
-        }
+        });
+        if (gen !== czmlLoadGen) return;
+        // A completed fetch is authoritative even when packet counts match.
+        // A geometry column can exist on an attribute-only table. Keep tables
+        // without renderable entities in the table section, not as empty map layers.
+        mapLayers = loaded.filter((layer): layer is LayerData => layer !== null && layer.entityIds.length > 0);
+        czmlErrors = failed;
+        czmlFetchedKey = failed.length === 0 ? fetchKey : "";
+        czmlInFlightKey = "";
+        mapLoading = false;
+        if (canMutate) for (const item of persistQueue) persistLayerViews(item.name, item.views);
     }
 
     let persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1150,7 +1250,7 @@
 
     async function persistLayerViewsNow(layerName: string, views: LayerView[]) {
         if (!canMutate) return;
-        const slug = $page.params.project;
+        const slug = $page.params.project ?? "";
         try {
             const res = await fetch(
                 `/api/v1/projects/${encodeURIComponent(slug)}/layers/${encodeURIComponent(layerName)}/views`,
@@ -1210,35 +1310,30 @@
         if (changed) mapLayers = [...mapLayers];
     });
 
+    let schemaError = $state("");
+    let schemaScope = "";
+    let schemaGen = 0;
     async function loadSchema() {
+        const slug = $page.params.project ?? "";
+        const scope = `${slug}\0${viewingRef}`;
+        if (scope !== schemaScope) {schemaScope = scope; schemaLoaded = false; schemaLoading = false; schemaTables = []; schemaEdges = [];}
         if (schemaLoaded || schemaLoading) return;
-        const showSpinner = schemaTables.length === 0;
-        if (showSpinner) schemaLoading = true;
+        const gen = ++schemaGen;
+        schemaLoading = true; schemaError = "";
         try {
-            const slug = $page.params.project;
-            const res = await fetch(`/api/v1/projects/${encodeURIComponent(slug)}/schema`, {
-                headers: authHeaders(),
-            });
-            if (res.ok) {
-                const json = await res.json();
-                schemaTables = json.tables ?? [];
-                schemaEdges = json.edges ?? [];
-                schemaLoaded = true;
-            }
-        } catch (_) {
-            if (schemaTables.length === 0) {
-                schemaTables = [];
-                schemaEdges = [];
-            }
-        } finally {
-            schemaLoading = false;
-        }
+            const res = await fetch(withViewingRef(`/api/v1/projects/${encodeURIComponent(slug)}/schema`), {headers: authHeaders()});
+            if (!res.ok) throw new Error("Schema unavailable");
+            const json = await res.json();
+            if (gen !== schemaGen) return;
+            schemaTables = json.tables ?? []; schemaEdges = json.edges ?? []; schemaLoaded = true;
+        } catch { if (gen === schemaGen) {schemaLoaded = false; schemaError = "Could not load the table schema.";} }
+        finally { if (gen === schemaGen) schemaLoading = false; }
     }
 
     async function loadTilesets() {
         tilesetsLoading = true;
         try {
-            const slug = $page.params.project;
+            const slug = $page.params.project ?? "";
             const res = await fetch(
                 withViewingRef(`/api/v1/projects/${encodeURIComponent(slug)}/tilesets`),
                 {
@@ -1274,7 +1369,7 @@
 
     async function loadCoverages() {
         try {
-            const slug = $page.params.project;
+            const slug = $page.params.project ?? "";
             const res = await fetch(
                 withViewingRef(`/api/v1/projects/${encodeURIComponent(slug)}/coverages`),
                 {
@@ -1303,16 +1398,18 @@
     $effect(() => {
         const mode = viewMode;
         const namesKey = tableNamesKey;
+        const projectSlug = $page.params.project;
         const ref = viewingRef;
         // Do NOT depend on mapDim — refetching CZML on 2D/3D toggle remounts
         // datasources and looks like a full reload.
         if (namesKey) {
-            void loadSchema();
+            untrack(() => void loadSchema());
         }
         if (mode === "map" && namesKey) {
-            void loadAllCzml();
+            untrack(() => void loadAllCzml());
         }
         void ref;
+        void projectSlug;
     });
 
     $effect(() => {
@@ -1358,6 +1455,20 @@
 </svelte:head>
 
 <div class="flex h-full min-h-0 flex-col">
+    {#if czmlErrors.length > 0 && viewMode === "map"}
+        <div role="alert" class="flex items-center gap-2 border-b border-border bg-background px-3 py-2 text-sm">
+            <span>Could not load {czmlErrors.join(", ")}.</span>
+            <button type="button" class="underline" onclick={() => loadAllCzml()}>Retry</button>
+        </div>
+    {/if}
+    {#if data?.tablesError}<p role="alert" class="p-3 text-sm">{data.tablesError} <button class="underline" onclick={() => invalidateAll()}>Retry</button></p>{/if}
+                        {#if schemaError || relatedRowsError || mediaLoadError}
+        <div role="alert" class="flex shrink-0 gap-3 px-3 py-2 text-xs text-muted-foreground">
+            {#if schemaError}<span>{schemaError} <button class="underline" onclick={() => loadSchema()}>Retry</button></span>{/if}
+            {#if relatedRowsError}<span>{relatedRowsError} <button class="underline" onclick={() => {relatedRowsError = ""; void loadRelatedRows();}}>Retry</button></span>{/if}
+            {#if mediaLoadError}<span>{mediaLoadError} <button class="underline" onclick={() => loadVisibleMedia(viewMode === "table" ? tablePageRows.map(row => `${tablePageName}:${row.source_id}`) : layerSelection.primaryKey ? [layerSelection.primaryKey] : [])}>Retry</button></span>{/if}
+        </div>
+    {/if}
     <!-- Stable content shell: Cesium stays mounted (lamina-style). Table/schema
          overlay it — never {#if}-destroy the Viewer on tab or CZML load. -->
     <div class="relative min-h-0 flex-1">
@@ -1583,7 +1694,7 @@
                                 {:else}
                                     {@const tableRows = tableRowsWithBuffer(
                                         tabValue,
-                                        rows[tabValue] ?? [],
+                                        tablePageName === tabValue ? tablePageRows : [],
                                     )}
                                     {@const tableCols =
                                         columnsByTable[tabValue] ?? []}
@@ -1629,17 +1740,26 @@
                                             {/if}
                                         </p>
                                     {/if}
-                                    {#if tableRows.length > 0}
+                                    {#if tableRowsLoading}<p role="status" class="py-3 text-sm text-muted-foreground">Loading table…</p>{/if}
+                                    {#if tableRowsError}<p role="alert" class="py-3 text-sm">{tableRowsError} <button class="underline" onclick={() => { lookupRetry++; void loadTablePage(true); }}>Retry</button></p>{/if}
+                                    {#if tableRows.length > 0 || tableTotal > 0 || tableRowsLoading || tableRowsError || tableFilters.length > 0}
                                         <div
                                             bind:this={tableContainer}
                                             class="h-full min-h-0 flex-1"
                                         >
                                         {#if DataTableCmp}
+                                            {#key `${tabValue}:${viewingRef}`}
                                             <DataTableCmp
                                                 columns={tableCols}
                                                 data={tableRows}
                                                 {rowClassName}
                                                 pageIndex={currentPage}
+                                                totalRows={tableTotal}
+                                                loading={tableRowsLoading}
+                                                onPageChange={(page: number) => {currentPage = page;}}
+                                                onSortChange={(sort: {id: string; desc: boolean}[]) => {tableSort = sort; currentPage = 0;}}
+                                                onFiltersChange={(filters: {id: string; value: unknown}[]) => {tableFilters = filters; currentPage = 0;}}
+                                                {loadColumnValues}
                                                 editRowId={tableAttrEdit?.table ===
                                                     tabValue
                                                     ? tableAttrEdit.entityId
@@ -1743,6 +1863,7 @@
                                                           setViewMode("map");
                                                       }}
                                             />
+                                            {/key}
                                         {/if}
                                         </div>
                                     {:else}

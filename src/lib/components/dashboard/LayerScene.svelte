@@ -769,6 +769,7 @@
             layers.length > 0 ||
             coverageRows.length > 0 ||
             schemaTables.length > 0 ||
+            Object.keys(tables).length > 0 ||
             pending > 0,
     );
     /** User-dismissed the empty-project hint (per mount). */
@@ -5630,6 +5631,7 @@
             <InstanceGraph
                 slug={projectSlug}
                 {accessToken}
+                {viewingRef}
                 {schemaTables}
                 {schemaEdges}
                 {rows}

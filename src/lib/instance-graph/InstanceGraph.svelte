@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { untrack } from "svelte";
+ import { readTableRows } from "$lib/project/readTableRows";
+ import { mapConcurrent } from "$lib/async/mapConcurrent";
 	import MaximizeIcon from "@lucide/svelte/icons/maximize-2";
 	import MinimizeIcon from "@lucide/svelte/icons/minimize-2";
 	import MinusIcon from "@lucide/svelte/icons/minus";
@@ -28,6 +30,7 @@
 
 	type Props = {
 		slug: string;
+        viewingRef?: "main" | "develop";
 		accessToken?: string;
 		schemaTables?: SchemaTableKind[];
 		schemaEdges?: SchemaFieldEdge[];
@@ -39,14 +42,29 @@
 
 	let {
 		slug,
+        viewingRef = "develop",
 		accessToken = "",
 		schemaTables = [],
 		schemaEdges = [],
-		rows = {},
+		rows: initialRows = {},
 		fullscreen = false,
 		onToggleFullscreen,
 		onClose,
 	}: Props = $props();
+
+    let loadedRows = $state<Record<string, Record<string, unknown>[]>>({});
+    let rowLoadError = $state("");
+    let rowsLoading = $state(false);
+    const rows = $derived({...initialRows, ...loadedRows});
+    $effect(() => {
+        const project = slug, ref = viewingRef, names = schemaTables.map(t => t.name), token = accessToken;
+        const controller = new AbortController(); loadedRows = {}; rowLoadError = ""; rowsLoading = true;
+        void mapConcurrent(names, 4, async table => {
+            try {const data = await readTableRows({slug: project, table, ref, headers: token ? {Authorization: `Bearer ${token}`} : {}, signal: controller.signal}); if (!controller.signal.aborted) loadedRows = {...loadedRows, [table]: data};}
+            catch {if (!controller.signal.aborted) rowLoadError = "Some graph tables could not be loaded. Close and reopen the graph to retry.";}
+        }).finally(() => {if (!controller.signal.aborted) rowsLoading = false;});
+        return () => controller.abort();
+    });
 
 	let tablePick = $state("");
 	let relationshipPick = $state("");
@@ -280,6 +298,9 @@
 	const railBtn =
 		"flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground";
 </script>
+{#if rowsLoading}<p role="status" class="p-2 text-xs">Loading graph tables…</p>{/if}
+{#if rowLoadError}<p role="alert" class="p-2 text-xs">{rowLoadError}</p>{/if}
+
 
 <div
 	class="surface flex h-full min-h-0 w-full flex-col overflow-hidden border-l border-border shadow-lg"
@@ -416,7 +437,11 @@
 			<p
 				class="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-muted-foreground"
 			>
-				{#if !table}
+				{#if rowsLoading}
+                    Loading graph records…
+                {:else if rowLoadError}
+                    Graph records could not be fully loaded.
+                {:else if !table}
 					Pick a table to plot records.
 				{:else if filterBy && filterValue}
 					No {table} rows with {filterBy} = {filterValue}.

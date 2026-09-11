@@ -781,6 +781,7 @@
 
         {#each sortedLayers as { layer, idx }}
             {@const allEnts = entitiesForLayerSorted(layer)}
+            {@const unmappedCount = Math.max(0, (schemaTables.find(t => t.name === layer.name)?.count ?? 0) - layer.entityIds.length)}
             {@const ents = filterEntities(layer, allEnts)}
             {@const orderedKeys = ents.map((e) => e.key)}
             {@const stripLegend = legendForLayer(layer)}
@@ -788,6 +789,9 @@
                 isLayerExpanded(layer.name) ||
                 layer.name === focusLayerName ||
                 layer.name === styleLayerName}
+            {#if unmappedCount > 0 && isLayerExpanded(layer.name)}
+                <button class="px-2 py-1 text-left text-[10px] text-muted-foreground underline" onclick={() => onOpenTable?.(layer.name)}>{unmappedCount} record(s) not shown on the map · Open table</button>
+            {/if}
             {#if ents.length > 0 || !filterToView}
                 <div
                     class="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {editBuffer.targetLayer ===

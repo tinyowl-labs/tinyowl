@@ -18,6 +18,7 @@
     type Props = {
         columnId: string;
         data: Record<string, unknown>[];
+        valuesPartial?: boolean;
         filterValue: unknown;
         lookups?: LookupOpt[];
         formatValue?: (raw: unknown) => string;
@@ -28,6 +29,7 @@
     let {
         columnId,
         data,
+        valuesPartial = false,
         filterValue,
         lookups,
         formatValue,
@@ -155,6 +157,7 @@
 </script>
 
 <div class="w-72">
+    {#if valuesPartial}<p class="p-2 text-xs text-muted-foreground">Showing the first 10,000 distinct values. Use a condition to match any value in the table.</p>{/if}
     <div class="p-2 pb-0">
         <div
             class="grid grid-cols-2 gap-1 rounded-md bg-muted p-1"

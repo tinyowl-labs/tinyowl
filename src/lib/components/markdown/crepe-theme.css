@@ -1,0 +1,6 @@
+/* Crepe vendor styles in a cascade layer: unlayered app CSS (notably the
+   page's .readme-content render rules) always wins on conflict, so the
+   editor reads exactly like the rendered document. Anything Crepe alone
+   styles (toolbar, slash menu, placeholder, table widgets) still applies. */
+@import "@milkdown/crepe/theme/common/style.css" layer(crepe);
+@import "@milkdown/crepe/theme/frame.css" layer(crepe);
