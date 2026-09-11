@@ -69,6 +69,57 @@ export async function searchTerms(
 	return Array.isArray(data) ? data : [];
 }
 
+function normalizeTermText(value: string): string {
+	return value
+		.normalize("NFKD")
+		.toLocaleLowerCase()
+		.replace(/\p{M}+/gu, "")
+		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		.trim();
+}
+
+/** Gazetteer labels to use when ranking a regional PeriodO definition. */
+export function periodPlaceContexts(
+	place: Pick<PlaceHit, "label" | "cc">,
+): string[] {
+	const values = [place.label.trim()];
+	const cc = place.cc?.trim().toUpperCase();
+	if (cc) {
+		try {
+			const region = new Intl.DisplayNames(["en"], { type: "region" }).of(cc);
+			if (region) values.push(region);
+		} catch {
+			// The primary gazetteer label remains useful on older runtimes.
+		}
+	}
+	return [...new Set(values.filter(Boolean))];
+}
+
+/**
+ * Select an exact PeriodO label only when its regional meaning is unambiguous.
+ * API order remains the tie-breaker after spatial context has been checked.
+ */
+export function selectContextualPeriod(
+	hits: TermHit[],
+	label: string,
+	placeContexts: string[] = [],
+): TermHit | null {
+	const wanted = normalizeTermText(label);
+	if (!wanted) return null;
+	const seen = new Set<string>();
+	const exact = hits.filter((hit) => {
+		if (normalizeTermText(hit.label) !== wanted || seen.has(hit.uri)) return false;
+		seen.add(hit.uri);
+		return true;
+	});
+	const places = placeContexts.map(normalizeTermText).filter(Boolean);
+	if (places.length === 0) return exact.length === 1 ? exact[0]! : null;
+	return exact.find((hit) => {
+		const spatial = normalizeTermText(hit.spatial ?? "");
+		return Boolean(spatial) && places.some((place) => spatial.includes(place) || place.includes(spatial));
+	}) ?? null;
+}
+
 export async function inspectTerm(
 	uri: string,
 	opts?: { signal?: AbortSignal },

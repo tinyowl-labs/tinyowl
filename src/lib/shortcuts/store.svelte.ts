@@ -115,7 +115,12 @@ export async function pushKeyboardToSupabase(): Promise<void> {
 	}
 }
 
-export async function pullKeyboardFromSupabase(): Promise<void> {
+export async function pullKeyboardFromSupabase(knownUser?: { user_metadata?: Record<string, unknown> } | null): Promise<void> {
+    if (knownUser !== undefined) {
+        const remote = knownUser?.user_metadata?.keyboard_preferences;
+        if (remote && typeof remote === "object") applyRemoteKeyboard(remote);
+        return;
+    }
 	try {
 		const { createClient } = await import("$lib/supabase/client");
 		const supabase = createClient();

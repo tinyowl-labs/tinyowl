@@ -4,35 +4,49 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="text-scale" content="scale" />
+        <script id="appearance-preferences" type="application/json">%appearance.preferences%</script>
+        <script>
+            (function () {
+                var p = { accentHue: 220, bgBase: "dark", radius: "pill", surface: "tinted", colorScheme: "system" };
+                var choices = { bgBase: ["pitch", "dark", "dim", "stone", "paper"], radius: ["sharp", "rounded", "pill"], surface: ["none", "tinted", "glass"], colorScheme: ["system", "light", "dark"] };
+                function merge(source, account) {
+                    if (!source || typeof source !== "object") return;
+                    if ((typeof source.accentHue === "number" || (!account && typeof source.accentHue === "string" && source.accentHue !== "")) && isFinite(Number(source.accentHue))) p.accentHue = Math.max(0, Math.min(360, Number(source.accentHue)));
+                    Object.keys(choices).forEach(function (key) {
+                        var value = source[key];
+                        if (key === "surface") {
+                            if (value === "subtle") value = "tinted";
+                            if (choices.surface.indexOf(value) === -1) value = source.blur === "subtle" ? "tinted" : source.blur;
+                        }
+                        if (choices[key].indexOf(value) !== -1) p[key] = value;
+                    });
+                }
+                try {
+                    var local = {};
+                    Object.keys(p).concat(["blur"]).forEach(function (key) { local[key] = localStorage.getItem("redthread:theme:" + key); });
+                    merge(local);
+                } catch (e) {}
+                try { merge(JSON.parse(document.getElementById("appearance-preferences").textContent), true); } catch (e) {}
+                var root = document.documentElement;
+                // Hydration reads the very same resolved preferences, including when storage is blocked.
+                root.dataset.themePreferences = JSON.stringify(p);
+                var dark = p.colorScheme === "dark" || (p.colorScheme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+                var storedDark = ["pitch", "dark", "dim"].indexOf(p.bgBase) !== -1;
+                root.dataset.themeBg = storedDark === dark ? p.bgBase : dark ? "dark" : "paper";
+                root.dataset.radius = p.radius;
+                root.dataset.surface = p.surface;
+                root.classList.toggle("dark", dark);
+                root.style.colorScheme = dark ? "dark" : "light";
+                root.style.setProperty("--accent-hue", String(p.accentHue));
+                try { Object.keys(p).forEach(function (key) { localStorage.setItem("redthread:theme:" + key, String(p[key])); }); } catch (e) {}
+            })();
+        </script>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link
             href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400..700;1,14..32,400..700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&display=swap"
             rel="stylesheet"
         />
-        <script>
-            (function () {
-                try {
-                    var bg = localStorage.getItem("redthread:theme:bgBase") || "dark";
-                    var scheme = localStorage.getItem("redthread:theme:colorScheme") || "system";
-                    var hue = Number(localStorage.getItem("redthread:theme:accentHue") || "220");
-                    if (!isFinite(hue)) hue = 220;
-                    var bgLMap = { pitch: 0.07, dark: 0.12, dim: 0.2, stone: 0.9, paper: 0.97 };
-                    var storedL = bgLMap[bg];
-                    if (storedL == null) storedL = 0.12;
-                    var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-                    var wantDark = scheme === "light" ? false : scheme === "dark" ? true : systemDark;
-                    var bgL = (storedL < 0.5) === wantDark ? storedL : wantDark ? 0.12 : 0.97;
-                    var dark = bgL < 0.5;
-                    var root = document.documentElement;
-                    if (dark) root.classList.add("dark");
-                    else root.classList.remove("dark");
-                    root.style.colorScheme = dark ? "dark" : "light";
-                    root.style.setProperty("--accent-hue", String(hue));
-                    root.style.setProperty("--bg-l", String(bgL));
-                } catch (e) {}
-            })();
-        </script>
         %sveltekit.head%
     </head>
     <body data-sveltekit-preload-data="hover">

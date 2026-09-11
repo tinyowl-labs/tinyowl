@@ -5,7 +5,7 @@
     import {
         applyTheme,
         themePrefs,
-        pullThemeFromSupabase,
+        applyRemoteTheme,
     } from "$lib/stores/theme.svelte";
     import { pullKeyboardFromSupabase } from "$lib/shortcuts";
     import { createClient } from "$lib/supabase/client";
@@ -33,15 +33,34 @@
         });
     });
 
+    // Account changes during client navigation should sync once, not on every data reload.
+    let appearanceUser = $page.data.user?.id;
+    $effect(() => {
+        const user = $page.data.user;
+        if (user?.id && user.id !== appearanceUser) {
+            appearanceUser = user.id;
+            const remote = user.user_metadata?.theme_preferences;
+            if (remote && typeof remote === "object") applyRemoteTheme(remote);
+            void pullKeyboardFromSupabase(user);
+        } else if (!user) appearanceUser = undefined;
+    });
+
     onMount(() => {
-        void pullThemeFromSupabase();
-        void pullKeyboardFromSupabase();
-        // Local Supabase may rotate its signing key during development. Refresh
-        // from the long-lived refresh token before relying on SSR page data so
-        // an otherwise valid browser session is not sent to the API as stale.
-        void createClient().auth.refreshSession().then(({ data, error }) => {
-            if (!error && data.session) void invalidateAll();
-        });
+        const user = $page.data.user;
+        void pullKeyboardFromSupabase(user ?? null);
+        // A verified SSR session is already current. Only recover a browser
+        // session when SSR could not authenticate it (e.g. a rotated dev key).
+        if (user) return;
+        const auth = createClient().auth;
+        void auth.getSession().then(async ({ data }) => {
+            if (!data.session) return;
+            const recovered = await auth.refreshSession();
+            if (recovered.error || !recovered.data.session) return;
+            const remote = recovered.data.user?.user_metadata?.theme_preferences;
+            if (remote && typeof remote === "object") applyRemoteTheme(remote);
+            void pullKeyboardFromSupabase(recovered.data.user);
+            await invalidateAll();
+        }).catch(() => { /* Keep the unauthenticated page usable when recovery fails. */ });
     });
 
     // Shared-element morph for home ↔ /search only. Same-path query updates

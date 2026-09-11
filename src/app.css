@@ -1,54 +1,8 @@
 @import "tailwindcss";
 
+@import "./lib/stores/appearance.css";
+
 @custom-variant dark (&:where(.dark, .dark *));
-
-/*
- * Semantic tokens are plain CSS variables on :root, updated at runtime by
- * applyTheme() from Appearance preferences. @theme inline maps them into
- * Tailwind color/radius utilities (bg-background, rounded-md, text-primary, …).
- */
-:root {
-    --accent-hue: 220;
-    --bg-l: 0.12;
-    --fg-l: 0.95;
-
-    --background: oklch(0.12 0 0);
-    --foreground: oklch(0.95 0 0);
-    --card: oklch(0.145 0 0);
-    --card-foreground: oklch(0.95 0 0);
-    --popover: oklch(0.145 0 0);
-    --popover-foreground: oklch(0.95 0 0);
-    --primary: oklch(0.72 0.08 220);
-    --primary-foreground: oklch(0.98 0 0);
-    --selected: oklch(0.68 0.17 220);
-    --selected-foreground: oklch(0.98 0 0);
-    --secondary: oklch(0.17 0 0);
-    --secondary-foreground: oklch(0.95 0 0);
-    --muted: oklch(0.19 0 0);
-    --muted-foreground: oklch(0.68 0 0);
-    --accent: oklch(0.2 0 0);
-    --accent-foreground: oklch(0.95 0 0);
-    --destructive: oklch(0.55 0.19 25);
-    --destructive-foreground: oklch(0.98 0.01 25);
-    --border: oklch(0.22 0 0);
-    --input: oklch(0.22 0 0);
-    --ring: oklch(0.72 0.08 220);
-
-    --theme-radius-xs: 4px;
-    --theme-radius-sm: 8px;
-    --theme-radius-md: 12px;
-    --theme-radius-lg: 20px;
-    --theme-radius-xl: 32px;
-
-    --card-solid: oklch(0.145 0 0);
-    --surface-fill: color-mix(
-        in oklab,
-        color-mix(in oklab, var(--background) 94%, var(--selected) 6%) 92%,
-        transparent
-    );
-    --surface-filter: none;
-    --surface-sheen: none;
-}
 
 @theme inline {
     --font-sans: "Inter", system-ui, -apple-system, sans-serif;

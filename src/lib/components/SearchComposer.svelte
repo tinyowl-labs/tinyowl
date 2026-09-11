@@ -35,7 +35,9 @@
         searchTerms,
         formatTermYears,
         periodSpatialQuery,
+        periodPlaceContexts,
         pickPeriodPlace,
+        selectContextualPeriod,
         type TermHit,
     } from "$lib/search/terms";
     import {
@@ -1624,6 +1626,19 @@
         return hits.find((hit) => normalizedLabel(label(hit)) === wanted) ?? null;
     }
 
+    function gazetteerQuery(surface: string): string {
+        const normalized = normalizedLabel(surface);
+        const aliases: Record<string, string> = {
+            uk: "United Kingdom",
+            britain: "United Kingdom",
+            "great britain": "United Kingdom",
+            us: "United States",
+            usa: "United States",
+            "united states of america": "United States",
+        };
+        return aliases[normalized] ?? normalized;
+    }
+
     function comparatorOp(raw: string): RowPredicate["op"] | null {
         const value = raw.trim().toLowerCase();
         if (["is", "equals", "equal to", "="].includes(value)) return "=";
@@ -1696,21 +1711,21 @@
                 }
             }
 
-            let nextPeriod: TermHit | null = null;
-            const timeSpan = byType("time")[0];
-            if (timeSpan) {
-                const hits = await searchTerms(timeSpan.surface, { kind: "period", limit: 8 });
-                nextPeriod = exactLabel(timeSpan.surface, hits, (item) => item.label);
-            }
-
             let nextPlace: PlaceHit | null = null;
             const placeSpan = byType("place")[0];
             if (placeSpan) {
-                const hits = await searchMergedPlaces(placeSpan.surface, 10);
-                nextPlace = exactLabel(placeSpan.surface, hits, (item) => item.label);
-                if (!nextPlace && /^(?:uk|us|usa)$/i.test(normalizedLabel(placeSpan.surface))) {
-                    nextPlace = hits.find((item) => item.kind === "country") ?? null;
-                }
+                const query = gazetteerQuery(placeSpan.surface);
+                const hits = await searchMergedPlaces(query, 10);
+                nextPlace = exactLabel(query, hits, (item) => item.label);
+            }
+
+            let nextPeriod: TermHit | null = null;
+            const timeSpan = byType("time")[0];
+            if (timeSpan) {
+                const placeContexts = nextPlace ? periodPlaceContexts(nextPlace) : [];
+                const periodQuery = [timeSpan.surface, ...placeContexts].join(" ");
+                const hits = await searchTerms(periodQuery, { kind: "period", limit: 50 });
+                nextPeriod = selectContextualPeriod(hits, timeSpan.surface, placeContexts);
             }
 
             // Smart terms enriches the query; it never rewrites what the user typed.
@@ -1724,6 +1739,9 @@
 
             const geom = nextPlace?.geom;
             const isCountry = nextPlace?.kind === "country";
+            const replaceSmartPlace = smartQuery && Boolean(placeLabel || countryCode);
+            const replaceSmartPeriod = smartQuery && Boolean(termUri || periodLabel);
+            const replaceSmartConcept = smartQuery && Boolean(conceptUri || subjectLabel);
             const placeBBox = geom?.type === "bbox" && !isCountry
                 ? { west: geom.west, south: geom.south, east: geom.east, north: geom.north }
                 : null;
@@ -1733,18 +1751,22 @@
                 rows: nextRows,
                 keepFocus: false,
                 smart: true,
-                conceptUri: nextConcept ? (nextConcept.hub_uri || nextConcept.uri) : undefined,
-                subjectLabel: nextConcept?.label,
-                termUri: nextPeriod?.uri,
-                periodLabel: nextPeriod?.label,
-                dateFrom: nextPeriod?.start_year,
-                dateTo: nextPeriod?.end_year,
-                countryCode: nextPlace ? (isCountry ? (nextPlace.cc ?? null) : null) : undefined,
-                bbox: placeBBox ?? undefined,
-                lat: geom?.type === "point" ? geom.lat : nextPlace ? null : undefined,
-                lng: geom?.type === "point" ? geom.lng : nextPlace ? null : undefined,
-                radius: geom?.type === "point" ? geom.radius : nextPlace ? null : undefined,
-                placeName: nextPlace?.label,
+                conceptUri: nextConcept
+                    ? (nextConcept.hub_uri || nextConcept.uri)
+                    : replaceSmartConcept ? null : undefined,
+                subjectLabel: nextConcept?.label ?? (replaceSmartConcept ? null : undefined),
+                termUri: nextPeriod?.uri ?? (replaceSmartPeriod ? null : undefined),
+                periodLabel: nextPeriod?.label ?? (replaceSmartPeriod ? null : undefined),
+                dateFrom: nextPeriod?.start_year ?? (replaceSmartPeriod ? null : undefined),
+                dateTo: nextPeriod?.end_year ?? (replaceSmartPeriod ? null : undefined),
+                countryCode: nextPlace
+                    ? (isCountry ? (nextPlace.cc ?? null) : null)
+                    : replaceSmartPlace ? null : undefined,
+                bbox: nextPlace ? placeBBox : replaceSmartPlace ? null : undefined,
+                lat: geom?.type === "point" ? geom.lat : nextPlace || replaceSmartPlace ? null : undefined,
+                lng: geom?.type === "point" ? geom.lng : nextPlace || replaceSmartPlace ? null : undefined,
+                radius: geom?.type === "point" ? geom.radius : nextPlace || replaceSmartPlace ? null : undefined,
+                placeName: nextPlace?.label ?? (replaceSmartPlace ? null : undefined),
             });
         } catch (error) {
             smartError = error instanceof Error ? error.message : "Smart terms is unavailable";

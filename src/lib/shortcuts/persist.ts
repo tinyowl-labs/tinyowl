@@ -62,8 +62,8 @@ export function serializeKeyboardPrefs(
 }
 
 export function readKeyboardFromStorage(): KeyboardPreferences {
-	if (typeof localStorage === "undefined") return { ...DEFAULT_PREFS, chords: {} };
 	try {
+		if (typeof localStorage === "undefined") return { ...DEFAULT_PREFS, chords: {} };
 		const raw = localStorage.getItem(LS_KEY);
 		if (!raw) return { ...DEFAULT_PREFS, chords: {} };
 		return sanitizeKeyboardPrefs(JSON.parse(raw));
@@ -73,8 +73,10 @@ export function readKeyboardFromStorage(): KeyboardPreferences {
 }
 
 export function persistKeyboardToStorage(prefs: KeyboardPreferences): void {
-	if (typeof localStorage === "undefined") return;
-	localStorage.setItem(LS_KEY, JSON.stringify(serializeKeyboardPrefs(prefs)));
+	try {
+		if (typeof localStorage === "undefined") return;
+		localStorage.setItem(LS_KEY, JSON.stringify(serializeKeyboardPrefs(prefs)));
+	} catch { /* Keep keyboard settings usable when browser storage is blocked. */ }
 }
 
 export function chordFor(
