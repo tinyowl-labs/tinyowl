@@ -140,7 +140,6 @@
         tableNames.map((name) => ({
             value: name,
             label: name,
-            count: rows[name]?.length,
             pending: editBuffer.pendingByTable[name] || undefined,
         })),
     );
@@ -201,6 +200,9 @@
     >;
     let tableColumnBuilder = $state<
         typeof import("./tableColumns").buildColumns | null
+    >(null);
+    let tableValueFormat = $state<
+        typeof import("./tableColumns").formatCellValue | null
     >(null);
     let tableLookups = $state<Record<string, Record<string, LookupOpt[]>>>(
         {},
@@ -426,16 +428,16 @@
         void sig;
     });
 
-    let schemaHeldClosed = $state(false);
+    /** Manual sidebar override — null follows the view default (open in schema, closed in table). */
+    let schemaToolsManual = $state<boolean | null>(null);
     const schemaFocusTable = $derived(
         activeTab && activeTab !== SCHEMA_TAB
             ? activeTab
             : (tableNames[0] ?? ""),
     );
     const schemaToolsOpen = $derived(
-        (viewMode === "table" || viewMode === "schema") &&
-            !schemaHeldClosed &&
-            Boolean(activeTab && activeTab !== SCHEMA_TAB),
+        Boolean(activeTab && activeTab !== SCHEMA_TAB) &&
+            (schemaToolsManual ?? viewMode === "schema"),
     );
 
     function selectSchemaTable(name: string) {
@@ -446,7 +448,7 @@
     function toggleSchemaTools(e?: Event) {
         e?.preventDefault();
         e?.stopPropagation();
-        schemaHeldClosed = !schemaHeldClosed;
+        schemaToolsManual = !schemaToolsOpen;
     }
     let schemaTool = $state<"lists" | "links" | "many" | "media" | "edges">(
         "lists",
@@ -570,6 +572,7 @@
         if (!tableColumnBuilder) {
             void import("./tableColumns").then((m) => {
                 tableColumnBuilder = m.buildColumns;
+                tableValueFormat = m.formatCellValue;
             });
         }
         if (canMutate && !FeatureCreateFormCmp) {
@@ -1660,6 +1663,8 @@
                                                 columnLookups={tableLookups[
                                                     tabValue
                                                 ]}
+                                                formatValue={tableValueFormat ??
+                                                    undefined}
                                                 onCommitCell={(
                                                     row: Record<
                                                         string,

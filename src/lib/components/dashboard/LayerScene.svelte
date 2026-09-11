@@ -34,7 +34,9 @@
     import TilesetOffsetPanel from "./TilesetOffsetPanel.svelte";
     import LayerSeriesBar from "./LayerSeriesBar.svelte";
     import PickPager from "./PickPager.svelte";
+    import AttributeTableSheet from "./AttributeTableSheet.svelte";
     import { readInfoboxDocked } from "./infoboxDock";
+    import { readIdentifyAs, writeIdentifyAs, type IdentifyAs } from "./identifyAs";
     import EditModeBar from "./EditModeBar.svelte";
     import FeatureCreateForm from "./FeatureCreateForm.svelte";
     import {
@@ -429,6 +431,30 @@
     let pickCandidates = $state<PickCandidate[]>([]);
     let pickIndex = $state(0);
     let pickOpen = $state(false);
+    let identifyAs = $state<IdentifyAs>(
+        browser ? readIdentifyAs() : "infobox",
+    );
+
+    function setIdentifyAs(mode: IdentifyAs) {
+        identifyAs = mode;
+        writeIdentifyAs(mode);
+        if (mode === "table") {
+            pickOpen = false;
+            return;
+        }
+        if (!layerSelection.primaryKey) return;
+        const { layer, id } = parseSelectionKey(layerSelection.primaryKey);
+        if (!layer || !id) return;
+        const entity = findEntityByKey(layerSelection.primaryKey);
+        if (entity) {
+            selectEntity(entity, layer, id);
+            return;
+        }
+        pickCandidates = [makePickCandidate(null, layer, id)];
+        pickIndex = 0;
+        pickOpen = true;
+    }
+
     let pickPanelX = $state(16);
     let pickPanelY = $state(56);
     let pickFlipBelow = $state(false);
@@ -466,6 +492,23 @@
     let createFormDocked = $state(true);
     let pendingGeometry = $state<GeoJsonGeometry | null>(null);
     const anyFormOpen = $derived(createFormOpen);
+
+    const identifyTableName = $derived(layerSelection.primaryLayer ?? "");
+    const showIdentifyTable = $derived(
+        identifyAs === "table" &&
+            Boolean(identifyTableName) &&
+            layerSelection.size > 0 &&
+            !createFormOpen,
+    );
+    const showIdentifyInfobox = $derived(
+        identifyAs === "infobox" && pickOpen && !createFormOpen,
+    );
+    /** Lift bottom chrome above the identify attribute sheet. */
+    const identifyTableBottom = $derived(
+        showIdentifyTable
+            ? "calc(0.75rem + min(40vh, 22rem) + 0.5rem)"
+            : null,
+    );
     const canFinish = $derived(
         measureEnabled &&
             measureMode !== "point" &&
@@ -541,8 +584,10 @@
             .join(" · "),
     );
 
-    let Cesium: any;
-    let viewer: any;
+    // Assignment-reactive handles for the boot-created globe. $state.raw (not
+    // $state) so the Cesium namespace / Viewer instance are never deep-proxied.
+    let Cesium: any = $state.raw(null);
+    let viewer: any = $state.raw(null);
     let clickHandler: any;
     let postRenderRemover: (() => void) | null = null;
     let renderRequestRemovers: Array<() => void> = [];
@@ -1561,7 +1606,7 @@
             },
         ];
         pickIndex = 0;
-        pickOpen = true;
+        pickOpen = identifyAs === "infobox";
         pickAnchorCartesian = null;
     }
 
@@ -2067,7 +2112,7 @@
             pickCandidates = [makePickCandidate(entity, layerName, entityId)];
             pickIndex = 0;
         }
-        pickOpen = true;
+        pickOpen = identifyAs === "infobox";
         // Only set a world anchor if we don't already have one (e.g. table→map).
         if (!pickAnchorCartesian) {
             setPickAnchorFromEntity(entity);
@@ -2854,7 +2899,7 @@
             const top = candidates[0]!;
             pickCandidates = candidates;
             pickIndex = 0;
-            pickOpen = true;
+            pickOpen = identifyAs === "infobox";
             layerSelection.selectSingle(top.layerName, top.entityId);
             focusSeriesLayer(top.layerName);
             lastFlownKey = selectionFlyKey();
@@ -5004,7 +5049,8 @@
 
     {#if (canWrite && editEnabled && barLayer) || seriesControls.length > 0}
         <div
-            class="pointer-events-auto absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-1"
+            class="pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-1"
+            style:bottom={identifyTableBottom ?? "0.5rem"}
         >
             {#each seriesControls as series (series.name)}
                 <LayerSeriesBar
@@ -5130,7 +5176,8 @@
     />
 
     <div
-        class="absolute bottom-3 left-3 z-20 flex flex-col items-start gap-1"
+        class="absolute left-3 z-20 flex flex-col items-start gap-1"
+        style:bottom={identifyTableBottom ?? "0.75rem"}
     >
         {#if hiddenCount > 0 && !isolating}
             <button
@@ -5178,12 +5225,13 @@
 
     {#if hasFramed && ready && !loading && hasSceneData}
         <div
-            class="pointer-events-none absolute top-3 bottom-3 z-10 flex items-start gap-2 {graphFullscreen
+            class="pointer-events-none absolute top-3 z-10 flex items-start gap-2 {graphFullscreen
                 ? 'hidden'
                 : ''}"
             style:right={showGraph
                 ? `calc(${100 - splitAt}% + 0.75rem)`
                 : "0.75rem"}
+            style:bottom={identifyTableBottom ?? "0.75rem"}
         >
             {#if styleLayerIdx !== null && layers[styleLayerIdx]}
                 {@const styleLayer = layers[styleLayerIdx]}
@@ -5220,7 +5268,9 @@
                 {/key}
             {/if}
             <div
-                class="pointer-events-auto flex min-h-0 max-h-[calc(100%-min(50vh,24rem))] w-72 flex-col gap-2"
+                class="pointer-events-auto flex min-h-0 w-72 flex-col gap-2 {showIdentifyTable
+                    ? 'max-h-full'
+                    : 'max-h-[calc(100%-min(50vh,24rem))]'}"
             >
             <SceneGraphPanel
                 {layers}
@@ -5624,11 +5674,11 @@
     {#if canWrite && createFormOpen}
         <div
             class="pointer-events-auto z-[1100] {createFormDocked
-                ? 'absolute bottom-3 right-3'
+                ? 'absolute right-3'
                 : 'absolute'}"
-            style={!createFormDocked
-                ? `left: ${pickPanelX}px; top: ${pickPanelY}px; transform: translate(-50%, ${pickFlipBelow ? "12px" : "calc(-100% - 12px)"});`
-                : undefined}
+            style={createFormDocked
+                ? `bottom: ${identifyTableBottom ?? "0.75rem"}`
+                : `left: ${pickPanelX}px; top: ${pickPanelY}px; transform: translate(-50%, ${pickFlipBelow ? "12px" : "calc(-100% - 12px)"});`}
             role="dialog"
             aria-label="New feature"
             tabindex="-1"
@@ -5650,7 +5700,7 @@
         </div>
     {/if}
 
-    {#if pickOpen && !createFormOpen}
+    {#if showIdentifyInfobox}
         <PickPager
             open={pickOpen}
             candidates={pickCandidates}
@@ -5682,15 +5732,47 @@
                     onOpenTable?.(table);
                 }
             }}
+            onIdentifyAsTable={() => setIdentifyAs("table")}
             onClose={() => {
                 clearSelection();
             }}
         />
     {/if}
 
+    {#if showIdentifyTable && identifyTableName}
+        <div class="pointer-events-none absolute bottom-3 left-3 right-3 z-[1100]">
+            <AttributeTableSheet
+                table={identifyTableName}
+                rows={rows[identifyTableName] ?? []}
+                columns={tables[identifyTableName] ?? []}
+                selectedKeys={[...layerSelection.selected]}
+                primaryKey={layerSelection.primaryKey}
+                onRowClick={(id, ev) => {
+                    if (ev.shiftKey) {
+                        layerSelection.addSelection(identifyTableName, id);
+                        return;
+                    }
+                    if (ev.ctrlKey || ev.metaKey) {
+                        layerSelection.toggleSelection(identifyTableName, id);
+                        return;
+                    }
+                    layerSelection.selectSingle(identifyTableName, id);
+                }}
+                onRowDblClick={(id) => {
+                    layerSelection.selectSingle(identifyTableName, id);
+                    lastFlownKey = "";
+                    void flyToSelection(true);
+                }}
+                onShowAsInfobox={() => setIdentifyAs("infobox")}
+                onClose={() => clearSelection()}
+            />
+        </div>
+    {/if}
+
     {#if presenceMember && ready && presenceConnected && editLockHint}
         <div
-            class="surface absolute bottom-2 right-2 z-20 max-w-[16rem] rounded px-2 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/60"
+            class="surface absolute right-2 z-20 max-w-[16rem] rounded px-2 py-1 text-[11px] text-muted-foreground shadow-sm ring-1 ring-border/60"
+            style:bottom={identifyTableBottom ?? "0.5rem"}
         >
             {editLockHint}
         </div>

@@ -1,5 +1,6 @@
 import { type ColumnDef, createColumnHelper } from "@tanstack/table-core";
 import { renderComponent } from "$lib/components/ui/data-table/render-helpers.js";
+import { excelFilterFn } from "$lib/components/ui/data-table/excel-filter";
 import MediaCell from "$lib/components/ui/media-cell.svelte";
 import RowNum from "$lib/components/ui/row-num.svelte";
 import type { LookupOpt } from "$lib/project/schemaFields";
@@ -40,7 +41,7 @@ function formatArchDateCell(raw: string): string | null {
     }
 }
 
-function formatCellValue(val: unknown): string {
+export function formatCellValue(val: unknown): string {
     if (val === null || val === undefined) return "—";
     if (typeof val === "object") return JSON.stringify(val);
     const s = String(val);
@@ -79,6 +80,7 @@ export function buildColumns(
         .map((col) =>
             columnHelper.accessor(col, {
                 header: col,
+                filterFn: excelFilterFn,
                 cell: (info) => {
                     const val = info.getValue();
                     const opts = lookupsByColumn?.[col];

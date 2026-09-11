@@ -7,15 +7,25 @@
     import { Button } from "$lib/components/ui/button/index.js";
     import {
         getCoreRowModel,
+        getFilteredRowModel,
         getPaginationRowModel,
         getSortedRowModel,
         type ColumnDef,
+        type ColumnFiltersState,
         type SortingState,
     } from "@tanstack/table-core";
     import { untrack } from "svelte";
     import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
     import ChevronLeft from "@lucide/svelte/icons/chevron-left";
     import ChevronRight from "@lucide/svelte/icons/chevron-right";
+    import FilterIcon from "@lucide/svelte/icons/filter";
+    import * as Popover from "$lib/components/ui/popover/index.js";
+    import ColumnFilterPanel from "$lib/components/ui/data-table/column-filter-panel.svelte";
+    import {
+        excelFilterSummary,
+        isExcelFilterActive,
+        type ExcelColumnFilter,
+    } from "$lib/components/ui/data-table/excel-filter";
     import EditableCell from "$lib/components/ui/data-table/editable-cell.svelte";
     import type { LookupOpt } from "$lib/project/schemaFields";
 
@@ -34,6 +44,10 @@
         columnLookups?: Record<string, LookupOpt[]>;
         onCommitCell?: (row: TData, columnId: string, value: string) => void;
         onCancelEdit?: () => void;
+        /** Tighter chrome for map companion sheet. */
+        compact?: boolean;
+        /** Display-text fallback for raw cell values (e.g. arch-date spans). */
+        formatValue?: (raw: unknown) => string;
     };
 
     type TData = Record<string, unknown>;
@@ -52,9 +66,12 @@
         columnLookups,
         onCommitCell,
         onCancelEdit,
+        compact = false,
+        formatValue,
     }: Props<TData> = $props();
 
     let sorting = $state<SortingState>([]);
+    let columnFilters = $state<ColumnFiltersState>([]);
     let _pageIndex = $state(untrack(() => pageIndex));
     let _pageSize = $state(untrack(() => pageSize));
 
@@ -74,6 +91,9 @@
             get sorting() {
                 return sorting;
             },
+            get columnFilters() {
+                return columnFilters;
+            },
             get pagination() {
                 return { pageIndex: _pageIndex, pageSize: _pageSize };
             },
@@ -81,6 +101,13 @@
         onSortingChange: (updater) => {
             if (typeof updater === "function") sorting = updater(sorting);
             else sorting = updater;
+        },
+        onColumnFiltersChange: (updater) => {
+            if (typeof updater === "function")
+                columnFilters = updater(columnFilters);
+            else columnFilters = updater;
+            _pageIndex = 0;
+            onPageChange?.(0);
         },
         onPaginationChange: (updater) => {
             const next =
@@ -92,6 +119,7 @@
             onPageChange?.(_pageIndex);
         },
         getCoreRowModel: getCoreRowModel(),
+        getFilteredRowModel: getFilteredRowModel(),
         getSortedRowModel: getSortedRowModel(),
         getPaginationRowModel: getPaginationRowModel(),
     });
@@ -106,32 +134,102 @@
                 {#each table.getHeaderGroups() as headerGroup}
                     <Table.Row class="hover:bg-transparent border-border">
                         {#each headerGroup.headers as header}
-                            <Table.Head class="h-9 max-w-56 bg-muted/40 px-3 py-0">
+                            <Table.Head
+                                class="max-w-56 bg-muted/40 px-3 {compact
+                                    ? 'h-auto py-1'
+                                    : 'h-9 py-0'}"
+                            >
                                 {#if header.isPlaceholder}
                                     <!-- empty -->
-                                {:else if header.column.getCanSort()}
-                                    <Button
-                                        variant="ghost"
-                                        class="-ml-3 h-8 truncate data-[state=active]:bg-muted data-[state=active]:text-foreground"
-                                        onclick={header.column.getToggleSortingHandler()}
-                                    >
-                                        <FlexRender
-                                            content={header.column.columnDef
-                                                .header}
-                                            context={header.getContext()}
-                                        />
-                                        <ArrowUpDown
-                                            class="ml-1 size-3.5 shrink-0"
-                                        />
-                                    </Button>
                                 {:else}
-                                    <span class="truncate block">
-                                        <FlexRender
-                                            content={header.column.columnDef
-                                                .header}
-                                            context={header.getContext()}
-                                        />
-                                    </span>
+                                    <div
+                                        class="flex min-w-0 items-center gap-1 {compact
+                                            ? 'py-0.5'
+                                            : 'py-1'}"
+                                    >
+                                        <div class="min-w-0 flex-1">
+                                            {#if header.column.getCanSort()}
+                                                <Button
+                                                    variant="ghost"
+                                                    class="-ml-3 h-7 min-w-0 max-w-full justify-start truncate px-3 data-[state=active]:bg-muted data-[state=active]:text-foreground"
+                                                    onclick={header.column.getToggleSortingHandler()}
+                                                >
+                                                    <FlexRender
+                                                        content={header.column
+                                                            .columnDef.header}
+                                                        context={header.getContext()}
+                                                    />
+                                                    <ArrowUpDown
+                                                        class="ml-1 size-3.5 shrink-0"
+                                                    />
+                                                </Button>
+                                            {:else}
+                                                <span
+                                                    class="block truncate text-xs font-medium"
+                                                >
+                                                    <FlexRender
+                                                        content={header.column
+                                                            .columnDef.header}
+                                                        context={header.getContext()}
+                                                    />
+                                                </span>
+                                            {/if}
+                                        </div>
+                                        {#if header.column.getCanFilter()}
+                                            {@const filterValue =
+                                                header.column.getFilterValue()}
+                                            {@const filterActive =
+                                                isExcelFilterActive(filterValue)}
+                                            {@const filterSummary =
+                                                excelFilterSummary(filterValue)}
+                                            <Popover.Root>
+                                                <Popover.Trigger
+                                                    class="flex size-6 shrink-0 items-center justify-center rounded-md transition-colors {filterActive
+                                                        ? 'bg-secondary text-foreground'
+                                                        : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}"
+                                                    title={filterSummary
+                                                        ? `Filter ${header.column.id}: ${filterSummary}`
+                                                        : `Filter ${header.column.id}`}
+                                                    aria-label="Filter {header
+                                                        .column.id}"
+                                                    onclick={(e) =>
+                                                        e.stopPropagation()}
+                                                >
+                                                    <FilterIcon
+                                                        class="size-3.5"
+                                                    />
+                                                </Popover.Trigger>
+                                                <Popover.Content
+                                                    class="w-auto p-0"
+                                                    align="end"
+                                                    sideOffset={6}
+                                                >
+                                                    <ColumnFilterPanel
+                                                        columnId={header.column
+                                                            .id}
+                                                        data={data}
+                                                        {filterValue}
+                                                        lookups={columnLookups?.[
+                                                            header.column.id
+                                                        ]}
+                                                        {formatValue}
+                                                        onApply={(
+                                                            f:
+                                                                | ExcelColumnFilter
+                                                                | undefined,
+                                                        ) =>
+                                                            header.column.setFilterValue(
+                                                                f,
+                                                            )}
+                                                        onClear={() =>
+                                                            header.column.setFilterValue(
+                                                                undefined,
+                                                            )}
+                                                    />
+                                                </Popover.Content>
+                                            </Popover.Root>
+                                        {/if}
+                                    </div>
                                 {/if}
                             </Table.Head>
                         {/each}
@@ -156,7 +254,9 @@
                             <Table.Cell
                                 class="max-w-56 px-3 {editing
                                     ? 'py-1'
-                                    : 'py-2'}"
+                                    : compact
+                                      ? 'py-1'
+                                      : 'py-2'}"
                             >
                                 {#if editing}
                                     <EditableCell
@@ -199,27 +299,39 @@
         </Table.Root>
     </div>
 
-    <div class="flex shrink-0 items-center justify-between pt-3 pb-0.5">
-        <div class="text-sm text-muted-foreground">
+    <div
+        class="flex shrink-0 items-center justify-between {compact
+            ? 'pt-1.5 pb-0'
+            : 'pt-3 pb-0.5'}"
+    >
+        <div
+            class="text-muted-foreground {compact ? 'text-[10px]' : 'text-sm'}"
+        >
             {table.getFilteredRowModel().rows.length} row(s)
         </div>
         <div class="flex items-center gap-2">
             <Button
                 variant="outline"
                 size="sm"
+                class={compact ? "h-7 px-2 text-[10px]" : ""}
                 disabled={!table.getCanPreviousPage()}
                 onclick={() => table.previousPage()}
             >
                 <ChevronLeft class="size-4" />
                 Previous
             </Button>
-            <span class="text-sm text-muted-foreground">
+            <span
+                class="text-muted-foreground {compact
+                    ? 'text-[10px]'
+                    : 'text-sm'}"
+            >
                 Page {table.getState().pagination.pageIndex + 1} of{" "}
-                {table.getPageCount()}
+                {table.getPageCount() || 1}
             </span>
             <Button
                 variant="outline"
                 size="sm"
+                class={compact ? "h-7 px-2 text-[10px]" : ""}
                 disabled={!table.getCanNextPage()}
                 onclick={() => table.nextPage()}
             >

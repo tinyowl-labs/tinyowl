@@ -6,6 +6,7 @@
     import EllipsisVerticalIcon from "@lucide/svelte/icons/ellipsis-vertical";
     import MapPinIcon from "@lucide/svelte/icons/map-pin";
     import PanelBottomIcon from "@lucide/svelte/icons/panel-bottom";
+    import TableIcon from "@lucide/svelte/icons/table";
     import TrashIcon from "@lucide/svelte/icons/trash-2";
     import XIcon from "@lucide/svelte/icons/x";
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -25,6 +26,7 @@
         readInfoboxDocked,
         writeInfoboxDocked,
     } from "./infoboxDock";
+    import { writeIdentifyAs } from "./identifyAs";
     import {
         fkEdgeForColumn,
         hopsForEntity,
@@ -69,6 +71,8 @@
         mediaByEntity?: Record<string, EntityMedia[]>;
         accessToken?: string;
         onSelectRelated?: (table: string, id: string) => void;
+        /** Prefer table sheet over this infobox (persisted). */
+        onIdentifyAsTable?: () => void;
     };
 
     let {
@@ -92,6 +96,7 @@
         mediaByEntity = {},
         accessToken = "",
         onSelectRelated,
+        onIdentifyAsTable,
     }: Props = $props();
 
     let docked = $state(readInfoboxDocked());
@@ -99,6 +104,11 @@
     function setDocked(next: boolean) {
         docked = next;
         writeInfoboxDocked(next);
+    }
+
+    function preferTable() {
+        writeIdentifyAs("table");
+        onIdentifyAsTable?.();
     }
 
     const layout = $derived(docked ? "docked" : placement);
@@ -424,12 +434,18 @@
                         >
                             {#if docked}
                                 <MapPinIcon class="size-3.5" />
-                                Show on map
+                                Floating
                             {:else}
                                 <PanelBottomIcon class="size-3.5" />
                                 Dock to bottom right
                             {/if}
                         </DropdownMenu.Item>
+                        {#if onIdentifyAsTable}
+                            <DropdownMenu.Item onclick={preferTable}>
+                                <TableIcon class="size-3.5" />
+                                Show as table
+                            </DropdownMenu.Item>
+                        {/if}
                     </DropdownMenu.Content>
                 </DropdownMenu.Root>
                 <button
