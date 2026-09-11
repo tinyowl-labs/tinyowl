@@ -1,3 +1,4 @@
+import { indexedMapRow, type LayerRowIndexes } from "./mapRowIndexes";
 /**
  * Named-view paint + Cesium clustering for LayerScene CZML entities.
  */
@@ -11,7 +12,6 @@ import {
     POINT_OUTLINE_WIDTH,
     resolveFill,
     resolveHeight,
-    rowByEntityId,
 } from "./layerViews";
 import type { LayerData } from "./layerTypes";
 import type { SelectionKind } from "./selectionStyle";
@@ -33,6 +33,7 @@ export type ViewPaintMeta = {
 };
 
 export type LayerViewPaintCtx = {
+    rowIndexes: LayerRowIndexes;
     Cesium: any;
     viewer: any;
     layers: LayerData[];
@@ -242,6 +243,7 @@ function applyLayerClustering(
 export function paintLayerViews(ctx: LayerViewPaintCtx): boolean {
     const { Cesium, viewer, layers, rows } = ctx;
     if (!viewer || !Cesium) return false;
+    const layersByName = new Map(layers.map(layer => [layer.name, layer]));
     const ranges = new Map<
         string,
         {
@@ -267,7 +269,7 @@ export function paintLayerViews(ctx: LayerViewPaintCtx): boolean {
             for (const entity of ds.entities.values) {
                 const meta = ctx.entityMeta.get(entity);
                 if (!meta) continue;
-                const layer = layers.find((l) => l.name === meta.layerName);
+                const layer = layersByName.get(meta.layerName);
                 const view = activeView(layer?.views, layer?.activeViewId ?? "");
                 const op = Math.max(
                     0,
@@ -279,7 +281,7 @@ export function paintLayerViews(ctx: LayerViewPaintCtx): boolean {
                 );
                 const span = ranges.get(meta.layerName);
                 if (view) {
-                    const row = rowByEntityId(rows[meta.layerName], meta.entityId);
+                    const row = indexedMapRow(ctx.rowIndexes, meta.layerName, meta.entityId);
                     const fill = resolveFill(view.style, row, span?.color);
                     const outline = contrastColor(fill);
                     meta.dash = Boolean(view.style.dash);

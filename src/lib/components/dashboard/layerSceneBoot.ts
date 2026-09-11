@@ -109,9 +109,10 @@ export async function createLayerViewer(
         /* ignore */
     }
     viewer.scene.globe.depthTestAgainstTerrain = false;
-    // Photogrammetry / 3D Tiles often don't write opaque depth; without this,
-    // pickPosition falls through to the globe (terrain) under the mesh.
-    viewer.scene.pickTranslucentDepth = true;
+    // Keep Cesium's default depth picking for camera navigation. Translucent
+    // depth picking re-renders during zoom and can replay lighting compute
+    // commands in Cesium 1.138. Mesh snapping uses ray picks independently.
+    viewer.scene.pickTranslucentDepth = false;
     try {
         viewer.screenSpaceEventHandler.removeInputAction(
             Cesium.ScreenSpaceEventType.LEFT_CLICK,

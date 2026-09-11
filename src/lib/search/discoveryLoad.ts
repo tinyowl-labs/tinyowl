@@ -61,11 +61,14 @@ export type DiscoveryPageData = {
   vocabularies: string[];
   projectSlugs: string[];
   semantic: boolean;
+  smart: boolean;
   mediaHash: string | null;
   imageQuery: boolean;
   similarItems: SimilarMediaItem[];
   similarStatus: string;
   projects: SearchProject[];
+  /** Unfiltered accessible catalogue used only for the temporal histogram/domain. */
+  timelineProjects: SearchProject[];
   entityHits: Record<string, SearchEntityHit[]>;
   placeName: string | null;
   /** ISO A2 country polygon (`?cc=`). */

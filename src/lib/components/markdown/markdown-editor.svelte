@@ -15,7 +15,14 @@
     import "./crepe-theme.css";
     import { untrack } from "svelte";
     import { uploadConfig } from "@milkdown/plugin-upload";
+    import { redoCommand, undoCommand } from "@milkdown/plugin-history";
+    import { commandsCtx } from "@milkdown/kit/core";
+    import type { Ctx } from "@milkdown/kit/ctx";
     import { Fragment } from "prosemirror-model";
+
+    /** Lucide-style stroke icons (Crepe ships no undo/redo). */
+    const UNDO_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11"/></svg>`;
+    const REDO_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>`;
 
     type Props = {
         value?: string;
@@ -162,6 +169,33 @@
                 [CrepeFeature.Placeholder]: {
                     text: placeholder,
                     mode: "doc",
+                },
+                // Appended after the default groups: keyboard (Mod-z /
+                // Mod-y / Shift-Mod-z) already works via the history
+                // keymap; these buttons expose the same commands.
+                [CrepeFeature.TopBar]: {
+                    buildTopBar: (builder) => {
+                        builder
+                            .addGroup("history", "History")
+                            .addItem("undo", {
+                                icon: UNDO_ICON,
+                                active: () => false,
+                                onRun: (ctx: Ctx) => {
+                                    ctx.get(commandsCtx).call(
+                                        undoCommand.key,
+                                    );
+                                },
+                            })
+                            .addItem("redo", {
+                                icon: REDO_ICON,
+                                active: () => false,
+                                onRun: (ctx: Ctx) => {
+                                    ctx.get(commandsCtx).call(
+                                        redoCommand.key,
+                                    );
+                                },
+                            });
+                    },
                 },
             },
         });
@@ -370,17 +404,37 @@
         color: var(--foreground);
     }
     /* Icon paths carry an explicit dim fill — repaint them bright, with a
-       vivid active state. */
-    .markdown-editor :global(.milkdown .milkdown-top-bar .top-bar-item svg),
+       vivid active state. Stroke icons (undo/redo) opt out via fill="none"
+       and inherit the button color instead. */
+    .markdown-editor
+        :global(
+            .milkdown
+                .milkdown-top-bar
+                .top-bar-item
+                svg:not([fill="none"])
+        ),
     .markdown-editor
         :global(.milkdown .milkdown-top-bar .top-bar-heading-button svg) {
         color: var(--foreground);
         fill: var(--foreground);
     }
     .markdown-editor
-        :global(.milkdown .milkdown-top-bar .top-bar-item.active svg) {
+        :global(
+            .milkdown
+                .milkdown-top-bar
+                .top-bar-item.active
+                svg:not([fill="none"])
+        ) {
         color: var(--selected);
         fill: var(--selected);
+    }
+    /* Stroke icons opt out of fills entirely (a CSS fill would override
+       their fill="none" presentation attribute and blob them) and take
+       the bright button color for their currentColor strokes. */
+    .markdown-editor
+        :global(.milkdown .milkdown-top-bar .top-bar-item svg[fill="none"]) {
+        fill: none;
+        color: var(--foreground);
     }
     .markdown-editor
         :global(.milkdown .milkdown-top-bar .top-bar-item:hover) {
@@ -398,16 +452,19 @@
         :global(.milkdown .milkdown-top-bar .top-bar-heading-selector) {
         padding: 0 2px;
     }
-    /* Narrow columns: wrap so every tool stays reachable (and dropdowns
-       keep working) instead of clipping. */
+    /* Narrow columns: one scrollable line so every tool stays reachable.
+       y is pinned to clip (not visible: that would compute to auto next
+       to an x of auto and allow a vertical scrollbar — there must never
+       be one). Heading dropdowns can clip here; headings remain available
+       via the slash menu and `#` input rule. */
     .markdown-editor {
         container-type: inline-size;
     }
-    @container (max-width: 640px) {
-        .markdown-editor
-            :global(.milkdown .milkdown-top-bar .top-bar-inner) {
-            flex-wrap: wrap;
-            width: 100%;
+    @container (max-width: 700px) {
+        .markdown-editor[data-settled="true"]
+            :global(.milkdown .milkdown-top-bar) {
+            overflow-x: auto;
+            overflow-y: clip;
         }
     }
     /* ProseMirror/Crepe inject non-content nodes (empty widget anchor,

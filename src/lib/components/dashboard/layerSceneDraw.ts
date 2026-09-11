@@ -1,3 +1,4 @@
+import type { MapCommitChange } from "./mapRefresh";
 /**
  * Draw / vertex-edit session for LayerScene: draft paint, handler, vertex session.
  * Shared globe picks (mesh/terrain/ellipsoid) stay in the component.
@@ -118,7 +119,7 @@ export type LayerSceneDrawCtx = {
     setCommitDoneId: (id: string) => void;
     setCommitDoneStatus: (status: "committed" | "conflicted" | "parked" | "") => void;
     setDevelopCommit: (id: string) => void;
-    onCommitted?: () => void;
+    onCommitted?: (change?: MapCommitChange) => void;
     restoreCamera?: () => void;
 };
 
@@ -563,6 +564,8 @@ export async function commitEditBuffer(ctx: LayerSceneDrawCtx) {
     ctx.setCommitError("");
     ctx.setCommitDoneId("");
     ctx.setCommitDoneStatus("");
+    const changedTables = [...new Set([...editBuffer.entries.map(e => e.table), ...editBuffer.schemaAdds.map(e => e.table)])];
+    const baseCommit = ctx.getSessionBaseCommit();
     try {
         const res = await submitEditBuffer(
             ctx.projectSlug,
@@ -595,7 +598,7 @@ export async function commitEditBuffer(ctx: LayerSceneDrawCtx) {
         }
         ctx.setCommitDoneStatus("committed");
         if (res.develop) ctx.setDevelopCommit(res.develop);
-        ctx.onCommitted?.();
+        ctx.onCommitted?.({ tables: changedTables, baseCommit, commitId: res.develop || res.commit_id });
     } catch (e) {
         ctx.setCommitError(e instanceof Error ? e.message : "Commit failed");
     } finally {

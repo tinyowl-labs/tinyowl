@@ -1,4 +1,6 @@
 <script lang="ts">
+    import type { MapCommitChange } from "./mapRefresh";
+    import { indexMapRows, indexedMapRow } from "./mapRowIndexes";
     import { browser } from "$app/environment";
     import { page } from "$app/stores";
     import { env as publicEnv } from "$env/dynamic/public";
@@ -42,7 +44,7 @@
     import {
         applyEntitySelectionStyle as paintEntitySelection,
     } from "./selectionStyle";
-    import { computeInViewKeys } from "./layerSceneInView";
+    import { computeInViewKeys, InViewBoundsCache, InViewCameraState } from "./layerSceneInView";
     import { paintLayerViews } from "./layerSceneViews";
     import { createLayerViewer } from "./layerSceneBoot";
     import { destroyCesiumViewer } from "$lib/components/cesiumBoot";
@@ -325,7 +327,7 @@
         /** Bump after a develop commit so CZML datasources reload. */
         dataEpoch?: number;
         /** Called after a successful develop commit (parent refetches layers). */
-        onCommitted?: () => void;
+        onCommitted?: (change?: MapCommitChange) => void;
         schemaTables?: {
             name: string;
             label?: string;
@@ -675,6 +677,7 @@
     );
 
     function bumpRender() {
+        inViewDirty = true;
         try {
             viewer?.scene?.requestRender?.();
         } catch {
@@ -1008,6 +1011,7 @@
     }
 
     function destroyLayerSource(name: string) {
+        inViewDirty = true;
         const ds = layerSources.get(name);
         if (!ds) return;
         ds.__echidnaDisposed = true;
@@ -1091,6 +1095,7 @@
     }
 
     function applyHiddenVisibility() {
+        inViewDirty = true;
         const bufHide = new Set<string>();
         if (bufferOverlayVisible) {
             for (const e of editBuffer.entries) {
@@ -1159,7 +1164,7 @@
         const seriesField = view?.style.seriesField;
         if (!view?.filter?.field && !seriesField) return false;
         const tableRows = rows[layerName];
-        const row = rowByEntityId(tableRows, entityId);
+        const row = indexedMapRow(rowIndexes, layerName, entityId);
         if (!row) {
             const buf = editBuffer.entries.find(
                 (e) => e.table === layerName && e.entityId === entityId,
@@ -1170,7 +1175,7 @@
             return true;
         }
         if (seriesField) {
-            const kind = resolveSeriesKind(view.style, tableRows);
+            const kind = seriesKinds.get(layerName) ?? "category";
             const step = seriesStepByLayer[layerName] ?? SERIES_ALL;
             if (!rowMatchesSeries(row, seriesField, kind, step)) return true;
         }
@@ -1972,8 +1977,13 @@
     }
 
     /** Keys / model hashes whose geometry intersects the current camera frustum. */
+    const inViewBounds = new InViewBoundsCache(() => { inViewDirty = true; });
+    const inViewCamera = new InViewCameraState();
+    let inViewDirty = true;
     function computeInView(): void {
+        inViewDirty = false;
         const next = computeInViewKeys({
+            bounds: inViewBounds,
             Cesium,
             viewer,
             entityDataSources,
@@ -2531,6 +2541,7 @@
     }
 
     function indexCzmlEntities(ds: any, layerName: string) {
+        inViewDirty = true;
         for (const entity of ds.entities.values) {
             const packetId = String(entity.id ?? "");
             if (!packetId || packetId === "document") continue;
@@ -2547,6 +2558,7 @@
     }
 
     function indexOverlayEntities(ds: any) {
+        inViewDirty = true;
         if (!ds) return;
         for (const entity of ds.entities.values) {
             const info = overlayEntityInfo(entity);
@@ -2937,7 +2949,10 @@
 
         postRenderRemover = viewer.scene.postRender.addEventListener(() => {
             if (pickOpen && pickAnchorCartesian) updatePickPanelFromAnchor();
-            if (filterToView) scheduleInViewUpdate();
+            if (filterToView) {
+                const moved = inViewCamera.changed(viewer);
+                if (moved || inViewDirty || inViewBounds.hasDynamic) scheduleInViewUpdate();
+            }
             const now =
                 typeof performance !== "undefined" ? performance.now() : Date.now();
             if (
@@ -2977,6 +2992,7 @@
     }
 
     async function syncModels(fly = false) {
+        inViewDirty = true;
         if (!viewer || !Cesium) return;
         const gen = ++modelLoadGen;
         error = "";
@@ -3164,7 +3180,21 @@
         });
     }
 
+    let layerSyncRunning = false;
+    let layerSyncRequested = false;
     async function syncLayers() {
+        layerSyncRequested = true;
+        if (layerSyncRunning) return;
+        layerSyncRunning = true;
+        try {
+            while (layerSyncRequested) {
+                layerSyncRequested = false;
+                await syncLayersPass();
+            }
+        } finally { layerSyncRunning = false; }
+    }
+
+    async function syncLayersPass() {
         if (!viewer || !Cesium) return;
         const gen = ++layerLoadGen;
         const byName = new Map(layers.map((l) => [l.name, l]));
@@ -3180,10 +3210,13 @@
             const packetCount = layer.packets?.length ?? 0;
             const needsLoad =
                 !ds ||
-                ds.__epoch !== dataEpoch ||
-                (ds.__packetCount !== undefined &&
-                    ds.__packetCount !== packetCount);
+                ds.__packets !== layer.packets;
 
+            if (!layer.visible) {
+                if (ds && needsLoad) destroyLayerSource(layer.name);
+                else if (ds) ds.show = false;
+                continue;
+            }
             if (needsLoad && packetCount > 0) {
                 if (ds) destroyLayerSource(layer.name);
                 try {
@@ -3195,6 +3228,7 @@
                         viewer,
                         layer.packets,
                         layer.name,
+                        () => !viewer || viewer.isDestroyed?.() || !layers.some(current => current.name === layer.name && current.visible && current.packets === layer.packets),
                     );
                     if (gen !== layerLoadGen) {
                         ds.__echidnaDisposed = true;
@@ -3202,7 +3236,7 @@
                         return;
                     }
                     ds.__packetCount = packetCount;
-                    ds.__epoch = dataEpoch;
+                    ds.__packets = layer.packets;
                     ds.show = layer.visible;
                     indexCzmlEntities(ds, layer.name);
                     ds.__echidnaOnTerrainHeights = () => {
@@ -3229,7 +3263,7 @@
                     }
                     layerSources.set(layer.name, ds);
                 } catch (e) {
-                    console.warn("layer", layer.name, e);
+                    if (!(e instanceof DOMException && e.name === "AbortError")) console.warn("layer", layer.name, e);
                 }
             } else if (ds) {
                 ds.show = layer.visible;
@@ -3244,7 +3278,9 @@
     }
 
     function applyLayerViews() {
+        inViewDirty = true;
         const painted = paintLayerViews({
+            rowIndexes,
             Cesium,
             viewer,
             layers,
@@ -3268,8 +3304,6 @@
         const ds = layerSources.get(layer.name);
         if (ds) {
             ds.show = layer.visible;
-        } else if (layer.visible) {
-            void syncLayers();
         }
         applyHiddenVisibility();
     }
@@ -3357,10 +3391,7 @@
             "|" +
             rasters.map((c) => (c.bbox_wgs84 ?? []).join(",")).join(";"),
     );
-    let layerContentKey = $derived(
-        `${dataEpoch}|` +
-            layers.map((l) => `${l.name}:${l.packets?.length ?? 0}`).join("|"),
-    );
+    const layerContentKey = $derived(layers.map(layer => ({ name: layer.name, packets: layer.packets, visible: layer.visible })));
     let viewApplyKey = $derived(
         layers
             .map(
@@ -3369,6 +3400,11 @@
             )
             .join("|"),
     );
+    const rowIndexes = $derived(indexMapRows(rows));
+    const seriesKinds = $derived(new Map(layers.map(layer => {
+        const view = activeView(layer.views, layer.activeViewId ?? "");
+        return [layer.name, resolveSeriesKind(view?.style, rows[layer.name])] as const;
+    })));
     let seriesFocusName = $derived(
         focusedLayerName ||
             editBuffer.targetLayer ||
@@ -4348,6 +4384,8 @@
     });
 
     onDestroy(() => {
+        layerLoadGen++;
+        layerSyncRequested = false;
         teardownDrawHandler();
         teardownMeasureHandler();
         schemeHandle?.dispose();
@@ -5274,6 +5312,7 @@
                     : 'max-h-[calc(100%-min(50vh,24rem))]'}"
             >
             <SceneGraphPanel
+                {rowIndexes}
                 {layers}
                 {models}
                 coverages={coverageRows}

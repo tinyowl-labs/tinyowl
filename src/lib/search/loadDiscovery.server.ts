@@ -78,6 +78,20 @@ function mergeProjects(
   return out;
 }
 
+function mergeSearchProjectSets(...sets: SearchProject[][]): SearchProject[] {
+  const seen = new Set<string>();
+  const out: SearchProject[] = [];
+  for (const rows of sets) {
+    for (const row of rows) {
+      const key = row.slug.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+    }
+  }
+  return out;
+}
+
 function asNum(v: unknown): number | null {
   if (v == null || v === "") return null;
   const n = Number(v);
@@ -123,6 +137,7 @@ export async function loadDiscoverySearch(
   const accessToken = (await args.locals.getAccessToken()) ?? null;
   const headers: Record<string, string> = {};
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+  const timelineProjectsPromise = loadCentroids(args.fetch, headers).then((rows) => rows.map(asSearchProject));
 
   let projects: SearchProject[] = [];
   let similarItems: SimilarMediaItem[] = [];
@@ -231,13 +246,39 @@ export async function loadDiscoverySearch(
     if (parsed.matchNarrower) params.append("match", "narrower");
     for (const p of parsed.projects) params.append("project", p);
 
-    try {
-      const res = await args.fetch(
-        `${TINYOWL_CORE_URL}/api/v1/search?${params.toString()}`,
-        { headers },
-      );
-      if (res.ok) projects = (await res.json()) ?? [];
-    } catch (_) {}
+    const fetchProjects = async (query: URLSearchParams): Promise<SearchProject[]> => {
+      try {
+        const res = await args.fetch(
+          `${TINYOWL_CORE_URL}/api/v1/search?${query.toString()}`,
+          { headers },
+        );
+        if (!res.ok) return [];
+        const rows = await res.json();
+        return Array.isArray(rows) ? rows : [];
+      } catch {
+        return [];
+      }
+    };
+
+    if (parsed.smart && parsed.q && parsed.conceptUri && !scoped) {
+      // Smart terms broadens instead of turning the controlled match into an
+      // accidental AND. Exact mapped results lead; raw/semantic text matches
+      // follow, with duplicates removed in that order.
+      const mapped = new URLSearchParams(params);
+      mapped.delete("q");
+      mapped.delete("semantic");
+      const raw = new URLSearchParams(params);
+      raw.delete("vocab");
+      for (const vocab of parsed.vocabularies) raw.append("vocab", vocab);
+      raw.delete("match");
+      const [mappedRows, rawRows] = await Promise.all([
+        fetchProjects(mapped),
+        fetchProjects(raw),
+      ]);
+      projects = mergeSearchProjectSets(mappedRows, rawRows);
+    } else {
+      projects = await fetchProjects(params);
+    }
   }
 
   const entityHits: Record<string, SearchEntityHit[]> = {};
@@ -264,6 +305,7 @@ export async function loadDiscoverySearch(
   }
 
   projects = mergeProjects(projects, relatedProjects);
+  const timelineProjects = await timelineProjectsPromise;
 
   return {
     query: parsed.q,
@@ -277,11 +319,13 @@ export async function loadDiscoverySearch(
     vocabularies: parsed.vocabularies,
     projectSlugs: parsed.projects,
     semantic: parsed.semantic,
+    smart: Boolean(parsed.smart),
     mediaHash: parsed.mediaHash,
     imageQuery: parsed.imageQuery,
     similarItems,
     similarStatus,
     projects,
+    timelineProjects,
     entityHits,
     placeName: parsed.placeName,
     countryCode: parsed.countryCode,
@@ -388,11 +432,13 @@ export async function loadHomeDiscovery(args: LoadArgs): Promise<DiscoveryPageDa
     vocabularies: [],
     projectSlugs: [],
     semantic: true,
+    smart: false,
     mediaHash: null,
     imageQuery: false,
     similarItems: [],
     similarStatus: "",
     projects,
+    timelineProjects: projects,
     entityHits: {},
     placeName: null,
     countryCode: null,

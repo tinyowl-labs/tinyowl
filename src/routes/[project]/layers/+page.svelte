@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { canRefreshChangedLayers, type MapCommitChange } from "$lib/components/dashboard/mapRefresh";
     import { mapConcurrent } from "$lib/async/mapConcurrent";
     import LayersIcon from "@lucide/svelte/icons/layers";
     import TableIcon from "@lucide/svelte/icons/table";
@@ -20,7 +21,7 @@
     } from "$lib/components/dashboard/layerViews";
     import {
         entityIdsFromPackets,
-        parseNdjsonCzmlAsync,
+        parseCzmlResponse,
         rowsFromPackets,
     } from "$lib/components/dashboard/czmlLoad";
     import type {
@@ -177,7 +178,7 @@
         for (const layer of mapLayers) {
             if (!layer.packets?.length) continue;
             if ((out[layer.name]?.length ?? 0) > 0) continue;
-            const fromCzml = rowsFromPackets(layer.packets, layer.name);
+            const fromCzml = layer.rows ?? rowsFromPackets(layer.packets, layer.name);
             if (fromCzml.length) out[layer.name] = fromCzml;
         }
         if (tablePageScope === `${$page.params.project ?? ""}\0${viewingRef}` && tablePageName && !(out[tablePageName]?.length)) out[tablePageName] = tablePageRows;
@@ -1109,6 +1110,7 @@
     let czmlErrors = $state<string[]>([]);
     let czmlController: AbortController | null = null;
     let czmlScope = "";
+    let czmlCommit = "";
     const czmlLayerCache = new Map<string, LayerData>();
     /** Last completed CZML fetch identity — skip duplicate $effect runs. */
     let czmlFetchedKey = "";
@@ -1153,85 +1155,124 @@
         return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     }
 
-    async function loadAllCzml(force = false) {
+    async function loadAllCzml(force = false, change?: MapCommitChange) {
         const slug = $page.params.project ?? "";
         const names = untrack(() => tableNames);
         const colsByTable = untrack(() => tables);
-        const spatial = names.filter((name) =>
-            (colsByTable[name] ?? []).some((c) => /^_?geom/i.test(c)),
-        );
-        const scope = `${slug}\0${viewingRef}`;
+        const spatial = names.filter(name => (colsByTable[name] ?? []).some(c => /^_?geom/i.test(c)));
+        const ref = viewingRef;
+        const scope = `${slug}\0${ref}`;
         const fetchKey = `${scope}\0${spatial.join("\0")}`;
         if (!force && (fetchKey === czmlFetchedKey || fetchKey === czmlInFlightKey)) return;
         const gen = ++czmlLoadGen;
-        // A previous scope is no longer loaded once a new generation starts.
         czmlFetchedKey = "";
         czmlController?.abort();
         const controller = new AbortController();
         czmlController = controller;
         czmlInFlightKey = fetchKey;
         if (scope !== czmlScope) {
-            czmlScope = scope;
-            czmlLayerCache.clear();
-            mapLayers = [];
+            czmlScope = scope; czmlCommit = "";
+            czmlLayerCache.clear(); mapLayers = [];
         }
-        if (force) czmlLayerCache.clear();
         czmlErrors = [];
-        const initial = mapLayers.length === 0;
-        if (initial) mapLoading = true;
-        const prevByName = new Map(mapLayers.map((l) => [l.name, l]));
-        const persistQueue: { name: string; views: LayerView[] }[] = [];
+        if (!mapLayers.length) mapLoading = true;
+        const prevByName = new Map(mapLayers.map(layer => [layer.name, layer]));
         const prefix = `/api/v1/projects/${encodeURIComponent(slug)}`;
-        const refQS = viewingRef === "main" ? "?ref=main" : "";
+        const refQS = ref === "main" ? "?ref=main" : "";
         const options = { headers: authHeaders(), signal: controller.signal };
-        const viewsPromise = fetch(`${prefix}/layer-views${refQS}`, options)
-            .then(async (res) => res.ok ? (await res.json()).layers ?? {} : {})
-            .catch(() => ({})) as Promise<Record<string, LayerView[]>>;
-        let publishedFirstLayer = false;
-        const failed: string[] = [];
-        const loaded = await mapConcurrent(spatial, 4, async (name): Promise<LayerData | null> => {
-            const cacheKey = `${fetchKey}\0${name}`;
-            const cached = czmlLayerCache.get(cacheKey);
-            if (cached) return cached;
+        const readCommit = async () => {
             try {
-                const res = await fetch(`${prefix}/layers/${encodeURIComponent(name)}/czml${refQS}`, options);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const packets = await parseNdjsonCzmlAsync(await res.text());
-                const viewsByLayer = await viewsPromise;
-                if (gen !== czmlLoadGen) return null;
-                const prev = prevByName.get(name);
-                const { views, persist } = ensureExplicitViews(name, viewsByLayer[name] ?? prev?.views);
-                if (persist) persistQueue.push({ name, views });
-                const layer: LayerData = {
-                    name, packets, entityIds: entityIdsFromPackets(packets, name),
-                    visible: prev?.visible ?? true,
-                    opacity: prev?.opacity ?? defaultOpacityForPackets(packets),
-                    views,
-                    activeViewId: prev?.activeViewId && views.some((v) => v.id === prev.activeViewId)
-                        ? prev.activeViewId : (views[0]?.id ?? ""),
-                };
-                czmlLayerCache.set(cacheKey, layer);
-                if (initial && !publishedFirstLayer && layer.entityIds.length > 0) {
-                    publishedFirstLayer = true;
-                    mapLayers = [layer];
-                    mapLoading = false;
-                }
-                return layer;
-            } catch {
-                if (!controller.signal.aborted) failed.push(name);
-                return prevByName.get(name) ?? null;
-            }
-        });
+                const response = await fetch(`${prefix}/refs${refQS}`, options);
+                if (!response.ok) return "";
+                return String((await response.json())[ref] ?? "");
+            } catch { return ""; }
+        };
+        const viewsPromise = fetch(`${prefix}/layer-views${refQS}`, options)
+            .then(async res => res.ok ? (await res.json()).layers ?? {} : {})
+            .catch(() => ({})) as Promise<Record<string, LayerView[]>>;
+        const before = await readCommit();
         if (gen !== czmlLoadGen) return;
-        // A completed fetch is authoritative even when packet counts match.
-        // A geometry column can exist on an attribute-only table. Keep tables
-        // without renderable entities in the table section, not as empty map layers.
-        mapLayers = loaded.filter((layer): layer is LayerData => layer !== null && layer.entityIds.length > 0);
-        czmlErrors = failed;
-        czmlFetchedKey = failed.length === 0 ? fetchKey : "";
-        czmlInFlightKey = "";
-        mapLoading = false;
-        if (canMutate) for (const item of persistQueue) persistLayerViews(item.name, item.views);
+        let changedTables: Set<string> | null = null;
+        if (force && ref === "develop" && canRefreshChangedLayers(change, czmlCommit, before)) {
+            try {
+                // Include trigger/cascade changes recorded by the server, not just
+                // the tables named by the edit buffer. Unknown summaries refresh all.
+                const response = await fetch(`${prefix}/commits/${encodeURIComponent(change!.commitId)}/changes`, options);
+                if (response.ok) {
+                    const summary = (await response.json()).summary?.geodiff_summary;
+                    if (Array.isArray(summary) && summary.every(row => typeof row.table === "string")) {
+                        changedTables = new Set([...change!.tables, ...summary.map(row => row.table)]);
+                    }
+                }
+            } catch { /* A full refresh remains safe when history is unavailable. */ }
+        }
+        if (gen !== czmlLoadGen) return;
+        if (force) {
+            if (changedTables) for (const name of changedTables) czmlLayerCache.delete(`${scope}\0${name}`);
+            else czmlLayerCache.clear();
+        }
+        for (const key of czmlLayerCache.keys()) {
+            if (!spatial.some(name => key === `${scope}\0${name}`)) czmlLayerCache.delete(key);
+        }
+        const persistQueue: {name: string; views: LayerView[]}[] = [];
+        const failed: string[] = [];
+        const completed = new Map<string, LayerData>();
+        // Keep previously visible layers until their replacements are complete.
+        // New completed layers are published at most once per 32 ms batch.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const publish = () => {
+            timer = undefined;
+            if (gen !== czmlLoadGen) return;
+            mapLayers = spatial.map(name => completed.get(name) ?? prevByName.get(name))
+                .filter((layer): layer is LayerData => Boolean(layer && layer.entityIds.length > 0));
+            if (mapLayers.length) mapLoading = false;
+        };
+        const schedule = () => { if (timer === undefined) timer = setTimeout(publish, 32); };
+        try {
+            await mapConcurrent(spatial, 4, async name => {
+                const key = `${scope}\0${name}`;
+                const cached = czmlLayerCache.get(key);
+                if (cached) {
+                    const prev = prevByName.get(name);
+                    completed.set(name, prev ? { ...cached, visible: prev.visible, opacity: prev.opacity, views: prev.views, activeViewId: prev.activeViewId } : cached);
+                    schedule(); return;
+                }
+                try {
+                    const response = await fetch(`${prefix}/layers/${encodeURIComponent(name)}/czml${refQS}`, options);
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const packets = await parseCzmlResponse(response, controller.signal);
+                    const viewsByLayer = await viewsPromise;
+                    if (gen !== czmlLoadGen) return;
+                    const prev = prevByName.get(name);
+                    const { views, persist } = ensureExplicitViews(name, viewsByLayer[name] ?? prev?.views);
+                    if (persist) persistQueue.push({ name, views });
+                    const layer: LayerData = {
+                        name, packets, rows: rowsFromPackets(packets, name), entityIds: entityIdsFromPackets(packets, name),
+                        visible: prev?.visible ?? true,
+                        opacity: prev?.opacity ?? defaultOpacityForPackets(packets), views,
+                        activeViewId: prev?.activeViewId && views.some(view => view.id === prev.activeViewId)
+                            ? prev.activeViewId : (views[0]?.id ?? ""),
+                    };
+                    czmlLayerCache.set(key, layer); completed.set(name, layer); schedule();
+                } catch {
+                    if (!controller.signal.aborted) failed.push(name);
+                }
+            });
+            if (gen !== czmlLoadGen) return;
+            const after = await readCommit();
+            if (gen !== czmlLoadGen) return;
+            if (before && after && before !== after) {
+                czmlCommit = ""; czmlLayerCache.clear();
+                czmlErrors = ["Project changed while loading; retry to refresh all layers"];
+            } else {
+                czmlCommit = failed.length ? "" : before && before === after ? after : "";
+                czmlErrors = failed;
+                czmlFetchedKey = failed.length === 0 ? fetchKey : "";
+            }
+            publish();
+            czmlInFlightKey = ""; mapLoading = false;
+            if (canMutate) for (const item of persistQueue) persistLayerViews(item.name, item.views);
+        } finally { if (timer !== undefined) clearTimeout(timer); }
     }
 
     let persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1520,10 +1561,10 @@
                                 : ""
                         }
                         {dataEpoch}
-                        onCommitted={() => {
+                        onCommitted={(change?: MapCommitChange) => {
                             dataEpoch += 1;
                             czmlFetchedKey = "";
-                            void loadAllCzml(true);
+                            void loadAllCzml(true, change);
                             void invalidateAll();
                         }}
                         schemaTables={schemaTables}

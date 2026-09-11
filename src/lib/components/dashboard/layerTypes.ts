@@ -5,6 +5,8 @@ import type { LayerView } from "./layerViews";
 export type LayerData = {
     name: string;
     packets: Record<string, unknown>[];
+    /** Attribute rows extracted once when this packet version arrives. */
+    rows?: Record<string, unknown>[];
     /** Stable entity ids for scene graph / selection (source_id). */
     entityIds: string[];
     visible: boolean;

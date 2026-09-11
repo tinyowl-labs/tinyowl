@@ -7,6 +7,7 @@
     import SearchComposer from "$lib/components/SearchComposer.svelte";
     import SpatialMap from "$lib/components/SpatialMap.svelte";
     import TemporalRangeFilter from "$lib/components/TemporalRangeFilter.svelte";
+    import SmartTermsToggle from "$lib/components/search/SmartTermsToggle.svelte";
     import ProjectInspector from "$lib/components/discovery/ProjectInspector.svelte";
     import CrosshairIcon from "@lucide/svelte/icons/crosshair";
     import MapIcon from "@lucide/svelte/icons/map";
@@ -59,6 +60,7 @@
         matchClose?: boolean;
         matchNarrower?: boolean;
         results: DiscoveryProject[];
+        dateProjects?: DiscoveryProject[];
         /** When false, temporal + viewport filters stay client-side (home browse). */
         persistFilters?: boolean;
         onTemporalCommit?: (from: number | null, to: number | null) => void;
@@ -99,6 +101,7 @@
         matchClose = false,
         matchNarrower = false,
         results,
+        dateProjects = [],
         persistFilters = false,
         onTemporalCommit,
         onSpatialChange,
@@ -125,6 +128,8 @@
     } | null>(null);
     let composer = $state<{ focusField?: () => void } | null>(null);
     let suggesting = $state(false);
+    let smartTerms = $state(false);
+    let smartBusy = $state(false);
 
     let drawTool = $state<DrawTool>(null);
     let hoveredProjectId = $state<string | null>(null);
@@ -185,6 +190,14 @@
             Boolean(countryCode) ||
             (centerLat != null && centerLng != null) ||
             drawTool != null,
+    );
+    const spatialMode = $derived<Exclude<DrawTool, null>>(
+        drawTool ??
+            (centerLat != null && centerLng != null && !searchBBox
+                ? "point"
+                : searchBBox
+                  ? "area"
+                  : "point"),
     );
 
     const canClear = $derived(
@@ -333,6 +346,9 @@
                     bind:this={composer}
                     bind:value={query}
                     bind:suggesting
+                    bind:smartTerms
+                    bind:smartBusy
+                    showSmartToggle={false}
                     {tags}
                     {vocabularies}
                     {projects}
@@ -369,65 +385,32 @@
                 {#if !inspecting}
                     <div class="shrink-0 p-2.5">
                         <div class="flex items-center gap-1.5">
-                            <div
-                                class="flex flex-1 items-center gap-0.5 rounded-lg bg-muted/60 p-0.5"
-                                role="group"
-                                aria-label="Spatial filter"
-                            >
-                                <button
-                                    type="button"
-                                    onclick={setPoint}
-                                    aria-pressed={drawTool === "point" ||
-                                        (centerLat != null &&
-                                            centerLng != null &&
-                                            !searchBBox)}
-                                    class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
-                                        'point' ||
-                                    (centerLat != null &&
-                                        centerLng != null &&
-                                        !searchBBox)
-                                        ? 'bg-background text-foreground shadow-sm'
-                                        : 'text-muted-foreground hover:text-foreground'}"
-                                    title="Click centre, then radius"
+                            <label class="relative min-w-0 flex-1">
+                                <span class="sr-only">Spatial filter</span>
+                                {#if spatialMode === "point"}
+                                    <CrosshairIcon class="pointer-events-none absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                                {:else if spatialMode === "area"}
+                                    <MapIcon class="pointer-events-none absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                                {:else}
+                                    <HexagonIcon class="pointer-events-none absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                                {/if}
+                                <select
+                                    value={spatialMode}
+                                    onchange={(event) => {
+                                        const mode = (event.currentTarget as HTMLSelectElement).value as Exclude<DrawTool, null>;
+                                        if (mode === "point") setPoint();
+                                        else if (mode === "area") setArea();
+                                        else setPolygon();
+                                    }}
+                                    class="h-8 w-full appearance-none rounded-lg border border-border bg-background/75 pl-8 pr-7 text-xs font-semibold text-foreground outline-none transition-colors hover:bg-background focus:border-primary"
                                 >
-                                    <CrosshairIcon class="size-3.5" />
-                                    Point
-                                </button>
-                                <button
-                                    type="button"
-                                    onclick={setArea}
-                                    aria-pressed={drawTool === "area" ||
-                                        Boolean(
-                                            searchBBox &&
-                                                !countryCode &&
-                                                drawTool !== "polygon",
-                                        )}
-                                    class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
-                                        'area' ||
-                                    (searchBBox &&
-                                        !countryCode &&
-                                        drawTool !== 'polygon')
-                                        ? 'bg-background text-foreground shadow-sm'
-                                        : 'text-muted-foreground hover:text-foreground'}"
-                                    title="Drag a rectangle"
-                                >
-                                    <MapIcon class="size-3.5" />
-                                    Area
-                                </button>
-                                <button
-                                    type="button"
-                                    onclick={setPolygon}
-                                    aria-pressed={drawTool === "polygon"}
-                                    class="flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors {drawTool ===
-                                    'polygon'
-                                        ? 'bg-background text-foreground shadow-sm'
-                                        : 'text-muted-foreground hover:text-foreground'}"
-                                    title="Click corners, double-click to close"
-                                >
-                                    <HexagonIcon class="size-3.5" />
-                                    Polygon
-                                </button>
-                            </div>
+                                    <option value="point">Point</option>
+                                    <option value="area">Box</option>
+                                    <option value="polygon">Polygon</option>
+                                </select>
+                                <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground">▼</span>
+                            </label>
+                            <SmartTermsToggle bind:enabled={smartTerms} busy={smartBusy} />
                             <button
                                 type="button"
                                 onclick={clearSpatial}
@@ -455,7 +438,7 @@
 
                         <div class="mt-2">
                             <TemporalRangeFilter
-                                projects={results}
+                                projects={dateProjects.length > 0 ? dateProjects : results}
                                 bind:dateFrom
                                 bind:dateTo
                                 onCommit={onTemporal}

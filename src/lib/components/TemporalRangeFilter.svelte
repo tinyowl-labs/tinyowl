@@ -65,29 +65,13 @@
             .filter((x): x is { start: number; end: number } => x != null),
     );
 
-    /** Axis stretches to result dates (and any active filter thumbs). */
+    /** Domain comes only from the available catalogue, never the active query. */
     const domain = $derived.by(() => {
         let min = Infinity;
         let max = -Infinity;
         for (const d of dated) {
             if (d.start < min) min = d.start;
             if (d.end > max) max = d.end;
-        }
-        const parsedFrom =
-            dateFrom !== "" && !Number.isNaN(Number(dateFrom))
-                ? Number(dateFrom)
-                : null;
-        const parsedTo =
-            dateTo !== "" && !Number.isNaN(Number(dateTo))
-                ? Number(dateTo)
-                : null;
-        if (parsedFrom != null) {
-            min = Math.min(min, parsedFrom);
-            max = Math.max(max, parsedFrom);
-        }
-        if (parsedTo != null) {
-            min = Math.min(min, parsedTo);
-            max = Math.max(max, parsedTo);
         }
         if (!Number.isFinite(min) || !Number.isFinite(max)) {
             return { min: FALLBACK_MIN, max: FALLBACK_MAX };
@@ -170,9 +154,15 @@
     }
 </script>
 
-<div class="space-y-2">
+<div class="space-y-2.5">
+    <div class="flex items-baseline justify-between gap-3">
+        <span class="text-xs font-semibold text-foreground">Temporal range</span>
+        <span class="truncate text-right text-xs font-medium tabular-nums text-muted-foreground">
+            {formatYear(Math.round(range[0]))} – {formatYear(Math.round(range[1]))}
+        </span>
+    </div>
     <div
-        class="relative h-16 rounded-lg bg-muted/30 overflow-hidden"
+        class="relative h-20 overflow-hidden rounded-lg bg-background/65"
     >
         <div class="absolute inset-0 flex items-end gap-px px-1 pt-3 pb-0">
             {#each bins as bin}
@@ -182,7 +172,7 @@
                     class="flex-1 min-w-0 rounded-t-[1px] transition-colors {inRange
                         ? 'bg-foreground/70'
                         : 'bg-foreground/15'}"
-                    style="height: {bin.count === 0 ? 6 : Math.max(12, h * 0.8)}%"
+                    style="height: {bin.count === 0 ? 6 : Math.max(12, h * 0.9)}%"
                     title="{formatYear(Math.round(bin.start))}–{formatYear(
                         Math.round(bin.end),
                     )}: {bin.count}"
@@ -213,23 +203,17 @@
     >
         {#snippet children({ thumbItems })}
             <span
-                class="relative h-1.5 w-full grow overflow-hidden rounded-full bg-border"
+                class="relative h-1.5 w-full grow overflow-hidden rounded-full bg-muted-foreground/40"
             >
-                <Slider.Range class="absolute h-full bg-foreground/70" />
+                <Slider.Range class="absolute h-full bg-primary" />
             </span>
             {#each thumbItems as thumb (thumb.index)}
                 <Slider.Thumb
                     index={thumb.index}
-                    class="border-background bg-foreground focus-visible:ring-ring block size-3.5 rounded-full border-2 shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
+                    class="border-background bg-foreground focus-visible:ring-ring block size-5 rounded-full border-2 shadow-md transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
                 />
             {/each}
         {/snippet}
     </Slider.Root>
 
-    <div
-        class="flex items-center justify-between text-[11px] tabular-nums text-muted-foreground"
-    >
-        <span>{formatYear(domainMin)}</span>
-        <span>{formatYear(domainMax)}</span>
-    </div>
 </div>

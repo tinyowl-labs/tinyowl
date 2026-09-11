@@ -188,3 +188,53 @@ export function cesiumPropValue(prop: unknown, time?: unknown): unknown {
     }
     return prop;
 }
+
+/** Decode NDJSON as bytes arrive. A failed stream never becomes a cached layer. */
+export async function parseCzmlResponse(response: Response, signal?: AbortSignal): Promise<Record<string, unknown>[]> {
+    if (!response.body) return parseNdjsonCzmlAsync(await response.text());
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const packets: Record<string, unknown>[] = [];
+    let pending: string[] = [];
+    let sliceStarted = performance.now();
+    const abort = () => { void reader.cancel(signal?.reason).catch(() => {}); };
+    signal?.addEventListener("abort", abort, { once: true });
+    async function consume(text: string, final = false) {
+        let start = 0;
+        for (;;) {
+            const newline = text.indexOf("\n", start);
+            if (newline < 0) break;
+            const part = text.slice(start, newline);
+            const line = (pending.length ? pending.join("") + part : part).trim();
+            pending = [];
+            if (line) packets.push(JSON.parse(line));
+            start = newline + 1;
+            if (performance.now() - sliceStarted >= 8) {
+                await new Promise<void>(resolve => setTimeout(resolve, 0));
+                signal?.throwIfAborted();
+                sliceStarted = performance.now();
+            }
+        }
+        if (start < text.length) pending.push(text.slice(start));
+        if (final) {
+            const line = pending.join("").trim();
+            if (line) packets.push(JSON.parse(line));
+            pending = [];
+        }
+    }
+    try {
+        for (;;) {
+            signal?.throwIfAborted();
+            const { value, done } = await reader.read();
+            signal?.throwIfAborted();
+            await consume(decoder.decode(value, { stream: !done }), done);
+            if (done) return packets;
+        }
+    } catch (error) {
+        await reader.cancel(error).catch(() => {});
+        throw error;
+    } finally {
+        signal?.removeEventListener("abort", abort);
+        reader.releaseLock();
+    }
+}

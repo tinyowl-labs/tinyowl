@@ -51,11 +51,13 @@
         vocabularies: string[];
         projectSlugs: string[];
         semantic: boolean;
+        smart: boolean;
         mediaHash: string | null;
         imageQuery: boolean;
         similarItems: SimilarMediaItem[];
         similarStatus: string;
         projects: SearchProject[];
+        timelineProjects: SearchProject[];
         entityHits: Record<string, SearchEntityHit[]>;
         placeName: string | null;
         countryCode: string | null;
@@ -134,6 +136,7 @@
             projects: data.projectSlugs ?? [],
             types: [],
             semantic: data.semantic,
+            smart: data.smart,
             mediaHash: data.mediaHash,
             imageQuery: data.imageQuery,
             placeName: data.placeName,
@@ -347,6 +350,7 @@
                         ? overrides.matchNarrower
                         : data.matchNarrower,
                 semantic: data.semantic ? undefined : false,
+                smart: data.smart,
             }),
             { keepFocus: true, noScroll: true, ...nav },
         );
@@ -536,6 +540,7 @@
     matchClose={data.matchClose}
     matchNarrower={data.matchNarrower}
     results={displayProjects}
+    dateProjects={data.timelineProjects}
     persistFilters={!data.browse}
     onTemporalCommit={data.browse ? undefined : onTemporalCommit}
     onSpatialChange={data.browse ? undefined : onSpatialChange}

@@ -14,6 +14,7 @@ function compile(source, filename) {
     return module.exports;
 }
 const concurrentPath = resolve('src/lib/async/mapConcurrent.ts');
+const { canRefreshChangedLayers } = compile(readFileSync('src/lib/components/dashboard/mapRefresh.ts','utf8'),resolve('src/lib/components/dashboard/mapRefresh.ts'));
 const { mapConcurrent } = compile(readFileSync(concurrentPath, 'utf8'), concurrentPath);
 let active = 0, peak = 0;
 assert.deepEqual(await mapConcurrent([0,1,2,3,4,5,6,7], 3, async n => {
@@ -24,24 +25,31 @@ assert.equal(peak,3);
 // Exercise the actual Svelte loader with controlled HTTP responses.
 const pageSource = readFileSync('src/routes/[project]/layers/+page.svelte','utf8');
 const loader = pageSource.slice(pageSource.indexOf('    async function loadAllCzml('), pageSource.indexOf('    let persistTimers'));
-const harness = `export async function run(mapConcurrent, assert) {
-let viewingRef='develop',mapLayers=[],mapLoading=false,czmlErrors=[],czmlController=null,czmlScope='',czmlLoadGen=0,czmlFetchedKey='',czmlInFlightKey='';
+const harness = `export async function run(mapConcurrent, assert, canRefreshChangedLayers) {
+let viewingRef='develop',mapLayers=[],mapLoading=false,czmlErrors=[],czmlController=null,czmlScope='',czmlCommit='',czmlLoadGen=0,czmlFetchedKey='',czmlInFlightKey='';
 const czmlLayerCache=new Map(),tableNames=['a','b','c','d','e','f'],tables=Object.fromEntries(tableNames.map(n=>[n,['geom']])),canMutate=false;
 const $page={params:{project:'dig'}},untrack=f=>f(),authHeaders=()=>({});
-let failures=true,active=0,peak=0,calls={},emptyLayer=false;
-const fetch=async (url)=>{if(url.includes('layer-views'))return {ok:true,json:async()=>({layers:{}})};
+let failures=true,active=0,peak=0,calls={},emptyLayer=false,serverCommit='base',summaryTables=['a'],summaryAvailable=true;
+const fetch=async (url)=>{if(url.includes('/commits/'))return {ok:summaryAvailable,json:async()=>({summary:{geodiff_summary:summaryTables.map(table=>({table}))}})};if(url.includes('/refs'))return {ok:true,json:async()=>({main:serverCommit,develop:serverCommit})};if(url.includes('layer-views'))return {ok:true,json:async()=>({layers:{}})};
 const name=url.split('/layers/')[1].split('/')[0];calls[name]=(calls[name]||0)+1;peak=Math.max(peak,++active);await new Promise(r=>setTimeout(r,2));active--;
 if(name==='b'&&failures)return {ok:false,status:503};if(name==='f'&&emptyLayer)return {ok:true,text:async()=>JSON.stringify({id:'document'})};return {ok:true,text:async()=>JSON.stringify({id:name+':1',position:url.includes('ref=main')?10:99})};};
-const parseNdjsonCzmlAsync=async s=>[JSON.parse(s)],entityIdsFromPackets=packets=>packets.filter(p=>p.id!=='document').map(p=>p.id),ensureExplicitViews=()=>({views:[{id:'v'}],persist:false}),defaultOpacityForPackets=()=>1;
+const parseCzmlResponse=async res=>[JSON.parse(await res.text())],rowsFromPackets=()=>[],entityIdsFromPackets=packets=>packets.filter(p=>p.id!=='document').map(p=>p.id),ensureExplicitViews=()=>({views:[{id:'v'}],persist:false}),defaultOpacityForPackets=()=>1;
 ${loader}
 await loadAllCzml();assert.equal(peak,4);const initialPeak=peak;assert.deepEqual(czmlErrors,['b']);assert.equal(mapLayers.length,5);
 failures=false;await loadAllCzml();assert.equal(mapLayers.length,6);assert.equal(calls.a,1);assert.equal(calls.b,2);
 viewingRef='main';await loadAllCzml();assert.equal(mapLayers[0].packets[0].position,10);assert.equal(czmlErrors.length,0);
 viewingRef='develop';const pending=loadAllCzml();viewingRef='main';await loadAllCzml();await pending;assert.equal(mapLayers[0].packets[0].position,10);
+viewingRef='develop';await loadAllCzml();const savedLayer=mapLayers.find(l=>l.name==='c'),previousCalls={...calls};
+savedLayer.visible=false;savedLayer.opacity=0.3;
+serverCommit='next';await loadAllCzml(true,{tables:['a'],baseCommit:'base',commitId:'next'});
+assert.equal(calls.a,previousCalls.a+1);assert.equal(calls.c,previousCalls.c);assert.equal(mapLayers.find(l=>l.name==='c').packets,savedLayer.packets);assert.equal(mapLayers.find(l=>l.name==='c').visible,false);assert.equal(mapLayers.find(l=>l.name==='c').opacity,0.3);
+serverCommit='external';await loadAllCzml(true,{tables:['a'],baseCommit:'next',commitId:'ours'});assert.equal(calls.c,previousCalls.c+1);
+const beforeCascade={...calls};summaryTables=['a','c'];serverCommit='cascade';await loadAllCzml(true,{tables:['a'],baseCommit:'external',commitId:'cascade'});assert.equal(calls.c,beforeCascade.c+1);assert.equal(calls.d,beforeCascade.d);
+const beforeUnknown={...calls};summaryAvailable=false;serverCommit='unknown';await loadAllCzml(true,{tables:['a'],baseCommit:'cascade',commitId:'unknown'});assert.equal(calls.d,beforeUnknown.d+1);
 emptyLayer=true;await loadAllCzml(true);assert.equal(mapLayers.length,5);assert.ok(!mapLayers.some(l=>l.name==='f'));assert.equal(czmlErrors.length,0);
 return {emptyGeometryTable:'kept out of map layers',initialPeak,rapidRefSwitch:'passed (mock deliberately ignores abort)',successfulLayerRequests:calls.a,retriedLayerRequests:calls.b};
 }`;
-console.log('loader checks',await compile(harness,resolve('loader.ts')).run(mapConcurrent,assert));
+console.log('loader checks',await compile(harness,resolve('loader.ts')).run(mapConcurrent,assert,canRefreshChangedLayers));
 
 const entitiesPath=resolve('src/lib/components/dashboard/czmlEntities.ts');
 async function measureEntities(source,kind) {

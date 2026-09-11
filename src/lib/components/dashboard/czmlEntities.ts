@@ -203,6 +203,7 @@ export async function customDataSourceFromCzml(
     viewer: any,
     packets: Record<string, unknown>[],
     layerName: string,
+    isCancelled: () => boolean = () => false,
 ): Promise<any> {
     const ds = new Cesium.CustomDataSource(layerName);
     const terrainPoints: Array<{ entity: any; lng: number; lat: number }> = [];
@@ -221,6 +222,7 @@ export async function customDataSourceFromCzml(
             // Check before geometry branches so points and lines also yield.
             if (packetIndex > 0 && (packetIndex % 100 === 0 || performance.now() - sliceStarted >= 8)) {
                 await yieldEntityBuild();
+                if (isCancelled()) throw new DOMException("Layer build superseded", "AbortError");
                 sliceStarted = performance.now();
             }
             const pkt = packets[packetIndex]!;
@@ -355,6 +357,10 @@ export async function customDataSourceFromCzml(
 
 
         }
+    } catch (error) {
+        ds.__echidnaDisposed = true;
+        ds.entities.removeAll();
+        throw error;
     } finally {
         ds.entities.resumeEvents();
     }
@@ -363,7 +369,7 @@ export async function customDataSourceFromCzml(
     // layer. Let this data source return first, then correct zero-height
     // features in a later task when the most-detailed samples arrive.
     void yieldEntityBuild()
-        .then(() => sampleGroundHeights(Cesium, viewer, packets))
+        .then(() => ds.__echidnaDisposed || isCancelled() ? new Map<string, number>() : sampleGroundHeights(Cesium, viewer, packets))
         .catch(() => new Map<string, number>())
         .then(async (heightMap) => {
             if (ds.__echidnaDisposed || heightMap.size === 0) return;

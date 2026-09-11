@@ -7,6 +7,7 @@
     import Table2Icon from "@lucide/svelte/icons/table-2";
     import ImageIcon from "@lucide/svelte/icons/image";
     import LoaderIcon from "@lucide/svelte/icons/loader";
+    import BadgeCheckIcon from "@lucide/svelte/icons/badge-check";
     import GlobeIcon from "@lucide/svelte/icons/globe";
     import CalendarRangeIcon from "@lucide/svelte/icons/calendar-range";
     import MapIcon from "@lucide/svelte/icons/map";
@@ -71,6 +72,11 @@
         type SlashKindId,
     } from "$lib/search/queryTokens";
     import {
+        classifyQuerySpans,
+        normalizedLabel,
+        type QuerySpan,
+    } from "$lib/search/nlp";
+    import {
         clearImageQuery,
         loadImageQuery,
         postSimilarByImage,
@@ -80,6 +86,7 @@
     import { browserThumbUrl } from "$lib/project/mediaUrl";
     import FilterChip from "$lib/components/search/FilterChip.svelte";
     import TermInspectButton from "$lib/components/search/TermInspectButton.svelte";
+    import SmartTermsToggle from "$lib/components/search/SmartTermsToggle.svelte";
 
     type MentionMode =
         | "kinds"
@@ -198,6 +205,9 @@
         bare?: boolean;
         /** True while typeahead is open — host should hide competing chrome. */
         suggesting?: boolean;
+        smartTerms?: boolean;
+        smartBusy?: boolean;
+        showSmartToggle?: boolean;
         class?: string;
     };
 
@@ -235,6 +245,9 @@
         palette = false,
         bare = false,
         suggesting = $bindable(false),
+        smartTerms = $bindable(false),
+        smartBusy = $bindable(false),
+        showSmartToggle = true,
         class: klass = "",
     }: Props = $props();
 
@@ -291,6 +304,8 @@
     let dragOver = $state(false);
     let imageBusy = $state(false);
     let imageError = $state("");
+    let smartError = $state("");
+    let smartReady = $state(false);
 
     let hashMention = $state(false);
     let slashMention = $state(false);
@@ -439,6 +454,7 @@
             : KINDS.filter((k) => k.id !== "entity"),
     );
     const atSearch = $derived($page.url.pathname === "/");
+    const smartQuery = $derived($page.url.searchParams.get("smart") === "1");
     const cycling = $derived(examples.length > 0);
     const placesMenuOpen = $derived(
         !mentionOpen &&
@@ -452,7 +468,7 @@
                 cellHits.length > 0 ||
                 loadingPlaces),
     );
-    const dropdownOpen = $derived(mentionOpen || placesMenuOpen);
+    const dropdownOpen = $derived(!smartTerms && (mentionOpen || placesMenuOpen));
     $effect(() => {
         suggesting = dropdownOpen;
     });
@@ -525,7 +541,7 @@
         if (!activeMediaHash) return null;
         return browserThumbUrl(`/media/${activeMediaHash}`, {
             hash: activeMediaHash,
-            accessToken,
+            accessToken: accessToken ?? undefined,
         });
     });
 
@@ -965,6 +981,8 @@
         mq.addEventListener("change", syncMotion);
 
         isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+        smartTerms = window.localStorage.getItem("echidna:smart-terms") === "1";
+        smartReady = true;
 
         const onGlobalKey = (e: KeyboardEvent) => {
             if (!shortcutHint) return;
@@ -987,7 +1005,8 @@
                 }
                 e.preventDefault();
                 e.stopPropagation();
-                commitSearch();
+                if (smartTerms) void commitSmartSearch();
+                else commitSearch();
                 return;
             }
 
@@ -1001,6 +1020,17 @@
             window.removeEventListener("keydown", onGlobalKey, true);
             window.removeEventListener("keydown", onComposerTab, true);
         };
+    });
+
+    $effect(() => {
+        if (!smartReady) return;
+        const enabled = smartTerms;
+        window.localStorage.setItem("echidna:smart-terms", enabled ? "1" : "0");
+        smartError = "";
+        if (enabled) {
+            closeMention();
+            abortSuggestions();
+        }
     });
 
     $effect(() => {
@@ -1087,6 +1117,7 @@
         subjectLabel?: string | null;
         matchClose?: boolean;
         matchNarrower?: boolean;
+        smart?: boolean;
     }) {
         const nextBBox = next.bbox !== undefined ? next.bbox : bbox;
         const nextLat = next.lat !== undefined ? next.lat : lat;
@@ -1208,6 +1239,7 @@
                 matchClose: nextMatchClose,
                 matchNarrower: nextMatchNarrower,
                 semantic: semantic ? undefined : false,
+                smart: next.smart !== undefined ? next.smart : smartQuery,
                 mediaHash:
                     next.mediaHash !== undefined
                         ? next.mediaHash
@@ -1582,12 +1614,155 @@
             tags: nextTags,
             rows: extraRows.length > 0 ? extraRows : activeRows,
             keepFocus: false,
+            smart: false,
         });
+    }
+
+    function exactLabel<T>(surface: string, hits: T[], label: (hit: T) => string): T | null {
+        const wanted = normalizedLabel(surface);
+        if (!wanted) return null;
+        return hits.find((hit) => normalizedLabel(label(hit)) === wanted) ?? null;
+    }
+
+    function comparatorOp(raw: string): RowPredicate["op"] | null {
+        const value = raw.trim().toLowerCase();
+        if (["is", "equals", "equal to", "="].includes(value)) return "=";
+        if (["is not", "does not equal", "!=", "not"].includes(value)) return "!=";
+        if (["contains", "includes", "has"].includes(value)) return "?";
+        if (["after", "is after", "greater than", ">"].includes(value)) return ">";
+        if (["before", "is before", "less than", "<"].includes(value)) return "<";
+        if (["at least", ">="].includes(value)) return ">=";
+        if (["at most", "<="].includes(value)) return "<=";
+        return null;
+    }
+
+    async function commitSmartSearch() {
+        const carrier = value.trim();
+        // Explicit power-user syntax always follows the existing deterministic path.
+        if (!carrier || /(^|\s)[@#/][^\s]/.test(carrier)) {
+            commitSearch();
+            return;
+        }
+        smartBusy = true;
+        smartError = "";
+        try {
+            const parsed = await classifyQuerySpans(carrier, { accessToken });
+            const spans = parsed.spans.filter((span) => span.confidence >= 0.95);
+            const byType = (type: QuerySpan["type"]) => spans.filter((span) => span.type === type);
+
+            let nextProjects = activeProjects;
+            const scope = byType("scope")[0];
+            if (scope && activeProjects.length === 0) {
+                const hits = await searchProjectsByText(normalizedLabel(scope.surface), { accessToken, limit: 6 });
+                const hit = exactLabel(scope.surface, hits, (item) => item.title);
+                if (hit) {
+                    nextProjects = [hit.slug];
+                    projectChipTitles = { ...projectChipTitles, [hit.slug]: hit.title };
+                }
+            }
+
+            const scoped = nextProjects.length === 1 ? nextProjects[0]! : null;
+            let nextRows = activeRows;
+            if (scoped) {
+                const record = byType("record_set")[0];
+                if (record) {
+                    const layerHits = await searchProjectLayers(scoped, record.surface, { accessToken, minLength: 0, limit: 12 });
+                    const layer = exactLabel(record.surface, layerHits, (item) => item.label);
+                    if (layer) {
+                        extraLayers = [layer.name];
+                    }
+                }
+                const field = byType("field")[0];
+                const comparator = byType("comparator")[0];
+                const rowValue = byType("value")[0];
+                const op = comparator ? comparatorOp(comparator.surface) : null;
+                if (field && rowValue && op) {
+                    const cols = await listProjectColumns(scoped, field.surface, { accessToken, layer: extraLayers[0] ?? activeLayer, limit: 20 });
+                    const col = exactLabel(field.surface, cols, (item) => item.label);
+                    if (col) {
+                        nextRows = mergeRowPredicates(activeRows, [{ column: col.name, op, value: rowValue.surface.trim() }]);
+                        extraRows = nextRows;
+                    }
+                }
+            }
+
+            let nextConcept: TermHit | null = null;
+            for (const span of byType("concept")) {
+                const hits = await searchTerms(span.surface, { kind: "concept", limit: 8 });
+                const hit = exactLabel(span.surface, hits, (item) => item.label);
+                if (hit) {
+                    nextConcept = hit;
+                    break;
+                }
+            }
+
+            let nextPeriod: TermHit | null = null;
+            const timeSpan = byType("time")[0];
+            if (timeSpan) {
+                const hits = await searchTerms(timeSpan.surface, { kind: "period", limit: 8 });
+                nextPeriod = exactLabel(timeSpan.surface, hits, (item) => item.label);
+            }
+
+            let nextPlace: PlaceHit | null = null;
+            const placeSpan = byType("place")[0];
+            if (placeSpan) {
+                const hits = await searchMergedPlaces(placeSpan.surface, 10);
+                nextPlace = exactLabel(placeSpan.surface, hits, (item) => item.label);
+                if (!nextPlace && /^(?:uk|us|usa)$/i.test(normalizedLabel(placeSpan.surface))) {
+                    nextPlace = hits.find((item) => item.kind === "country") ?? null;
+                }
+            }
+
+            // Smart terms enriches the query; it never rewrites what the user typed.
+            const nextQ = carrier;
+            value = nextQ;
+            extraProjects = nextProjects;
+            closeMention();
+            abortSuggestions();
+            focused = false;
+            inputEl?.blur();
+
+            const geom = nextPlace?.geom;
+            const isCountry = nextPlace?.kind === "country";
+            const placeBBox = geom?.type === "bbox" && !isCountry
+                ? { west: geom.west, south: geom.south, east: geom.east, north: geom.north }
+                : null;
+            navigate({
+                q: nextQ,
+                projects: nextProjects,
+                rows: nextRows,
+                keepFocus: false,
+                smart: true,
+                conceptUri: nextConcept ? (nextConcept.hub_uri || nextConcept.uri) : undefined,
+                subjectLabel: nextConcept?.label,
+                termUri: nextPeriod?.uri,
+                periodLabel: nextPeriod?.label,
+                dateFrom: nextPeriod?.start_year,
+                dateTo: nextPeriod?.end_year,
+                countryCode: nextPlace ? (isCountry ? (nextPlace.cc ?? null) : null) : undefined,
+                bbox: placeBBox ?? undefined,
+                lat: geom?.type === "point" ? geom.lat : nextPlace ? null : undefined,
+                lng: geom?.type === "point" ? geom.lng : nextPlace ? null : undefined,
+                radius: geom?.type === "point" ? geom.radius : nextPlace ? null : undefined,
+                placeName: nextPlace?.label,
+            });
+        } catch (error) {
+            smartError = error instanceof Error ? error.message : "Smart terms is unavailable";
+            // Do not silently turn a Smart terms request into a plain-text search.
+            // Keep the query editable so the user can retry or deliberately switch
+            // Smart terms off before submitting it as raw text.
+            focused = true;
+            queueMicrotask(() => focusField());
+        } finally {
+            smartBusy = false;
+        }
     }
 
     function handleSubmit(e: SubmitEvent) {
         e.preventDefault();
-        commitSearch();
+        if (smartBusy) return;
+        if (smartTerms) void commitSmartSearch();
+        else commitSearch();
     }
 
     function removeTag(tag: string) {
@@ -2232,6 +2407,11 @@
     function onInput(e: Event) {
         const el = e.currentTarget as HTMLInputElement;
         value = el.value;
+        if (smartTerms) {
+            closeMention();
+            abortSuggestions();
+            return;
+        }
         chipCompletedProjectMentions();
         chipCompletedHashTags();
         chipCompletedSlashLayers();
@@ -2351,7 +2531,8 @@
                     return;
                 }
             }
-            commitSearch();
+            if (smartTerms) void commitSmartSearch();
+            else commitSearch();
             return;
         }
 
@@ -2782,6 +2963,10 @@
                                 />
                                 <span class="truncate">{periodChip.title}</span>
                             </TermInspectButton>
+                            <BadgeCheckIcon
+                                class="size-3 shrink-0 text-primary"
+                                aria-label="Matched to a controlled term"
+                            />
                             <button
                                 type="button"
                                 tabindex="-1"
@@ -2814,6 +2999,10 @@
                                 />
                                 <span class="truncate">{conceptChip.title}</span>
                             </TermInspectButton>
+                            <BadgeCheckIcon
+                                class="size-3 shrink-0 text-primary"
+                                aria-label="Matched to a controlled term"
+                            />
                             <button
                                 type="button"
                                 tabindex="-1"
@@ -2844,6 +3033,10 @@
                             onRemove={() => removeVocab(v)}
                         >
                             <BookMarkedIcon class="size-3 shrink-0 text-muted-foreground" />
+                            <BadgeCheckIcon
+                                class="size-3 shrink-0 text-primary"
+                                aria-label="Matched to an API term"
+                            />
                         </FilterChip>
                     {/each}
                     {#each activeLayers as name (name.toLowerCase())}
@@ -2985,6 +3178,23 @@
             {/if}
         </button>
         </div>
+
+        {#if showSmartToggle || smartError}
+        <div class="mt-1 flex min-h-8 items-center justify-end gap-2 px-1">
+            {#if smartError}
+                <span
+                    class="min-w-0 flex-1 truncate text-[10px] text-destructive"
+                    title={smartError}
+                    aria-live="polite"
+                >
+                    {smartError} · query not submitted
+                </span>
+            {/if}
+            {#if showSmartToggle}
+                <SmartTermsToggle bind:enabled={smartTerms} busy={smartBusy} />
+            {/if}
+        </div>
+        {/if}
 
         {#if dropdownOpen}
             <div

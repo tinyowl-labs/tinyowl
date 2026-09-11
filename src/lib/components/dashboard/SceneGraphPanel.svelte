@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { indexMapRows, indexedMapRow, type LayerRowIndexes } from "./mapRowIndexes";
+    import SceneEntityList from "./SceneEntityList.svelte";
     import BoxIcon from "@lucide/svelte/icons/box";
     import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
     import ChevronsDownUpIcon from "@lucide/svelte/icons/chevrons-down-up";
@@ -31,7 +33,6 @@
         layerLegendColor,
         LEGEND_SWATCH_CAP,
         rgbaToHex,
-        rowByEntityId,
         rowMatchesFilter,
         rowMatchesSeries,
         resolveSeriesKind,
@@ -43,6 +44,7 @@
     } from "$lib/project/schemaFields";
 
     type Props = {
+        rowIndexes?: LayerRowIndexes;
         layers?: LayerData[];
         models?: ProjectTileset[];
         coverages?: ProjectCoverage[];
@@ -100,6 +102,7 @@
     };
 
     let {
+        rowIndexes,
         layers = [],
         models = [],
         coverages = [],
@@ -159,6 +162,7 @@
     } | null>(null);
     let tilesetMenuEl = $state<HTMLDivElement>();
 
+    const indexes = $derived(rowIndexes ?? indexMapRows(rows));
     const geomNames = $derived(new Set(layers.map((l) => l.name)));
     /** Flat list: raw tables, then links, then lookups — icons distinguish kind. */
     const attrTablesFlat = $derived.by(() => {
@@ -202,11 +206,7 @@
     };
 
     function entityLabel(layerName: string, entityId: string): string {
-        const table = rows[layerName] ?? [];
-        const row = table.find((r) => {
-            const id = String(r.source_id ?? r.SOURCE_ID ?? "");
-            return id.trim() === entityId.trim();
-        });
+        const row = indexedMapRow(indexes, layerName, entityId);
         if (!row) return entityId;
         const name =
             row.name ??
@@ -216,20 +216,6 @@
             row.title ??
             row.TITLE;
         return name != null && String(name).trim() ? String(name) : entityId;
-    }
-
-    function entitiesForLayer(layer: LayerData): EntityRow[] {
-        const out: EntityRow[] = [];
-        for (const id of layer.entityIds ?? []) {
-            if (!id) continue;
-            out.push({
-                layerName: layer.name,
-                entityId: id,
-                label: entityLabel(layer.name, id),
-                key: toSelectionKey(layer.name, id),
-            });
-        }
-        return out;
     }
 
     function isLayerExpanded(name: string): boolean {
@@ -262,41 +248,47 @@
         layerOpen = next;
     }
 
+    const nameCollator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
     function byDisplayName(a: string, b: string): number {
-        return a.localeCompare(b, undefined, {
-            sensitivity: "base",
-            numeric: true,
-        });
+        return nameCollator.compare(a, b);
     }
 
     function layerDisplayName(name: string): string {
         return name.replace(/_/g, " ");
     }
 
-    function entitiesForLayerSorted(layer: LayerData): EntityRow[] {
-        return entitiesForLayer(layer).sort((a, b) =>
-            byDisplayName(a.label, b.label),
-        );
-    }
-
-    function filterEntities(layer: LayerData, ents: EntityRow[]): EntityRow[] {
-        return ents.filter((e) => {
+    const filteredIds = $derived.by(() => {
+        const result = new Map<string, string[]>();
+        for (const layer of layers) {
             const view = activeView(layer.views, layer.activeViewId ?? "");
-            const tableRows = rows[layer.name];
-            const row = rowByEntityId(tableRows, e.entityId);
-            if (view?.filter?.field) {
-                if (!rowMatchesFilter(row, view.filter)) return false;
-            }
             const seriesField = view?.style.seriesField;
-            if (seriesField) {
-                const kind = resolveSeriesKind(view.style, tableRows);
-                const step = seriesStepByLayer[layer.name] ?? SERIES_ALL;
-                if (!rowMatchesSeries(row, seriesField, kind, step)) return false;
-            }
-            if (filterToView) return inViewEntitySet.has(e.key);
-            return true;
-        });
-    }
+            const kind = seriesField ? resolveSeriesKind(view?.style, rows[layer.name]) : "category";
+            const step = seriesStepByLayer[layer.name] ?? SERIES_ALL;
+            result.set(layer.name, layer.entityIds.filter(id => {
+                if (filterToView && !inViewEntitySet.has(toSelectionKey(layer.name, id))) return false;
+                if (!view?.filter?.field && !seriesField) return true;
+                const row = indexedMapRow(indexes, layer.name, id);
+                if (view?.filter?.field && !rowMatchesFilter(row, view.filter)) return false;
+                return !seriesField || rowMatchesSeries(row, seriesField, kind, step);
+            }));
+        }
+        return result;
+    });
+    // Selection/hover changes do not rebuild labels or sort the complete list.
+    const expandedRows = $derived.by(() => {
+        const result = new Map<string, EntityRow[]>();
+        if (compact) return result;
+        for (const layer of layers) {
+            if (!isLayerExpanded(layer.name)) continue;
+            const entries = (filteredIds.get(layer.name) ?? []).map(id => ({
+                layerName: layer.name, entityId: id,
+                label: entityLabel(layer.name, id), key: toSelectionKey(layer.name, id),
+            }));
+            entries.sort((a, b) => byDisplayName(a.label, b.label));
+            result.set(layer.name, entries);
+        }
+        return result;
+    });
 
     function onEntityClick(
         ev: MouseEvent,
@@ -780,19 +772,20 @@
         {/if}
 
         {#each sortedLayers as { layer, idx }}
-            {@const allEnts = entitiesForLayerSorted(layer)}
+            {@const visibleIds = filteredIds.get(layer.name) ?? []}
             {@const unmappedCount = Math.max(0, (schemaTables.find(t => t.name === layer.name)?.count ?? 0) - layer.entityIds.length)}
-            {@const ents = filterEntities(layer, allEnts)}
+            {@const ents = expandedRows.get(layer.name) ?? []}
             {@const orderedKeys = ents.map((e) => e.key)}
-            {@const stripLegend = legendForLayer(layer)}
+
             {@const showStrip =
                 isLayerExpanded(layer.name) ||
                 layer.name === focusLayerName ||
                 layer.name === styleLayerName}
+            {@const stripLegend = showStrip ? legendForLayer(layer) : null}
             {#if unmappedCount > 0 && isLayerExpanded(layer.name)}
                 <button class="px-2 py-1 text-left text-[10px] text-muted-foreground underline" onclick={() => onOpenTable?.(layer.name)}>{unmappedCount} record(s) not shown on the map · Open table</button>
             {/if}
-            {#if ents.length > 0 || !filterToView}
+            {#if visibleIds.length > 0 || !filterToView}
                 <div
                     class="flex w-full items-center gap-1 px-1.5 py-1 text-[11px] font-semibold uppercase tracking-wider {editBuffer.targetLayer ===
                     layer.name
@@ -806,7 +799,7 @@
                             e,
                             layer.name,
                             idx,
-                            allEnts.map((en) => en.key),
+                            layer.entityIds.map(id => toSelectionKey(layer.name, id)),
                         )}
                 >
                     {#if !compact}
@@ -847,7 +840,7 @@
                             >
                         {/if}
                         <span class="ml-auto tabular-nums opacity-60"
-                            >{ents.length}</span
+                            >{visibleIds.length}</span
                         >
                     </button>
                     <button
@@ -925,10 +918,9 @@
                     </div>
                 {/if}
                 {#if !compact && isLayerExpanded(layer.name)}
-                    <div
-                        class="mb-1 max-h-52 space-y-0.5 overflow-y-auto {childIndent}"
-                    >
-                        {#each ents as ent}
+                    {#if ents.length > 0}
+                    <SceneEntityList items={ents} class="mb-1 {childIndent}">
+                        {#snippet children(ent)}
                             {@const selected =
                                 layerSelection.isSelected(
                                     ent.layerName,
@@ -949,7 +941,7 @@
                                 ent.entityId,
                             )}
                             <div
-                                class="flex items-center gap-0.5 rounded-md {selected
+                                class="flex h-7 items-center gap-0.5 rounded-md {selected
                                     ? primary
                                         ? 'selected'
                                         : 'bg-selected/40'
@@ -1007,16 +999,11 @@
                                     {/if}
                                 </button>
                             </div>
-                        {:else}
-                            <p
-                                class="px-1 py-1 text-[10px] text-muted-foreground"
-                            >
-                                {filterToView
-                                    ? "None in view"
-                                    : "No entities"}
-                            </p>
-                        {/each}
-                    </div>
+                        {/snippet}
+                    </SceneEntityList>
+                    {:else}
+                        <p class="px-1 py-1 text-[10px] text-muted-foreground">{filterToView ? "None in view" : "No entities"}</p>
+                    {/if}
                 {/if}
             {/if}
         {/each}

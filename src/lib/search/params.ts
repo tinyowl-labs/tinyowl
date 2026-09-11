@@ -28,6 +28,8 @@ export type SearchParams = {
    * Omitted from normal URLs — only `semantic=0` is written when disabled.
    */
   semantic: boolean;
+  /** Query was compiled from optional Smart terms; enables broadened ranking. */
+  smart?: boolean;
   /** Reverse-image seed (`?media_hash=`); catalogue hash path. */
   mediaHash: string | null;
   /** Temp query-by-image session (`?image=1`); results live in sessionStorage. */
@@ -130,6 +132,8 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     semanticRaw === "off";
   // Default on; only an explicit opt-out disables the boost.
   const semantic = !semanticOff;
+  const smartRaw = (sp.get("smart") ?? "").trim().toLowerCase();
+  const smart = smartRaw === "1" || smartRaw === "true" || smartRaw === "yes";
 
   const mediaRaw = (sp.get("media_hash") ?? "").trim().toLowerCase();
   const mediaHash =
@@ -153,6 +157,7 @@ export function parseSearchParams(url: URL | URLSearchParams): SearchParams {
     projects: parseListParam(sp, "project"),
     types: parseListParam(sp, "type"),
     semantic,
+    smart,
     mediaHash,
     imageQuery,
     placeName: (sp.get("place") ?? "").trim() || null,
@@ -179,6 +184,7 @@ export function buildSearchParams(input: {
   projects?: string[] | null;
   types?: string[] | null;
   semantic?: boolean | null;
+  smart?: boolean | null;
   mediaHash?: string | null;
   imageQuery?: boolean | null;
   placeName?: string | null;
@@ -195,6 +201,7 @@ export function buildSearchParams(input: {
   if (q) params.set("q", q);
   // Boost is default-on; only persist an explicit opt-out.
   if (input.semantic === false) params.set("semantic", "0");
+  if (input.smart) params.set("smart", "1");
 
   const media = (input.mediaHash ?? "").trim().toLowerCase();
   if (/^[0-9a-f]{16,}$/.test(media)) params.set("media_hash", media);
