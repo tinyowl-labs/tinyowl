@@ -43,6 +43,7 @@
     import FeatureCreateForm from "./FeatureCreateForm.svelte";
     import {
         applyEntitySelectionStyle as paintEntitySelection,
+        polygonBaseMaterial,
     } from "./selectionStyle";
     import { computeInViewKeys, InViewBoundsCache, InViewCameraState } from "./layerSceneInView";
     import { paintLayerViews } from "./layerSceneViews";
@@ -113,7 +114,7 @@
         type GeoBbox,
         type SelectableEntity,
     } from "./mapSelection";
-    import { syncSelectionOverlay } from "./selectionOverlay";
+    import { prepareSelectionEntity, syncSelectionOverlay } from "./selectionOverlay";
     import { handleSceneKey } from "./layerSceneKeys";
     import { attachCameraSchemes, type CameraSchemeHandle } from "./cameraSchemes";
     import { attachFlyController } from "./flyController";
@@ -2413,6 +2414,7 @@
             bbox: Cesium ? bboxFromEntity(Cesium, entity, time) : null,
             ...captureBasePosition(entity),
         });
+        prepareSelectionEntity(Cesium, entity);
         entity.name = key;
         indexEntity(entity, key);
         if (layerSelection.isHidden(layerName, entityId)) {
@@ -2517,7 +2519,7 @@
             };
         }
         // polygon
-        const mat = cesiumPropValue(entity.polygon?.material, time) as any;
+        const mat = cesiumPropValue(polygonBaseMaterial(entity), time) as any;
         let color = fallback;
         let alpha = 0.35;
         if (mat?.color) {

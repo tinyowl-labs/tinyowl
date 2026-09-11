@@ -344,7 +344,7 @@ function addFeature(Cesium: any, ds: any, f: DiffFeature) {
 }
 
 /** One in-flight `dataSources.add` per name so filter flips cannot double-push. */
-const overlayAttach = new Map<string, Promise<any>>();
+const overlayAttach = new WeakMap<object, Map<string, Promise<any>>>();
 
 export async function getOrAttachOverlayDs(
     Cesium: any,
@@ -353,16 +353,17 @@ export async function getOrAttachOverlayDs(
 ): Promise<any> {
     const existing = findNamedDataSource(viewer, name);
     if (existing) return existing;
-    let pending = overlayAttach.get(name);
+    let attachments = overlayAttach.get(viewer);
+    if (!attachments) { attachments = new Map(); overlayAttach.set(viewer, attachments); }
+    let pending = attachments.get(name);
     if (!pending) {
         const created = new Cesium.CustomDataSource(name);
         pending = Promise.resolve(viewer.dataSources.add(created)).then(
             () => created,
         );
-        overlayAttach.set(name, pending);
-        pending.finally(() => {
-            overlayAttach.delete(name);
-        });
+        attachments.set(name, pending);
+        const cleanup = () => { attachments!.delete(name); };
+        void pending.then(cleanup, cleanup);
     }
     return pending;
 }
