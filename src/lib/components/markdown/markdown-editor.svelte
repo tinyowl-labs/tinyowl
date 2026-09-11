@@ -212,15 +212,7 @@
                 {#if onCancel}
                     <button
                         type="button"
-                        onclick={() => {
-                            console.log(
-                                "DBG cancel click",
-                                typeof onCancel,
-                                typeof onClosed,
-                            );
-                            mode = "source";
-                            onCancel?.();
-                        }}
+                        onclick={() => onCancel?.()}
                         class="inline-flex items-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-secondary transition-colors"
                         >Cancel</button
                     >
